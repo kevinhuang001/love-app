@@ -61,7 +61,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await expect(page.getByText('一起散步', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '查看图片' }).click();
   await expect(page.getByRole('img', { name: '照片大图' })).toBeVisible();
-  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: '关闭' }).click();
   await page.getByRole('tab', { name: '纪念日', exact: true }).click();
   await page.getByRole('button', { name: '新增纪念日' }).click();
   await page.getByLabel('名称', { exact: true }).fill('第一次旅行');

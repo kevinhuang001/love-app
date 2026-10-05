@@ -4,9 +4,11 @@
 
 - **聊天**：实时文字、图片和视频，已读、输入提示、重连补取、持久化待发送消息和幂等重试。
 - **回忆**：照片／视频相册，大图预览、视频播放、编辑日期和描述。
-- **纪念日**：一起的天数、每年纪念日与一次性倒计时。
+- **纪念日**：已经发生的重要日子，包含当天，累计天数递增。
+- **To Do**：未来安排、一次性／每年循环、公历情人节和农历七夕；完成循环事项自动更新到下一次。
 - **我们**：配对、昵称、头像、主题、安卓通知、AI 配置和退出／切换服务器。
-- **@ai**：配置兼容 OpenAI 的服务 URL、模型与 API Key；通过工具管理纪念日、修改自己的昵称／头像、将上传附件保存到相册。
+- **AI 身份**：独立名称和图片头像，在聊天中 `@名称` 调用，回复显示名字与头像；仍兼容 `@ai`。
+- **@ai**：配置兼容 OpenAI 的服务 URL、模型与 API Key；通过工具管理纪念日与 To Do、修改用户或 AI 自己的名称／头像、将上传附件保存到相册。
 - **媒体**：原文件保留，图片生成 WebP 缩略图和预览，视频转码为 H.264/AAC MP4 并生成封面。
 - **安卓推送**：原生 FCM 通知、设备注册、通知频道、后台推送与服务端持久化重试。
 
@@ -35,6 +37,22 @@ npm run android:prepare
 每次 push／PR 的 GitHub Actions 会先运行 API 集成测试、前端单元测试和手机端 E2E，再生成可安装的 **love-android-apk** artifact。下载解压后安装 `app-debug.apk`。调试包用于自用和验证；发布签名步骤见 [Android 文档](docs/android.md)。
 
 启用真实后台推送需要你自己的 Firebase 项目：仓库 Secret `GOOGLE_SERVICES_JSON` 配置安卓客户端，服务器设置 Firebase Admin 凭据。无配置时仍生成可安装的 APK，应用内不会宣称后台推送已就绪。
+
+## Docker 部署
+
+```bash
+cp .env.docker.example .env
+# 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET 和 LOVE_DOMAIN
+# 生成密钥：openssl rand -hex 32
+# 若使用下面的 HTTPS 反代，将 TRUST_PROXY=1，并允许 https://你的域名
+# 将域名解析到服务器，并开放 80/443
+
+docker compose --profile https up -d --build
+```
+
+Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose up -d --build`，访问 `http://localhost:3000`。
+
+CI 会实际构建并启动 Docker 镜像，检查 Web 字体、中文 API、聊天、农历待办以及容器重启后的数据保留。此配置不会自动连接或部署到你的服务器。
 
 ## 部署与接口
 

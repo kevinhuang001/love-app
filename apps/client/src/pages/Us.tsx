@@ -18,7 +18,14 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Avatar } from '@/components/common';
-type AISettings = { baseUrl: string; model: string; enabled: boolean; hasKey: boolean };
+type AISettings = {
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  hasKey: boolean;
+  name: string;
+  avatar: import('@/lib/types').Media | null;
+};
 export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: () => void }) {
   const { api, profile } = useApp(),
     cache = useQueryClient();
@@ -35,7 +42,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     [model, setModel] = useState(''),
     [apiKey, setApiKey] = useState(''),
     [aiEnabled, setAiEnabled] = useState(false);
-  const avatarFile = useRef<HTMLInputElement>(null);
+  const avatarFile = useRef<HTMLInputElement>(null),
+    aiAvatarFile = useRef<HTMLInputElement>(null);
+  const [aiName, setAiName] = useState(profile.ai.name);
   const config = useQuery({
     queryKey: ['ai-settings'],
     queryFn: () => api.request<AISettings>('/api/ai/settings'),
@@ -45,6 +54,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
       setAiUrl(config.data.baseUrl);
       setModel(config.data.model);
       setAiEnabled(config.data.enabled);
+      setAiName(config.data.name);
     }
   }, [config.data]);
   useEffect(() => setName(profile.user.name), [profile.user.name]);
@@ -280,10 +290,82 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           AI 助手
         </div>
         <p className="text-xs leading-6 text-muted-foreground">
-          配置兼容 OpenAI 的服务。在聊天里
-          @ai，让助手管理纪念日、修改你的昵称和头像，或将附件收藏到相册。请求内容和附件 ID
+          配置兼容 OpenAI 的服务。在聊天里 @{profile.ai.name}，让助手管理纪念日和 To
+          Do、修改个人资料或它自己的名字和头像，或将附件收藏到相册。请求内容和附件 ID
           会发送给你选择的服务。
         </p>
+        <div className="flex items-center gap-3 rounded-xl bg-secondary p-3">
+          <button
+            type="button"
+            disabled={busy}
+            aria-label="更换 AI 头像"
+            className="shrink-0 rounded-full"
+            onClick={() => aiAvatarFile.current?.click()}
+          >
+            {profile.ai.avatar ? (
+              <img
+                alt="AI 头像"
+                src={api.url(profile.ai.avatar.thumbnailUrl)}
+                className="size-14 rounded-full object-cover"
+              />
+            ) : (
+              <span className="grid size-14 place-items-center rounded-full border border-primary/20 bg-card text-primary">
+                <Sparkles size={23} />
+              </span>
+            )}
+          </button>
+          <div>
+            <p className="text-sm font-medium">{profile.ai.name}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              点击头像更换 · 在聊天里 @{profile.ai.name}
+            </p>
+          </div>
+        </div>
+        <input
+          ref={aiAvatarFile}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/avif"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file)
+              void action(async () => {
+                const media = await api.upload(file, () => {});
+                await api.patch('/api/ai/profile', {
+                  name: profile.ai.name,
+                  avatarMediaId: media.id,
+                });
+                await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+              }, 'AI 头像已更新');
+            e.target.value = '';
+          }}
+        />
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void action(async () => {
+              await api.patch('/api/ai/profile', { name: aiName });
+              await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+            }, 'AI 名称已更新');
+          }}
+        >
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="ai-name">AI 名称</Label>
+            <Input
+              id="ai-name"
+              value={aiName}
+              onChange={(e) => setAiName(e.target.value)}
+              maxLength={24}
+              required
+              pattern="[^\s@]+"
+            />
+            <p className="text-[11px] text-muted-foreground">不含空格或 @，最多 24 个字符。</p>
+          </div>
+          <Button type="submit" variant="outline" disabled={busy}>
+            保存 AI 名称
+          </Button>
+        </form>
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -337,7 +419,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             </p>
           </div>
           <div className="flex items-center justify-between">
-            <Label htmlFor="ai-enabled">开启 @ai</Label>
+            <Label htmlFor="ai-enabled">开启 @{profile.ai.name}（兼容 @ai）</Label>
             <Switch id="ai-enabled" checked={aiEnabled} onCheckedChange={setAiEnabled} />
           </div>
           <Button

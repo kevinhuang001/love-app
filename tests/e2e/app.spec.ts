@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
 test('mobile registration, pairing, realtime chat, media, anniversaries and settings', async ({
@@ -71,26 +72,78 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByLabel('名称', { exact: true }).fill('旅行纪念日');
   await page.getByRole('button', { name: '保存纪念日' }).click();
   await expect(page.getByText('旅行纪念日', { exact: true })).toBeVisible();
+  await expect(page.getByText('第几天 · 累计')).toBeVisible();
+  await page.getByRole('tab', { name: 'To Do', exact: true }).click();
+  await page.getByRole('button', { name: '七夕 · 农历七月初七' }).click();
+  await expect(page.getByRole('dialog')).toContainText('农历重复每年按农历换算');
+  const font = await page.getByRole('dialog').evaluate((el) => getComputedStyle(el).fontFamily);
+  expect(font).toContain('Noto Sans SC');
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.fonts.check('16px "Noto Sans SC"', '提示已保存'))).toBe(
+    true,
+  );
+  await page.getByRole('button', { name: '保存 To Do', exact: true }).click();
+  await expect(page.getByText('七夕', { exact: true })).toBeVisible();
+  await expect(page.getByText('农历七月初七 · 每年重复', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '完成七夕', exact: true }).click();
+  await expect(page.getByText('本次已完成，已更新到下一次', { exact: true })).toBeVisible();
+  const toastFont = await page
+    .locator('[data-sonner-toast]')
+    .last()
+    .evaluate((el) => getComputedStyle(el).fontFamily);
+  expect(toastFont).toContain('Noto Sans SC');
   await page.getByRole('tab', { name: '我们', exact: true }).click();
   await page.getByLabel('昵称', { exact: true }).fill('小爱');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByRole('heading', { name: '小爱', exact: true })).toBeVisible();
   await page.getByLabel('深色模式').click();
   await expect(page.locator('html')).toHaveClass(/dark/);
-  await page.getByLabel('AI 服务 URL').fill('https://api.example.com/v1');
-  await page.getByLabel('模型名称').fill('test-model');
-  await page.getByLabel('API Key').fill('test-key');
-  await page.getByRole('button', { name: '保存 AI 配置' }).click();
-  await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
-  await expect(page.locator('body')).not.toContainText('Love Notes');
-  const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth > window.innerWidth,
-  );
-  expect(overflow).toBe(false);
-  await page.reload();
-  await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible();
-  const navigation = await page.getByRole('navigation', { name: '主导航' }).boundingBox();
-  expect(navigation!.height).toBeGreaterThanOrEqual(64);
-  await page.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true });
+  const provider = createServer((_req, res) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(
+      JSON.stringify({
+        choices: [{ message: { role: 'assistant', content: '你好，我是星星。中文提示正常。' } }],
+      }),
+    );
+  });
+  await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
+  try {
+    await page.getByLabel('AI 名称').fill('星星');
+    await page.getByRole('button', { name: '保存 AI 名称', exact: true }).click();
+    await expect(page.getByText('AI 名称已更新', { exact: true })).toBeVisible();
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: '更换 AI 头像' }).click();
+    const chooser = await chooserPromise;
+    await chooser.setFiles({ name: 'ai.png', mimeType: 'image/png', buffer: image });
+    await expect(page.getByRole('img', { name: 'AI 头像', exact: true })).toBeVisible();
+    await page
+      .getByLabel('AI 服务 URL')
+      .fill(`http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`);
+    await page.getByLabel('模型名称').fill('test-model');
+    await page.getByLabel('API Key').fill('test-key');
+    await page.getByLabel('开启 @星星（兼容 @ai）').click();
+    await page.getByRole('button', { name: '保存 AI 配置' }).click();
+    await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
+    await page.getByRole('tab', { name: '聊天', exact: true }).click();
+    await page.getByRole('textbox', { name: '消息内容' }).fill('@星星 你好');
+    await page.getByRole('button', { name: '发送消息' }).click();
+    await expect(page.getByText('你好，我是星星。中文提示正常。', { exact: true })).toBeVisible({
+      timeout: 16000,
+    });
+    await expect(page.getByRole('img', { name: '星星的头像', exact: true })).toBeVisible();
+    await expect(page.locator('body')).not.toContainText('�');
+    await expect(page.locator('body')).not.toContainText('Love Notes');
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth,
+    );
+    expect(overflow).toBe(false);
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible();
+    const navigation = await page.getByRole('navigation', { name: '主导航' }).boundingBox();
+    expect(navigation!.height).toBeGreaterThanOrEqual(64);
+    await page.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true });
+  } finally {
+    provider.close();
+  }
   await context.close();
 });

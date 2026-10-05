@@ -4,7 +4,7 @@
 
 | 路径                          | 用途                                              |
 | ----------------------------- | ------------------------------------------------- |
-| apps/client/src/pages         | 手机四个 Tab 与登录                               |
+| apps/client/src/pages         | 手机五个 Tab 与登录                               |
 | apps/client/src/components/ui | shadcn/ui 官方源码组件                            |
 | apps/client/src/lib           | API、通知、类型、日期与上下文                     |
 | apps/server/src               | HTTP API、SQLite、Socket.IO、媒体、推送和 AI 工具 |
@@ -36,3 +36,5 @@ AI 使用仅发起者可配置的凭据。队列先保存 @ai 请求，工具按
 6. Java 21 / Android SDK：生成工程、构建 APK，上传 artifact。
 
 测试失败时上传 trace、截图和视频（7 天）；Web 与 APK 也作为构建产物交付。API 测试不调用真实 AI 服务／真实 Firebase，使用可注入 provider 与推送 sender；真实设备后台通知仍需实际 Firebase 凭据和设备验证。
+
+`packages/calendar` 为前后端共享的公历／农历计算模块，确保 UI、HTTP 与 AI 工具使用同一日期语义。底部导航为聊天、回忆、纪念日、To Do、我们。CI docker job 验证生产镜像启动与重启持久化，android 依赖 test 与 docker 两个 job 成功。

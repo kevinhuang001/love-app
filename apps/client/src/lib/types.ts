@@ -5,7 +5,9 @@ export type User = {
   coupleId: string | null;
   avatar: Media | null;
 };
+export type AIIdentity = { name: string; avatar: Media | null; enabled: boolean };
 export type Profile = {
+  ai: AIIdentity;
   user: User;
   partner: User | null;
   couple: { id: string; startDate: string | null } | null;
@@ -28,7 +30,19 @@ export type Message = {
   createdAt: string;
   readAt: string | null;
   media: Media | null;
+  assistant: { name: string; avatar: Media | null } | null;
 };
 export type Moment = { id: string; ownerId: string; title: string; date: string; media: Media };
 export type Anniversary = { id: string; title: string; date: string; yearly: number };
 export type Session = { server: string; token: string };
+
+export type Todo = {
+  id: string;
+  title: string;
+  date: string;
+  calendar: 'solar' | 'lunar';
+  leapMonth: number;
+  repeat: 'none' | 'yearly';
+  completed: number;
+  completedDate: string | null;
+};

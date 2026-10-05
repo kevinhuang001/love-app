@@ -270,7 +270,7 @@ test('@ai encrypted config, tool execution and per-user permissions', async (t) 
   );
   const other = executeTool(s.db, c.user.id, 'create_anniversary', {
     title: '另一个空间',
-    date: '2026-12-01',
+    date: '2025-12-01',
     yearly: true,
   }) as { id: string };
   assert.throws(() =>
@@ -359,4 +359,203 @@ test('OpenAI-compatible HTTP transport supports approved self-hosted providers',
     messages: [],
   });
   assert.equal(response.choices[0].message.content, '连接正常');
+});
+
+test('UTF-8 response decoding preserves Chinese across byte boundaries', async (t) => {
+  const old = process.env.AI_ALLOWED_HOSTS;
+  process.env.AI_ALLOWED_HOSTS = 'localhost';
+  const content = '名称已保存，七夕快乐！🌙';
+  const provider = createServer(async (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    const buffer = Buffer.from(
+      JSON.stringify({ choices: [{ message: { role: 'assistant', content } }] }),
+    );
+    for (let i = 0; i < buffer.length; i++) {
+      res.write(buffer.subarray(i, i + 1));
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    res.end();
+  });
+  await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
+  t.after(() => {
+    provider.close();
+    if (old === undefined) delete process.env.AI_ALLOWED_HOSTS;
+    else process.env.AI_ALLOWED_HOSTS = old;
+  });
+  const response = await complete(
+    `http://localhost:${(provider.address() as { port: number }).port}/v1`,
+    '',
+    {},
+  );
+  assert.equal(response.choices[0].message.content, content);
+});
+
+test('upward anniversaries, lunar todo lifecycle, couple isolation and AI tools', async (t) => {
+  const s = await setup(t),
+    a = await s.register('todo_alice'),
+    b = await s.register('todo_bob'),
+    c = await s.register('todo_other');
+  await s.pair(a.token, b.token);
+  await s
+    .api(a.token)
+    .post('/api/anniversaries', { title: '过去的日子', date: '2025-01-01' })
+    .expect(201);
+  await s
+    .api(a.token)
+    .post('/api/anniversaries', { title: '未来安排', date: '2099-01-01' })
+    .expect(400);
+  const value = {
+    title: '七夕',
+    date: '2026-07-07',
+    calendar: 'lunar',
+    leapMonth: false,
+    repeat: 'yearly',
+  };
+  const todo = await s.api(a.token).post('/api/todos', value).expect(201);
+  await s
+    .api(a.token)
+    .post('/api/todos', { ...value, date: '2026-02-01', leapMonth: true })
+    .expect(400);
+  assert.equal((await s.api(b.token).get('/api/todos')).body[0].calendar, 'lunar');
+  await s.api(c.token).get('/api/todos').expect(409);
+  assert.throws(() => executeTool(s.db, c.user.id, 'delete_todo', { id: todo.body.id }));
+  await s
+    .api(a.token)
+    .post(`/api/todos/${todo.body.id}/completion`, { completed: true })
+    .expect(204);
+  let row = (await s.api(a.token).get('/api/todos')).body[0];
+  assert.equal(row.completed, 0);
+  assert.ok(row.completedDate);
+  await s
+    .api(b.token)
+    .post(`/api/todos/${todo.body.id}/completion`, { completed: false })
+    .expect(204);
+  row = (await s.api(a.token).get('/api/todos')).body[0];
+  assert.equal(row.completedDate, null);
+  await s
+    .api(a.token)
+    .patch(`/api/todos/${todo.body.id}`, { ...value, title: '一起过七夕' })
+    .expect(204);
+  const one = executeTool(s.db, a.user.id, 'create_todo', {
+    ...value,
+    title: '具体的一天',
+    calendar: 'solar',
+    repeat: 'none',
+  }) as { id: string };
+  executeTool(s.db, a.user.id, 'complete_todo', { id: one.id, completed: true });
+  assert.equal(s.db.prepare('SELECT completed FROM todos WHERE id=?').get(one.id)!.completed, 1);
+  executeTool(s.db, a.user.id, 'delete_todo', { id: one.id });
+  await s.api(a.token).delete(`/api/todos/${todo.body.id}`).expect(204);
+});
+
+test('custom AI name and avatar are separate from user identity and visible to both chat participants', async (t) => {
+  const s = await setup(t),
+    a = await s.register('name_alice'),
+    b = await s.register('name_bob');
+  await s.pair(a.token, b.token);
+  const img = await sharp({
+    create: { width: 100, height: 100, channels: 3, background: '#a64562' },
+  })
+    .png()
+    .toBuffer();
+  const media = await request(s.app)
+    .post('/api/media')
+    .auth(a.token, { type: 'bearer' })
+    .attach('file', img, 'avatar.png')
+    .expect(201);
+  await s
+    .api(a.token)
+    .patch('/api/ai/profile', { name: '小桃', avatarMediaId: media.body.id })
+    .expect(204);
+  await s
+    .api(b.token)
+    .patch('/api/ai/profile', { name: '冒充', avatarMediaId: media.body.id })
+    .expect(403);
+  await s.api(a.token).patch('/api/ai/profile', { name: '含 空格' }).expect(400);
+  await s
+    .api(a.token)
+    .post('/api/ai/settings', {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'test',
+      apiKey: 'key',
+      enabled: true,
+    })
+    .expect(204);
+  assert.equal((await s.api(a.token).get('/api/me')).body.ai.name, '小桃');
+  assert.equal((await s.api(a.token).get('/api/ai/settings')).body.name, '小桃');
+  const msg = await s
+    .api(a.token)
+    .post('/api/messages', { clientId: randomUUID(), content: '@小桃，帮我记住七夕' })
+    .expect(201);
+  assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(msg.body.id));
+  const notMention = await s
+    .api(a.token)
+    .post('/api/messages', { clientId: randomUUID(), content: '@小桃子 不要误触发' })
+    .expect(201);
+  assert.equal(
+    s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(notMention.body.id),
+    undefined,
+  );
+  const worker = aiWorker({
+    db: s.db,
+    secret: 'test-secret-at-least-thirty-two-chars',
+    notify: () => {},
+    changed: () => {},
+    completion: async () => ({
+      choices: [{ message: { role: 'assistant', content: '七夕记住了。' } }],
+    }),
+  });
+  await worker();
+  const reply = (await s.api(b.token).get('/api/messages')).body.items.find(
+    (m: { role: string }) => m.role === 'assistant',
+  );
+  assert.equal(reply.assistant.name, '小桃');
+  assert.equal(reply.assistant.avatar.id, media.body.id);
+  executeTool(s.db, a.user.id, 'update_ai_profile', { name: '星星', avatarMediaId: media.body.id });
+  assert.equal((await s.api(a.token).get('/api/me')).body.ai.name, '星星');
+  assert.equal((await s.api(a.token).get('/api/me')).body.user.name, 'name_alice');
+  assert.equal(
+    (await s.api(a.token).get('/api/messages')).body.items.find(
+      (m: { role: string }) => m.role === 'assistant',
+    ).assistant.name,
+    '小桃',
+  );
+  const next = await s
+    .api(a.token)
+    .post('/api/messages', { clientId: randomUUID(), content: '@星星 在吗' })
+    .expect(201);
+  assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(next.body.id));
+});
+
+test('v2 migration retains old future schedules and is idempotent', async (t) => {
+  const s = await setup(t),
+    a = await s.register('migration_alice'),
+    b = await s.register('migration_bob');
+  await s.pair(a.token, b.token);
+  const coupleId = s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(a.user.id)!.coupleId;
+  s.db
+    .prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)')
+    .run('old-future', coupleId, '原有情人节', '2090-02-14', 1);
+  s.db
+    .prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)')
+    .run('old-past', coupleId, '原有纪念日', '2020-02-14', 1);
+  s.db.exec('PRAGMA user_version=1');
+  const { openDatabase } = await import('../src/db.js');
+  const migrated = openDatabase(join(s.dir, 'test.sqlite'));
+  assert.equal(
+    migrated.prepare('SELECT title FROM todos WHERE id=?').get('old-future')!.title,
+    '原有情人节',
+  );
+  assert.equal(
+    migrated.prepare('SELECT repeat FROM todos WHERE id=?').get('old-future')!.repeat,
+    'yearly',
+  );
+  assert.equal(
+    migrated.prepare('SELECT yearly FROM anniversaries WHERE id=?').get('old-past')!.yearly,
+    0,
+  );
+  migrated.close();
+  const again = openDatabase(join(s.dir, 'test.sqlite'));
+  assert.equal(again.prepare('SELECT count(*) AS n FROM todos').get()!.n, 1);
+  again.close();
 });

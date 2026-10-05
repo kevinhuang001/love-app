@@ -163,7 +163,15 @@ export function Chat() {
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="聊天">
       <div className="flex items-center gap-3 border-b bg-card px-5 py-3">
-        <Avatar name={profile.partner.name} />
+        {profile.partner.avatar ? (
+          <img
+            alt="另一半头像"
+            src={api.url(profile.partner.avatar.thumbnailUrl)}
+            className="size-10 rounded-full object-cover"
+          />
+        ) : (
+          <Avatar name={profile.partner.name} />
+        )}
         <div>
           <h2 className="text-sm font-semibold">{profile.partner.name}</h2>
           <p className="text-xs text-muted-foreground">
@@ -243,10 +251,21 @@ export function Chat() {
                         className={`overflow-hidden rounded-2xl px-3.5 py-2.5 ${mine ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border bg-card'}`}
                       >
                         {message.role === 'assistant' && (
-                          <p className="mb-2 flex items-center gap-1 text-xs font-medium text-primary">
-                            <Sparkles size={12} />
-                            Love AI
-                          </p>
+                          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-primary">
+                            {message.assistant?.avatar ? (
+                              <img
+                                alt={`${message.assistant.name}的头像`}
+                                src={api.url(message.assistant.avatar.thumbnailUrl)}
+                                className="size-7 rounded-full object-cover"
+                              />
+                            ) : (
+                              <span className="grid size-7 place-items-center rounded-full bg-secondary">
+                                <Sparkles size={13} />
+                              </span>
+                            )}
+                            <span>{message.assistant?.name || '小爱'}</span>
+                            <span className="text-[9px] text-muted-foreground">AI</span>
+                          </div>
                         )}
                         {message.media && <MediaPreview media={message.media} api={api} compact />}
                         {message.content && (
@@ -364,7 +383,7 @@ export function Chat() {
           </Button>
           <Textarea
             aria-label="消息内容"
-            placeholder="想和你说… 或 @ai 帮我记下"
+            placeholder={`想和你说… 或 @${profile.ai.name} 帮我记下`}
             value={text}
             maxLength={4000}
             onChange={(e) => {

@@ -2,21 +2,24 @@
 
 ## Docker
 
-需要可访问的 HTTPS 域名。设置 `.env`：
+需要可访问的 HTTPS 域名。先 `cp .env.docker.example .env`，再设置 `.env`：
 
 ```dotenv
 MEDIA_SIGNING_SECRET=替换为至少32字符的稳定随机密钥
 ALLOWED_ORIGINS=https://love.example.com,https://localhost,capacitor://localhost
 TRUST_PROXY=1
+LOVE_DOMAIN=love.example.com
 ```
 
 `MEDIA_SIGNING_SECRET` 同时用于媒体链接签名与 AI Key 加密，备份时必须保存，轮换后现有 AI Key 需要重新填写。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
 
 ```bash
-docker compose up -d --build
+docker compose --profile https up -d --build
 ```
 
-数据保存于 Docker `love-data` volume。服务只绑定宿主 `127.0.0.1:3000`；用 Caddy／Nginx 反代到该端口。TLS 终止在反向代理；必须转发 Socket.IO 的 WebSocket Upgrade。
+数据保存于 Docker `love-data` volume。`https` profile 启动仓库内置 Caddy，开放 80/443，自动申请证书并转发到内部 `love:3000`（支持 Socket.IO WebSocket）。先将 `LOVE_DOMAIN` 的 DNS 指向服务器，并开放端口。APK 使用相同 HTTPS 根地址。服务另外只绑定宿主 `127.0.0.1:${LOVE_PORT:-3000}`，可供本机访问。仅运行 `docker compose up -d --build` 时不启动 Caddy，适合本机调试或使用已有 Nginx/Caddy。不要两个反向代理同时占用 80/443。
+
+日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `docker compose --profile https up -d --build`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
 
 Caddy 示例：
 
@@ -45,10 +48,18 @@ Nginx 需 `client_max_body_size 105m`、`proxy_read_timeout 300s` 以及 WebSock
 
 ## AI 服务
 
-“我们”里填兼容 OpenAI Chat Completions 的根地址（一般为 `https://provider.example/v1`）、模型 ID 和 Key，开启 `@ai`。服务必须支持 function calling。
+“我们”里填兼容 OpenAI Chat Completions 的根地址（一般为 `https://provider.example/v1`）、模型 ID 和 Key，开启助手。可以为助手单独设置名称与头像，使用 `@名称` 或兼容的 `@ai`。服务必须支持 function calling。
 
 URL 默认只能使用 HTTPS，DNS 每次连接检查并拒绝本机、内网和链路本地地址，且不跟随重定向。自托管 Ollama 等内网服务须管理员显式设置 `AI_ALLOWED_HOSTS=ollama.internal` 后，用户才可配置 `http://ollama.internal:11434/v1`。不要将任意不可信域名放入白名单。
 
 AI Key 使用 AES-256-GCM 加密，仅服务端解密调用；GET 设置接口不会返回 Key。切换 AI URL 会清空旧 URL 的密钥，防止把旧凭据发送给新服务。当前指令、昵称和本次附件 ID 发给选定 AI 服务，工具返回的纪念日／媒体列表也会发给该服务；不会自动发送全部聊天历史或媒体二进制。
 
 这是自托管两人应用，SQLite / Socket.IO 为单进程架构。水平扩展前需改用 PostgreSQL、Socket.IO Redis adapter 和共享媒体存储。
+
+## 日期语义与升级
+
+纪念日只允许今天或过去的公历日期，包含当天，从第 1 天开始累计。To Do 使用独立表和独立导航，支持具体日期、不重复或每年重复、公历或农历。日期以北京时间的日历天计算。农历支持 1900–2100 年，选填闰月；普通七夕选择农历七月初七且不选闰月。每年重复时，小月没有三十按该月最后一天，闰月只在该闰月存在的年份重复。公历 2/29 在非闰年按 2/28。循环事项完成后自动跳到下一次，支持撤销；一次性事项逾期会显示“已逾期”，完成后标记已完成。
+
+现有 2.0 数据库首次启动自动升级到版本 2：旧列表中的未来日期转为 To Do，保留 ID、标题、日期和每年重复规则；过去日期保留为正向累计纪念日。不会删除对应安排。请先备份 named volume 和密钥。原项目的 Sequelize 数据仍需按前述独立迁移流程处理。
+
+AI 名称和头像属于每个用户自己的助手配置，修改不影响真人资料。头像必须使用当前空间内自己上传的图片。新的 AI 回复保存当时的名称和头像快照，另一半也能看到，之后改名不会改写旧聊天记录。`update_ai_profile` 修改助手本身，`update_profile` 修改发起者个人资料。

@@ -1,15 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, Heart, Trash2, CalendarHeart, Pencil } from 'lucide-react';
+import { Plus, Heart, CalendarHeart, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
-import { countdown, daysTogether, today } from '@/lib/dates';
+import { daysTogether, today } from '@/lib/dates';
 import type { Anniversary } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Empty, Loading, ErrorState } from '@/components/common';
 export function Dates() {
@@ -21,50 +20,45 @@ export function Dates() {
     enabled: Boolean(profile.couple),
   });
   const [open, setOpen] = useState(false),
+    [edit, setEdit] = useState<Anniversary | null>(null),
     [title, setTitle] = useState(''),
     [date, setDate] = useState(today()),
-    [yearly, setYearly] = useState(true),
     [busy, setBusy] = useState(false),
-    [edit, setEdit] = useState<Anniversary | null>(null),
+    [remove, setRemove] = useState<Anniversary | null>(null),
     [startOpen, setStartOpen] = useState(false),
-    [start, setStart] = useState(profile.couple?.startDate || today()),
-    [remove, setRemove] = useState<Anniversary | null>(null);
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      if (edit) await api.patch(`/api/anniversaries/${edit.id}`, { title, date, yearly });
-      else await api.post('/api/anniversaries', { title, date, yearly });
-      setOpen(false);
-      await cache.invalidateQueries({ queryKey: ['anniversaries'] });
-    } catch (err) {
-      toast.error((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
+    [start, setStart] = useState(profile.couple?.startDate || today());
   function begin(item?: Anniversary) {
     setEdit(item || null);
     setTitle(item?.title || '');
     setDate(item?.date || today());
-    setYearly(item ? Boolean(item.yearly) : true);
     setOpen(true);
+  }
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      if (edit) await api.patch(`/api/anniversaries/${edit.id}`, { title, date });
+      else await api.post('/api/anniversaries', { title, date });
+      await cache.invalidateQueries({ queryKey: ['anniversaries'] });
+      setOpen(false);
+      toast.success('纪念日已保存');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
   if (!profile.couple)
     return (
       <Empty
-        title="每个重要的日子，都记得"
-        detail="与另一半配对，一起记录相识的日子和那些值得期待的日期。"
+        title="记住故事发生的日子"
+        detail="配对后记录相识、旅行与每个已经发生的美好瞬间。"
         action={<Button onClick={openUs}>连接另一半</Button>}
       />
     );
-  const items =
-    query.data
-      ?.map((item) => ({ ...item, days: countdown(item.date, Boolean(item.yearly)) }))
-      .sort((a, b) => a.days - b.days) || [];
   return (
     <section className="page-scroll page-enter p-5 sm:p-8">
-      <Card className="relative mb-8 overflow-hidden border-0 bg-primary p-6 text-primary-foreground">
+      <Card className="relative mb-7 overflow-hidden border-0 bg-primary p-6 text-primary-foreground">
         <Heart
           className="absolute -right-4 -bottom-6 size-36 rotate-12 opacity-10"
           strokeWidth={1}
@@ -72,9 +66,9 @@ export function Dates() {
         <div className="flex justify-between">
           <p className="text-xs tracking-widest opacity-80">从那天起 · 一直是我们</p>
           <Button
-            className="size-7 text-inherit hover:bg-white/10"
             variant="ghost"
             size="icon"
+            className="size-7 text-inherit"
             aria-label="设置在一起的日期"
             onClick={() => setStartOpen(true)}
           >
@@ -91,20 +85,23 @@ export function Dates() {
           </>
         ) : (
           <Button
-            className="mt-6 w-fit bg-white/15 text-inherit hover:bg-white/25"
             variant="ghost"
+            className="mt-5 w-fit bg-white/15 text-inherit"
             onClick={() => setStartOpen(true)}
           >
             记录故事开始的那天
           </Button>
         )}
       </Card>
-      <div className="mb-5 flex items-center justify-between">
-        <h2 className="text-xl font-semibold">值得期待的日子</h2>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold">我们的纪念日</h2>
+          <p className="mt-2 text-xs text-muted-foreground">从过去数到今天，每一天都算数。</p>
+        </div>
         <Button
           size="icon"
-          className="rounded-full"
           aria-label="新增纪念日"
+          className="rounded-full"
           onClick={() => begin()}
         >
           <Plus size={20} />
@@ -114,34 +111,29 @@ export function Dates() {
         <Loading />
       ) : query.isError ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
-      ) : !items.length ? (
-        <Empty title="为期待留一个位置" detail="生日、纪念日、下次旅行，都可以记在这里。" />
+      ) : !query.data?.length ? (
+        <Empty title="记录第一个重要的日子" detail="未来的安排和节日倒计时，在 To Do 中添加。" />
       ) : (
         <div className="space-y-3">
-          {items.map((item) => (
-            <Card key={item.id} className="flex flex-row items-center gap-4 p-4">
-              <div className="grid size-11 place-items-center rounded-2xl bg-secondary text-primary">
+          {query.data.map((item) => (
+            <Card key={item.id} className="flex flex-row items-center gap-3 p-4">
+              <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-secondary text-primary">
                 <CalendarHeart size={21} />
-              </div>
+              </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{item.title}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {item.date}
-                  {item.yearly ? ' · 每年' : ''}
-                </p>
+                <h3 className="break-words text-sm font-medium">{item.title}</h3>
+                <p className="mt-1 text-xs text-muted-foreground">{item.date}</p>
               </div>
               <div className="text-right">
-                <p className="text-xl font-semibold tabular-nums text-primary">
-                  {item.days === 0 ? '今天' : Math.abs(item.days)}
+                <p className="text-2xl font-semibold tabular-nums text-primary">
+                  {daysTogether(item.date)}
                 </p>
-                <p className="text-[10px] text-muted-foreground">
-                  {item.days === 0 ? '好好庆祝' : item.days < 0 ? '天前' : '天后'}
-                </p>
+                <p className="text-[10px] text-muted-foreground">第几天 · 累计</p>
               </div>
               <div className="flex flex-col">
                 <Button
-                  size="icon"
                   variant="ghost"
+                  size="icon"
                   className="size-7"
                   aria-label={`编辑${item.title}`}
                   onClick={() => begin(item)}
@@ -149,8 +141,8 @@ export function Dates() {
                   <Pencil size={13} />
                 </Button>
                 <Button
-                  size="icon"
                   variant="ghost"
+                  size="icon"
                   className="size-7"
                   aria-label={`删除${item.title}`}
                   onClick={() => setRemove(item)}
@@ -162,10 +154,15 @@ export function Dates() {
           ))}
         </div>
       )}
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          if (!busy) setOpen(v);
+        }}
+      >
         <DialogContent>
-          <DialogTitle>{edit ? '编辑纪念日' : '添加一个重要的日子'}</DialogTitle>
-          <DialogDescription>给你们的期待一个名字。</DialogDescription>
+          <DialogTitle>{edit ? '编辑纪念日' : '添加一个纪念日'}</DialogTitle>
+          <DialogDescription>纪念日从当天开始累计；未来日期请添加为 To Do。</DialogDescription>
           <form onSubmit={save} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="date-title">名称</Label>
@@ -175,7 +172,6 @@ export function Dates() {
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={80}
                 required
-                placeholder="我们的纪念日"
               />
             </div>
             <div className="space-y-2">
@@ -185,14 +181,12 @@ export function Dates() {
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                min="1900-01-01"
+                max={today()}
                 required
               />
             </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="yearly">每年重复</Label>
-              <Switch id="yearly" checked={yearly} onCheckedChange={setYearly} />
-            </div>
-            <Button className="w-full" type="submit" disabled={busy}>
+            <Button type="submit" className="w-full" disabled={busy}>
               {busy ? '保存中…' : '保存纪念日'}
             </Button>
           </form>
@@ -203,17 +197,18 @@ export function Dates() {
           <DialogTitle>我们的故事，从哪天开始？</DialogTitle>
           <DialogDescription>设置在一起的日期，两个人都能看到。</DialogDescription>
           <form
+            className="space-y-4"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
                 await api.patch('/api/couple', { startDate: start });
                 await cache.invalidateQueries({ queryKey: ['profile'] });
                 setStartOpen(false);
-              } catch (err) {
-                toast.error((err as Error).message);
+                toast.success('开始日期已保存');
+              } catch (e) {
+                toast.error((e as Error).message);
               }
             }}
-            className="space-y-4"
           >
             <Label htmlFor="start-date">开始日期</Label>
             <Input
@@ -221,8 +216,9 @@ export function Dates() {
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              required
+              min="1900-01-01"
               max={today()}
+              required
             />
             <Button type="submit" className="w-full">
               保存日期
@@ -231,9 +227,9 @@ export function Dates() {
         </DialogContent>
       </Dialog>
       <Dialog
-        open={Boolean(remove)}
-        onOpenChange={(value) => {
-          if (!value) setRemove(null);
+        open={!!remove}
+        onOpenChange={(v) => {
+          if (!v) setRemove(null);
         }}
       >
         <DialogContent>
@@ -246,8 +242,9 @@ export function Dates() {
                 await api.delete(`/api/anniversaries/${remove!.id}`);
                 setRemove(null);
                 await cache.invalidateQueries({ queryKey: ['anniversaries'] });
-              } catch (err) {
-                toast.error((err as Error).message);
+                toast.success('纪念日已删除');
+              } catch (e) {
+                toast.error((e as Error).message);
               }
             }}
           >

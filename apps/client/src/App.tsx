@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
-import { Heart, MessageCircle, Images, CalendarHeart, UsersRound, Sparkles } from 'lucide-react';
+import {
+  Heart,
+  MessageCircle,
+  Images,
+  CalendarHeart,
+  UsersRound,
+  Sparkles,
+  ListTodo,
+} from 'lucide-react';
 import { App as NativeApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { toast, Toaster } from 'sonner';
@@ -13,6 +21,7 @@ import { Auth } from './pages/Auth';
 import { Chat } from './pages/Chat';
 import { Memories } from './pages/Memories';
 import { Dates } from './pages/Dates';
+import { Todos } from './pages/Todos';
 import { Us } from './pages/Us';
 import { Loading, ErrorState } from './components/common';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
@@ -55,7 +64,11 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
         setUnread((count) => count + 1);
     });
     connection.on('message:read', () => void cache.invalidateQueries({ queryKey: ['messages'] }));
-    connection.on('profile:changed', () => void cache.invalidateQueries({ queryKey: ['profile'] }));
+    connection.on('profile:changed', () => {
+      void cache.invalidateQueries({ queryKey: ['profile'] });
+      void cache.invalidateQueries({ queryKey: ['ai-settings'] });
+    });
+    connection.on('todos:changed', () => void cache.invalidateQueries({ queryKey: ['todos'] }));
     connection.on('moments:changed', () => void cache.invalidateQueries({ queryKey: ['moments'] }));
     connection.on(
       'anniversaries:changed',
@@ -135,8 +148,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
           </h1>
           {tab === 'chat' && (
             <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Sparkles size={12} />
-              @ai 可以帮忙
+              <Sparkles size={12} />@{profile.data.ai.name} 可以帮忙
             </span>
           )}
         </header>
@@ -147,16 +159,19 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
             <Memories />
           ) : tab === 'dates' ? (
             <Dates />
+          ) : tab === 'todos' ? (
+            <Todos />
           ) : (
             <Us logout={logout} onChat={() => setTab('chat')} />
           )}
         </div>
         <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
-          <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-4 rounded-none bg-transparent p-1">
+          <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-5 rounded-none bg-transparent p-1">
             {[
               ['chat', '聊天', MessageCircle],
               ['memories', '回忆', Images],
               ['dates', '纪念日', CalendarHeart],
+              ['todos', 'To Do', ListTodo],
               ['us', '我们', UsersRound],
             ].map(([value, label, Icon]) => {
               const Glyph = Icon as typeof Heart;
@@ -219,7 +234,12 @@ export default function App() {
           }}
         />
       )}
-      <Toaster richColors position="top-center" />
+      <Toaster
+        richColors
+        position="top-center"
+        closeButton
+        toastOptions={{ className: 'love-toast' }}
+      />
     </>
   );
 }

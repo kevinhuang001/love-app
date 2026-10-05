@@ -1,3 +1,5 @@
+import { today } from '@love/calendar';
+import { anniversarySchema, todoSchema, aiProfileSchema, mentionsAI } from './schedules.js';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -152,12 +154,37 @@ export function createApp(options: AppOptions = {}) {
   const messageView = (row: Record<string, unknown>) => ({
     ...row,
     media: mediaView(row.mediaId as string | null),
+    assistant:
+      row.role === 'assistant'
+        ? {
+            name: row.assistantName || '小爱',
+            avatar: mediaView(row.assistantAvatarMediaId as string | null),
+          }
+        : null,
   });
   const publicUser = (user: User) => ({
     ...safeUser(user),
     avatar: mediaView((user as User & { avatarMediaId?: string }).avatarMediaId || null),
   });
+  const aiIdentity = (user: User) => {
+    const row = db
+      .prepare('SELECT name,avatarMediaId,enabled FROM ai_settings WHERE userId=?')
+      .get(user.id);
+    const avatarId =
+      row?.avatarMediaId &&
+      db
+        .prepare('SELECT id FROM media WHERE id=? AND coupleId=? AND ownerId=?')
+        .get(row.avatarMediaId, user.coupleId, user.id)
+        ? String(row.avatarMediaId)
+        : null;
+    return {
+      name: row?.name || '小爱',
+      avatar: mediaView(avatarId),
+      enabled: Boolean(row?.enabled),
+    };
+  };
   const profile = (user: User) => ({
+    ai: aiIdentity(user),
     user: publicUser(user),
     partner: partner(user) ? publicUser(partner(user)!) : null,
     couple: user.coupleId
@@ -313,7 +340,9 @@ export function createApp(options: AppOptions = {}) {
     res.sendStatus(204);
   });
   route('patch', '/api/couple', (req, res) => {
-    const { startDate } = z.object({ startDate: date }).parse(req.body);
+    const { startDate } = z
+      .object({ startDate: date.refine((v) => v <= today(), '开始日期不能晚于今天') })
+      .parse(req.body);
     db.prepare('UPDATE couples SET startDate=? WHERE id=?').run(startDate, couple(req));
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     res.json({ startDate });
@@ -366,7 +395,7 @@ export function createApp(options: AppOptions = {}) {
         recipient.id,
         Date.now(),
       );
-      if (/(^|\s)@ai(?:\s|$)/i.test(value.content))
+      if (mentionsAI(value.content, String(aiIdentity(req.user).name)))
         db.prepare('INSERT INTO ai_jobs(messageId,userId) VALUES(?,?)').run(id, req.user.id);
       return db.prepare('SELECT * FROM messages WHERE id=?').get(id)!;
     });
@@ -489,9 +518,7 @@ export function createApp(options: AppOptions = {}) {
     ),
   );
   route('post', '/api/anniversaries', (req, res) => {
-    const value = z
-      .object({ title: text.min(1).max(80), date, yearly: z.boolean().default(true) })
-      .parse(req.body);
+    const value = anniversarySchema.parse(req.body);
     const id = randomUUID(),
       coupleId = couple(req);
     db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)').run(
@@ -499,7 +526,7 @@ export function createApp(options: AppOptions = {}) {
       coupleId,
       value.title,
       value.date,
-      Number(value.yearly),
+      0,
     );
     io.to(`couple:${coupleId}`).emit('anniversaries:changed');
     res.status(201).json({ id });
@@ -507,6 +534,48 @@ export function createApp(options: AppOptions = {}) {
   route('patch', '/api/anniversaries/:id', (req, res) => {
     executeTool(db, req.user.id, 'update_anniversary', { ...req.body, id: String(req.params.id) });
     io.to(`couple:${req.user.coupleId}`).emit('anniversaries:changed');
+    res.sendStatus(204);
+  });
+  route('get', '/api/todos', (req, res) =>
+    res.json(db.prepare('SELECT * FROM todos WHERE coupleId=? ORDER BY date').all(couple(req))),
+  );
+  const changeTodo = (
+    req: AuthRequest,
+    res: Response,
+    tool: string,
+    body: unknown,
+    status = 204,
+  ) => {
+    couple(req);
+    try {
+      const result = executeTool(db, req.user.id, tool, body);
+      io.to(`couple:${req.user.coupleId}`).emit('todos:changed');
+      if (status === 204) res.sendStatus(204);
+      else res.status(status).json(result);
+    } catch (error) {
+      if (error instanceof z.ZodError) throw error;
+      fail(404, (error as Error).message);
+    }
+  };
+  route('post', '/api/todos', (req, res) => changeTodo(req, res, 'create_todo', req.body, 201));
+  route('patch', '/api/todos/:id', (req, res) =>
+    changeTodo(req, res, 'update_todo', { ...req.body, id: String(req.params.id) }),
+  );
+  route('post', '/api/todos/:id/completion', (req, res) =>
+    changeTodo(req, res, 'complete_todo', { ...req.body, id: String(req.params.id) }),
+  );
+  route('delete', '/api/todos/:id', (req, res) =>
+    changeTodo(req, res, 'delete_todo', { id: String(req.params.id) }),
+  );
+  route('patch', '/api/ai/profile', (req, res) => {
+    const value = aiProfileSchema.parse(req.body);
+    if (value.avatarMediaId) {
+      ownedMedia(value.avatarMediaId, req);
+      if (!db.prepare("SELECT id FROM media WHERE id=? AND kind='image'").get(value.avatarMediaId))
+        fail(400, 'AI 头像请选择图片');
+    }
+    executeTool(db, req.user.id, 'update_ai_profile', value);
+    io.to(`user:${req.user.id}`).emit('profile:changed');
     res.sendStatus(204);
   });
   route('get', '/api/ai/settings', (req, res) => {
@@ -518,10 +587,10 @@ export function createApp(options: AppOptions = {}) {
         ? {
             baseUrl: row.baseUrl,
             model: row.model,
-            enabled: Boolean(row.enabled),
             hasKey: Boolean(row.secret),
+            ...aiIdentity(req.user),
           }
-        : { baseUrl: '', model: '', enabled: false, hasKey: false },
+        : { baseUrl: '', model: '', hasKey: false, ...aiIdentity(req.user) },
     );
   });
   route('post', '/api/ai/settings', (req, res) => {
@@ -542,7 +611,7 @@ export function createApp(options: AppOptions = {}) {
           ? old.secret
           : encryptKey('', secret);
     db.prepare(
-      'INSERT INTO ai_settings VALUES(?,?,?,?,?) ON CONFLICT(userId) DO UPDATE SET baseUrl=excluded.baseUrl,model=excluded.model,secret=excluded.secret,enabled=excluded.enabled',
+      'INSERT INTO ai_settings(userId,baseUrl,model,secret,enabled) VALUES(?,?,?,?,?) ON CONFLICT(userId) DO UPDATE SET baseUrl=excluded.baseUrl,model=excluded.model,secret=excluded.secret,enabled=excluded.enabled',
     ).run(req.user.id, baseUrl, value.model, encrypted, Number(value.enabled));
     res.sendStatus(204);
   });
@@ -562,6 +631,7 @@ export function createApp(options: AppOptions = {}) {
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     io.to(`couple:${req.user.coupleId}`).emit('moments:changed');
     io.to(`couple:${req.user.coupleId}`).emit('anniversaries:changed');
+    io.to(`couple:${req.user.coupleId}`).emit('todos:changed');
     res.json(result);
   });
   route('delete', '/api/anniversaries/:id', (req, res) => {
@@ -640,7 +710,12 @@ export function createApp(options: AppOptions = {}) {
     notify: (id, row) => io.to(`couple:${id}`).emit('message:new', messageView(row)),
     changed: (id, userId) => {
       io.to(`user:${userId}`).emit('profile:changed');
-      for (const event of ['profile:changed', 'moments:changed', 'anniversaries:changed'])
+      for (const event of [
+        'profile:changed',
+        'moments:changed',
+        'anniversaries:changed',
+        'todos:changed',
+      ])
         io.to(`couple:${id}`).emit(event);
     },
   });

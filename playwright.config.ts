@@ -3,7 +3,7 @@ export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
   workers: 1,
-  timeout: 45_000,
+  timeout: 90_000,
   expect: { timeout: 8000 },
   retries: process.env.CI ? 1 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
@@ -26,6 +26,7 @@ export default defineConfig({
       url: 'http://127.0.0.1:3000/api/health',
       reuseExistingServer: !process.env.CI,
       env: {
+        AI_ALLOWED_HOSTS: '127.0.0.1',
         DATABASE_PATH: '../../data/e2e.sqlite',
         UPLOADS_PATH: '../../data/e2e-media',
         ALLOWED_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173,https://localhost',

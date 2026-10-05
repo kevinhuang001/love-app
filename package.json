@@ -8,12 +8,13 @@
   },
   "workspaces": [
     "apps/client",
-    "apps/server"
+    "apps/server",
+    "packages/*"
   ],
   "scripts": {
     "dev": "concurrently -k \"npm run dev -w apps/server\" \"npm run dev -w apps/client\"",
     "build": "npm run build -w apps/server && npm run build -w apps/client",
-    "typecheck": "npm run typecheck --workspaces",
+    "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test -w apps/server && npm run test -w apps/client",
     "test:e2e": "playwright test",
     "start": "npm run start -w apps/server",

@@ -37,8 +37,28 @@ jobs:
         with:
           name: love-web
           path: apps/client/dist/
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: docker compose --profile https config --quiet
+        env:
+          MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
+          LOVE_DOMAIN: love.example.com
+      - run: docker build -t love-ci .
+      - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -v love-smoke-data:/app/data love-ci
+      - run: node scripts/docker-smoke.mjs
+      - run: docker restart love-smoke && node scripts/docker-smoke.mjs --verify-persistence
+      - run: docker logs love-smoke
+        if: failure()
+      - run: docker rm -f love-smoke; docker volume rm love-smoke-data
+        if: always()
   android:
-    needs: test
+    needs: [test, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:

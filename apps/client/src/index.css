@@ -25,6 +25,7 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 :root {
+  --font-app: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   --background: #fbf7f5;
   --foreground: #352c32;
   --card: #fffdfc;
@@ -52,7 +53,7 @@
   body {
     @apply bg-background text-foreground;
     margin: 0;
-    font-family: Inter, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+    font-family: var(--font-app);
     -webkit-tap-highlight-color: transparent;
   }
   button,
@@ -114,4 +115,16 @@ textarea {
       transform: translateY(0);
     }
   }
+}
+
+/* Radix portals and Sonner must use the same bundled Chinese font in Android WebView. */
+input,
+textarea,
+select,
+button,
+[data-slot='dialog-content'],
+[data-sonner-toaster],
+[data-sonner-toast],
+.love-toast {
+  font-family: var(--font-app) !important;
 }

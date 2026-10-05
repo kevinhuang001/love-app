@@ -19,7 +19,8 @@
     "multer": "2.4.0",
     "sharp": "0.35.5",
     "socket.io": "4.8.4",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "@love/calendar": "*"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",

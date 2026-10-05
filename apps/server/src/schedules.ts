@@ -34,7 +34,7 @@ export const aiProfileSchema = z.object({
   name: aiNameSchema,
   avatarMediaId: z.string().uuid().nullable().optional(),
 });
-export function mentionsAI(content: string, name = '小爱') {
+export function mentionsAI(content: string, name: string) {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|\\s)@(?:ai|${escaped})(?=$|[\\s，。！？、,:;!?.])`, 'iu').test(content);
+  return new RegExp(`(^|\\s)@${escaped}(?=$|[\\s，。！？、,:;!?.])`, 'u').test(content);
 }

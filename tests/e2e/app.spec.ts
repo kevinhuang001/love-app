@@ -147,7 +147,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
       .fill(`http://127.0.0.1:${(provider.address() as { port: number }).port}/v1`);
     await page.getByLabel('模型名称').fill('test-model');
     await page.getByLabel('API Key').fill('test-key');
-    await page.getByLabel('开启 @星星（兼容 @ai）').click();
+    await page.getByLabel('开启 @星星').click();
     await page.getByRole('button', { name: '保存 AI 配置' }).click();
     await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: '聊天', exact: true }).click();
@@ -172,4 +172,187 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     provider.close();
   }
   await context.close();
+});
+
+test('album batch upload, filters, layouts, fullscreen browsing and pagination', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now().toString().slice(-9),
+    username = `album${stamp}`,
+    password = 'password123';
+  await page.goto('/');
+  const login = await page.getByRole('button', { name: '进入我们的空间' }).boundingBox();
+  const server = await page.locator('details.server-disclosure').boundingBox();
+  expect(server!.y).toBeGreaterThanOrEqual(login!.y + login!.height);
+  await page.getByRole('tab', { name: '创建账号' }).click();
+  await page.getByText('服务器设置', { exact: true }).click();
+  await page.getByLabel('服务器地址').fill('http://127.0.0.1:3000');
+  await page.getByLabel('用户名', { exact: true }).fill(username);
+  await page.getByLabel('怎么称呼你').fill('小林');
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '开始我们的故事' }).click();
+  await expect(page.getByRole('heading', { name: '想说的话，都留在这里' })).toBeVisible();
+  const self = await (
+    await request.post('http://127.0.0.1:3000/api/auth/login', { data: { username, password } })
+  ).json();
+  const peer = await (
+    await request.post('http://127.0.0.1:3000/api/auth/register', {
+      data: { username: `peer${stamp}`, name: '阿宁', password },
+    })
+  ).json();
+  const headers = { Authorization: `Bearer ${self.token}` },
+    peerHeaders = { Authorization: `Bearer ${peer.token}` };
+  const invite = await (
+    await request.post('http://127.0.0.1:3000/api/pairing/invite', { headers, data: {} })
+  ).json();
+  await request.post('http://127.0.0.1:3000/api/pairing/join', {
+    headers: peerHeaders,
+    data: { code: invite.code },
+  });
+  await expect(page.getByRole('heading', { name: '阿宁', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await page.getByRole('button', { name: '新增回忆' }).click();
+  const image = await sharp({
+    create: { width: 900, height: 600, channels: 3, background: '#789684' },
+  })
+    .png()
+    .toBuffer();
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'walk1.png', mimeType: 'image/png', buffer: image },
+    { name: 'walk2.png', mimeType: 'image/png', buffer: image },
+  ]);
+  await expect(page.getByText('已选择 2 个文件 · 点击重选')).toBeVisible();
+  await page.getByLabel('写下这一刻').fill('周末');
+  await page.getByLabel('发生日期').fill('2026-06-15');
+  await page.getByRole('button', { name: '保存回忆' }).click();
+  await expect(page.getByText('已保存 2 个回忆', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('album-item')).toHaveCount(2);
+  const own = (await (await request.get('http://127.0.0.1:3000/api/moments', { headers })).json())
+    .items[0];
+  const peerMedia = await (
+    await request.post('http://127.0.0.1:3000/api/media', {
+      headers: peerHeaders,
+      multipart: { file: { name: 'cafe.png', mimeType: 'image/png', buffer: image } },
+    })
+  ).json();
+  await request.post('http://127.0.0.1:3000/api/moments', {
+    headers: peerHeaders,
+    data: { title: '咖啡馆', date: '2025-12-01', mediaId: peerMedia.id },
+  });
+  await request.post('http://127.0.0.1:3000/api/moments', {
+    headers,
+    data: { title: '山中散步', date: '2026-06-16', mediaId: own.media.id },
+  });
+  const { spawnSync } = await import('node:child_process');
+  const clip = spawnSync('ffmpeg', [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=0x476958:s=320x240:d=1',
+    '-c:v',
+    'libx264',
+    '-threads',
+    '1',
+    '-movflags',
+    'frag_keyframe+empty_moov',
+    '-f',
+    'mp4',
+    'pipe:1',
+  ]);
+  expect(clip.status).toBe(0);
+  const video = await (
+    await request.post('http://127.0.0.1:3000/api/media', {
+      headers,
+      multipart: { file: { name: 'sea.mp4', mimeType: 'video/mp4', buffer: clip.stdout } },
+    })
+  ).json();
+  await request.post('http://127.0.0.1:3000/api/moments', {
+    headers,
+    data: { title: '海边视频', date: '2026-07-01', mediaId: video.id },
+  });
+  await expect(page.getByTestId('album-item')).toHaveCount(5);
+  await page.getByLabel('排序方式').selectOption('date_asc');
+  await expect(page.getByTestId('album-item').first()).toHaveAttribute('data-date', '2025-12-01');
+  await page.getByLabel('排序方式').selectOption('date_desc');
+  await expect(page.getByTestId('album-item').first()).toHaveAttribute('data-date', '2026-07-01');
+  await page.getByLabel('搜索回忆').fill('周末');
+  await expect(page.getByTestId('album-item')).toHaveCount(2);
+  await page.getByRole('button', { name: '视频', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '没有找到符合条件的回忆' })).toBeVisible();
+  await page.getByRole('button', { name: '清除搜索' }).click();
+  await expect(page.getByTestId('album-item')).toHaveCount(1);
+  await page.getByRole('button', { name: '播放视频：海边视频', exact: true }).click();
+  await expect(page.getByRole('dialog').locator('video')).toBeVisible();
+  await expect
+    .poll(() =>
+      page
+        .getByRole('dialog')
+        .locator('video')
+        .evaluate((v) => (v as HTMLVideoElement).duration),
+    )
+    .toBeGreaterThan(0);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '全部', exact: true }).click();
+  await page.getByRole('button', { name: '筛选相册', exact: true }).click();
+  await page.getByLabel('上传者').selectOption('partner');
+  await page.getByLabel('开始日期', { exact: true }).fill('2025-01-01');
+  await page.getByLabel('结束日期', { exact: true }).fill('2025-12-31');
+  await page.getByRole('button', { name: '应用筛选' }).click();
+  await expect(page.getByTestId('album-item')).toHaveCount(1);
+  await page.getByRole('button', { name: '查看图片：咖啡馆', exact: true }).click();
+  await expect(page.getByRole('button', { name: '下一项回忆' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '编辑回忆' })).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '清除筛选', exact: true }).click();
+  await expect(page.getByTestId('album-item')).toHaveCount(5);
+  await page.getByRole('button', { name: '时间轴查看', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /2026 年 7 月/ })).toBeVisible();
+  await page.getByRole('button', { name: '网格查看', exact: true }).click();
+  await page.getByRole('button', { name: '查看图片：山中散步', exact: true }).click();
+  const fullscreen = await page.getByRole('dialog').boundingBox();
+  const viewport = page.viewportSize()!;
+  expect(fullscreen!.x).toBe(0);
+  expect(fullscreen!.y).toBe(0);
+  expect(fullscreen!.width).toBe(viewport.width);
+  expect(fullscreen!.height).toBe(viewport.height);
+  await page.getByRole('button', { name: '放大照片' }).click();
+  await expect(page.locator('.album-viewer-media')).toHaveClass(/is-zoomed/);
+  await page.getByRole('button', { name: '还原照片' }).click();
+  await page.getByRole('dialog').press('ArrowRight');
+  await expect(
+    page.getByRole('dialog').getByRole('heading', { name: '周末', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '紧凑查看', exact: true }).click();
+  await expect(page.locator('.album-grid.is-compact')).toBeVisible();
+  // Seed older pages directly; publication above is exercised through the real API and UI.
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync('data/e2e-album.sqlite');
+  const user = db.prepare('SELECT id,coupleId FROM users WHERE username=?').get(username)!;
+  const insert = db.prepare(
+    'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
+  );
+  for (let i = 0; i < 61; i++)
+    insert.run(crypto.randomUUID(), user.coupleId, user.id, `回忆${i}`, own.media.id, '2024-01-01');
+  db.close();
+  await page.reload();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await expect(page.getByText('66 个回忆', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('album-item')).toHaveCount(60);
+  await page.getByTestId('album-item').last().getByRole('button').click();
+  await page.getByRole('button', { name: '下一项回忆' }).click();
+  await expect(page.getByRole('dialog').getByText('61 / 66', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(page.getByTestId('album-item')).toHaveCount(66);
+  await page.reload();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await expect(page.getByRole('button', { name: '紧凑查看' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });

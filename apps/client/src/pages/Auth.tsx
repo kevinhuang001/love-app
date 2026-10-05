@@ -70,33 +70,6 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
           </TabsList>
         </Tabs>
         <form onSubmit={submit} className="space-y-4">
-          <details className="server-disclosure rounded-xl border px-4 py-3">
-            <summary className="flex cursor-pointer items-center justify-between text-xs font-medium">
-              <span>服务器设置</span>
-              <span className="server-summary text-[11px] font-normal text-muted-foreground">
-                点击配置 URL
-              </span>
-            </summary>
-            <div className="pt-4">
-              {' '}
-              <div className="space-y-2">
-                <Label htmlFor="server">
-                  <Server size={14} /> 服务器地址
-                </Label>
-                <Input
-                  id="server"
-                  type="url"
-                  value={server}
-                  onChange={(e) => setServer(e.target.value)}
-                  required
-                  placeholder="https://love.example.com"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                />
-                <p className="text-xs text-muted-foreground">你和另一半需要连接同一台服务器。</p>
-              </div>
-            </div>
-          </details>
           <div className="space-y-2">
             <Label htmlFor="username">用户名</Label>
             <Input
@@ -160,10 +133,33 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
             {busy ? '连接中…' : mode === 'login' ? '进入我们的空间' : '开始我们的故事'}
             <ArrowRight size={16} />
           </Button>
+          <details className="server-disclosure rounded-xl border px-4 py-3">
+            <summary className="flex cursor-pointer items-center justify-between text-xs font-medium">
+              <span>服务器设置</span>
+              <span className="server-summary text-[11px] font-normal text-muted-foreground">
+                点击配置 URL
+              </span>
+            </summary>
+            <div className="pt-4">
+              <div className="space-y-2">
+                <Label htmlFor="server">
+                  <Server size={14} /> 服务器地址
+                </Label>
+                <Input
+                  id="server"
+                  type="url"
+                  value={server}
+                  onChange={(e) => setServer(e.target.value)}
+                  required
+                  placeholder="https://love.example.com"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-muted-foreground">你和另一半需要连接同一台服务器。</p>
+              </div>
+            </div>
+          </details>
         </form>
-        <p className="mt-7 text-center text-[11px] text-muted-foreground">
-          与你的另一半连接同一台服务器
-        </p>
       </div>
     </main>
   );

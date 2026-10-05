@@ -7,34 +7,6 @@ import dns from 'node:dns';
 import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { transaction, type DB, type User } from './db.js';
-export function initializeAI(db: DB) {
-  db.exec(`CREATE TABLE IF NOT EXISTS ai_settings(userId TEXT PRIMARY KEY REFERENCES users(id), baseUrl TEXT NOT NULL, model TEXT NOT NULL, secret TEXT NOT NULL, enabled INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS ai_jobs(messageId INTEGER PRIMARY KEY REFERENCES messages(id), userId TEXT REFERENCES users(id), status TEXT NOT NULL DEFAULT 'pending', error TEXT, transcript TEXT);
-    CREATE TABLE IF NOT EXISTS ai_actions(messageId INTEGER, callId TEXT, result TEXT NOT NULL, PRIMARY KEY(messageId,callId));`);
-  for (const [table, column, definition] of [
-    ['ai_settings', 'name', "TEXT NOT NULL DEFAULT '小爱'"],
-    ['ai_settings', 'avatarMediaId', 'TEXT REFERENCES media(id)'],
-    ['messages', 'assistantName', 'TEXT'],
-    ['messages', 'assistantAvatarMediaId', 'TEXT REFERENCES media(id)'],
-  ])
-    if (
-      !db
-        .prepare(`PRAGMA table_info(${table})`)
-        .all()
-        .some((v) => v.name === column)
-    )
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  const columns = db.prepare('PRAGMA table_info(users)').all();
-  if (!columns.some((col) => col.name === 'avatarMediaId'))
-    db.exec('ALTER TABLE users ADD COLUMN avatarMediaId TEXT REFERENCES media(id)');
-  if (
-    !db
-      .prepare('PRAGMA table_info(messages)')
-      .all()
-      .some((col) => col.name === 'role')
-  )
-    db.exec("ALTER TABLE messages ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
-}
 function encryptionKey(secret: string) {
   return createHash('sha256').update(`love-ai:${secret}`).digest();
 }
@@ -285,21 +257,15 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
     case 'create_anniversary': {
       const v = anniversarySchema.parse(input),
         id = randomUUID();
-      db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)').run(
-        id,
-        coupleId!,
-        v.title,
-        v.date,
-        0,
-      );
+      db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?)').run(id, coupleId!, v.title, v.date);
       return { id, ...v };
     }
     case 'update_anniversary': {
       const v = anniversarySchema.extend({ id: z.string().uuid() }).parse(input);
       if (
         !db
-          .prepare('UPDATE anniversaries SET title=?,date=?,yearly=? WHERE id=? AND coupleId=?')
-          .run(v.title, v.date, 0, v.id, coupleId!).changes
+          .prepare('UPDATE anniversaries SET title=?,date=? WHERE id=? AND coupleId=?')
+          .run(v.title, v.date, v.id, coupleId!).changes
       )
         throw new Error('纪念日不存在');
       return { updated: true };
@@ -421,14 +387,9 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
       )
         throw new Error('只能保存你自己上传的媒体');
       const id = randomUUID();
-      db.prepare('INSERT INTO moments VALUES(?,?,?,?,?,?)').run(
-        id,
-        coupleId!,
-        userId,
-        v.title,
-        v.mediaId,
-        v.date,
-      );
+      db.prepare(
+        'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
+      ).run(id, coupleId!, userId, v.title, v.mediaId, v.date);
       return { id, published: true };
     }
     case 'set_relationship_date': {

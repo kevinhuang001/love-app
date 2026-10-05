@@ -84,7 +84,7 @@ test('authentication, one-use pairing and isolation between couples', async (t) 
   assert.equal((await s.api(c.token).get('/api/messages')).body.items.length, 0);
   const date = await s
     .api(a.token)
-    .post('/api/anniversaries', { title: '生日', date: '2026-02-28', yearly: true })
+    .post('/api/anniversaries', { title: '生日', date: '2026-02-28' })
     .expect(201);
   await s.api(c.token).delete(`/api/anniversaries/${date.body.id}`).expect(404);
   await s
@@ -207,7 +207,7 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .api(a.token)
     .post('/api/moments', { mediaId: video.body.id, title: '一起看海', date: '2026-10-05' })
     .expect(201);
-  assert.equal((await s.api(b.token).get('/api/moments')).body[0].media.kind, 'video');
+  assert.equal((await s.api(b.token).get('/api/moments')).body.items[0].media.kind, 'video');
   await s.api(b.token).delete(`/api/moments/${memory.body.id}`).expect(404);
   await s
     .api(a.token)
@@ -245,7 +245,7 @@ test('durable push, invalid token cleanup and suppression for read messages', as
   assert.equal(s.db.prepare('SELECT * FROM devices').all().length, 0);
 });
 
-test('@ai encrypted config, tool execution and per-user permissions', async (t) => {
+test('named assistant encrypted config, tool execution and per-user permissions', async (t) => {
   const s = await setup(t),
     a = await s.register('alice'),
     b = await s.register('bob'),
@@ -271,20 +271,18 @@ test('@ai encrypted config, tool execution and per-user permissions', async (t) 
   const other = executeTool(s.db, c.user.id, 'create_anniversary', {
     title: '另一个空间',
     date: '2025-12-01',
-    yearly: true,
   }) as { id: string };
   assert.throws(() =>
     executeTool(s.db, a.user.id, 'update_anniversary', {
       id: other.id,
       title: '攻击',
       date: '2026-01-01',
-      yearly: true,
     }),
   );
   assert.throws(() => executeTool(s.db, a.user.id, 'shell', { command: 'whoami' }));
   const message = await s
     .api(a.token)
-    .post('/api/messages', { clientId: randomUUID(), content: '@ai 把我的昵称改为小爱' })
+    .post('/api/messages', { clientId: randomUUID(), content: '@小爱 把我的昵称改为小爱' })
     .expect(201);
   let calls = 0;
   const worker = aiWorker({
@@ -488,6 +486,14 @@ test('custom AI name and avatar are separate from user identity and visible to b
     .post('/api/messages', { clientId: randomUUID(), content: '@小桃，帮我记住七夕' })
     .expect(201);
   assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(msg.body.id));
+  const removedAlias = await s
+    .api(a.token)
+    .post('/api/messages', { clientId: randomUUID(), content: '@ai 不应触发' })
+    .expect(201);
+  assert.equal(
+    s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(removedAlias.body.id),
+    undefined,
+  );
   const notMention = await s
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '@小桃子 不要误触发' })
@@ -527,35 +533,124 @@ test('custom AI name and avatar are separate from user identity and visible to b
   assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(next.body.id));
 });
 
-test('v2 migration retains old future schedules and is idempotent', async (t) => {
+test('album filters, ordering and cursor pagination preserve isolation beyond 200 memories', async (t) => {
   const s = await setup(t),
-    a = await s.register('migration_alice'),
-    b = await s.register('migration_bob');
+    a = await s.register('album_alice'),
+    b = await s.register('album_bob'),
+    c = await s.register('album_charlie'),
+    d = await s.register('album_dana');
   await s.pair(a.token, b.token);
-  const coupleId = s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(a.user.id)!.coupleId;
-  s.db
-    .prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)')
-    .run('old-future', coupleId, '原有情人节', '2090-02-14', 1);
-  s.db
-    .prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)')
-    .run('old-past', coupleId, '原有纪念日', '2020-02-14', 1);
-  s.db.exec('PRAGMA user_version=1');
-  const { openDatabase } = await import('../src/db.js');
-  const migrated = openDatabase(join(s.dir, 'test.sqlite'));
-  assert.equal(
-    migrated.prepare('SELECT title FROM todos WHERE id=?').get('old-future')!.title,
-    '原有情人节',
+  await s.pair(c.token, d.token);
+  const coupleId = String(
+    s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(a.user.id)!.coupleId,
   );
-  assert.equal(
-    migrated.prepare('SELECT repeat FROM todos WHERE id=?').get('old-future')!.repeat,
-    'yearly',
+  const otherCouple = String(
+    s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(c.user.id)!.coupleId,
   );
-  assert.equal(
-    migrated.prepare('SELECT yearly FROM anniversaries WHERE id=?').get('old-past')!.yearly,
-    0,
+  const imageId = randomUUID(),
+    videoId = randomUUID(),
+    otherMedia = randomUUID();
+  const media = s.db.prepare(
+    'INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES(?,?,?,?,?,?,?,?)',
   );
-  migrated.close();
-  const again = openDatabase(join(s.dir, 'test.sqlite'));
-  assert.equal(again.prepare('SELECT count(*) AS n FROM todos').get()!.n, 1);
-  again.close();
+  media.run(
+    imageId,
+    coupleId,
+    a.user.id,
+    'image',
+    'test.jpg',
+    'test.webp',
+    'test.webp',
+    '2026-01-01',
+  );
+  media.run(
+    videoId,
+    coupleId,
+    b.user.id,
+    'video',
+    'test.mp4',
+    'test.mp4',
+    'test.webp',
+    '2026-01-01',
+  );
+  media.run(
+    otherMedia,
+    otherCouple,
+    c.user.id,
+    'image',
+    'other.jpg',
+    'other.webp',
+    'other.webp',
+    '2026-01-01',
+  );
+  const insert = s.db.prepare(
+    'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date,createdAt) VALUES(?,?,?,?,?,?,?)',
+  );
+  for (let i = 0; i < 205; i++)
+    insert.run(
+      randomUUID(),
+      coupleId,
+      i % 2 ? a.user.id : b.user.id,
+      i === 7 ? '50%_完成' : `散步${i}`,
+      i % 3 ? imageId : videoId,
+      new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10),
+      new Date(Date.UTC(2026, 0, 1, 0, 0, 205 - i)).toISOString(),
+    );
+  insert.run(
+    randomUUID(),
+    otherCouple,
+    c.user.id,
+    '其他空间',
+    otherMedia,
+    '2099-01-01',
+    '2099-01-01T00:00:00.000Z',
+  );
+  const seen = new Set<string>();
+  let cursor: string | null = null;
+  let previous = '9999-99-99';
+  do {
+    const page = (
+      await s.api(a.token).get('/api/moments?limit=60' + (cursor ? `&cursor=${cursor}` : ''))
+    ).body;
+    assert.equal(page.total, 205);
+    assert.ok(page.items.length <= 60);
+    for (const item of page.items) {
+      assert.ok(item.date <= previous);
+      previous = item.date;
+      assert.ok(!seen.has(item.id));
+      seen.add(item.id);
+      assert.notEqual(item.title, '其他空间');
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  assert.equal(seen.size, 205);
+  const oldest = (await s.api(a.token).get('/api/moments?sort=date_asc&limit=1')).body;
+  assert.equal(oldest.items[0].date, '2025-01-01');
+  const uploaded = (await s.api(a.token).get('/api/moments?sort=uploaded_desc&limit=1')).body;
+  assert.equal(uploaded.items[0].date, '2025-01-01');
+  const filtered = (
+    await s.api(a.token).get('/api/moments?type=video&owner=mine&from=2025-01-01&to=2025-01-31')
+  ).body;
+  assert.equal(filtered.total, 5);
+  assert.ok(
+    filtered.items.every(
+      (item: { ownerId: string; media: { kind: string } }) =>
+        item.ownerId === a.user.id && item.media.kind === 'video',
+    ),
+  );
+  const partner = (await s.api(a.token).get('/api/moments?owner=partner&limit=100')).body;
+  assert.equal(partner.total, 103);
+  const literal = (await s.api(a.token).get('/api/moments?search=' + encodeURIComponent('%_')))
+    .body;
+  assert.equal(literal.total, 1);
+  assert.equal(literal.items[0].title, '50%_完成');
+  await s.api(a.token).get('/api/moments?from=2025-02-01&to=2025-01-01').expect(400);
+  await s.api(a.token).get('/api/moments?from=2025-02-31').expect(400);
+  await s.api(a.token).get('/api/moments?sort=invalid').expect(400);
+  await s.api(a.token).get('/api/moments?cursor=broken').expect(400);
+  await s
+    .api(a.token)
+    .get('/api/moments?sort=date_desc&cursor=' + oldest.nextCursor)
+    .expect(400);
+  await s.api(a.token).get('/api/moments?limit=101').expect(400);
 });

@@ -78,6 +78,57 @@ export function ErrorState({ error, retry }: { error: Error; retry: () => void }
     </div>
   );
 }
+export function MediaThumbnail({
+  api,
+  media,
+  onClick,
+  label,
+  className = '',
+}: {
+  api: Api;
+  media: Media;
+  onClick: () => void;
+  label?: string;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <button
+      type="button"
+      aria-label={label || (media.kind === 'video' ? '播放视频' : '查看图片')}
+      className={`media-thumbnail relative block w-full overflow-hidden rounded-xl bg-secondary ${className}`}
+      onClick={onClick}
+    >
+      {failed ? (
+        <div className="grid aspect-square place-items-center">
+          <ImageOff />
+        </div>
+      ) : (
+        <img
+          loading="lazy"
+          decoding="async"
+          src={api.url(media.thumbnailUrl)}
+          onError={() => setFailed(true)}
+          alt={media.kind === 'video' ? '视频封面' : '回忆照片'}
+          className="max-h-72 w-full object-cover"
+        />
+      )}
+      {media.kind === 'video' && (
+        <>
+          <span className="absolute inset-0 grid place-items-center">
+            <span className="grid size-10 place-items-center rounded-full bg-black/40 text-white">
+              <Play size={18} fill="currentColor" />
+            </span>
+          </span>
+          <span className="absolute right-2 bottom-2 rounded bg-black/50 px-1.5 py-0.5 text-[10px] text-white">
+            {Math.floor((media.duration || 0) / 60)}:
+            {String(Math.round(media.duration || 0) % 60).padStart(2, '0')}
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
 export function MediaPreview({
   api,
   media,
@@ -87,47 +138,19 @@ export function MediaPreview({
   media: Media;
   compact?: boolean;
 }) {
-  const [open, setOpen] = useState(false),
-    [failed, setFailed] = useState(false);
+  const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        type="button"
-        aria-label={media.kind === 'video' ? '播放视频' : '查看图片'}
-        className={`relative block w-full overflow-hidden rounded-xl bg-secondary ${compact ? 'max-w-64' : ''}`}
+      <MediaThumbnail
+        api={api}
+        media={media}
         onClick={() => setOpen(true)}
-      >
-        {failed ? (
-          <div className="grid aspect-square place-items-center">
-            <ImageOff />
-          </div>
-        ) : (
-          <img
-            loading="lazy"
-            decoding="async"
-            src={api.url(media.thumbnailUrl)}
-            onError={() => setFailed(true)}
-            alt={media.kind === 'video' ? '视频封面' : '回忆照片'}
-            className="max-h-72 w-full object-cover"
-          />
-        )}
-        {media.kind === 'video' && (
-          <>
-            <span className="absolute inset-0 grid place-items-center">
-              <span className="grid size-10 place-items-center rounded-full bg-black/40 text-white">
-                <Play size={18} fill="currentColor" />
-              </span>
-            </span>
-            <span className="absolute right-2 bottom-2 rounded bg-black/50 px-1.5 text-xs text-white">
-              {Math.round(media.duration || 0)} 秒
-            </span>
-          </>
-        )}
-      </button>
+        className={compact ? 'max-w-64' : ''}
+      />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl">
           <DialogTitle>{media.kind === 'video' ? '视频预览' : '照片预览'}</DialogTitle>
-          <DialogDescription>轻点关闭返回聊天或相册</DialogDescription>
+          <DialogDescription>轻点关闭返回聊天</DialogDescription>
           {open &&
             (media.kind === 'video' ? (
               <video

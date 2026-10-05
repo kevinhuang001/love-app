@@ -1,4 +1,5 @@
 import { today } from '@love/calendar';
+import { readAlbum } from './album.js';
 import { anniversarySchema, todoSchema, aiProfileSchema, mentionsAI } from './schedules.js';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
@@ -23,7 +24,6 @@ import {
 import { processMedia } from './media.js';
 import { pushWorker, type PushSender } from './push.js';
 import {
-  initializeAI,
   aiConfigSchema,
   validateAIUrl,
   encryptKey,
@@ -74,7 +74,6 @@ export type AppOptions = {
 };
 export function createApp(options: AppOptions = {}) {
   const db = openDatabase(options.database || 'data/love.sqlite');
-  initializeAI(db);
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
   db.exec('CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
@@ -472,10 +471,12 @@ export function createApp(options: AppOptions = {}) {
       }),
   );
   route('get', '/api/moments', (req, res) => {
-    const rows = db
-      .prepare('SELECT * FROM moments WHERE coupleId=? ORDER BY date DESC LIMIT 200')
-      .all(couple(req));
-    res.json(rows.map((row) => ({ ...row, media: mediaView(row.mediaId as string) })));
+    couple(req);
+    const result = readAlbum(db, req.user, req.query);
+    res.json({
+      ...result,
+      items: result.items.map((row) => ({ ...row, media: mediaView(row.mediaId as string) })),
+    });
   });
   route('post', '/api/moments', (req, res) => {
     const value = z
@@ -484,14 +485,9 @@ export function createApp(options: AppOptions = {}) {
     const coupleId = couple(req);
     ownedMedia(value.mediaId, req);
     const id = randomUUID();
-    db.prepare('INSERT INTO moments VALUES(?,?,?,?,?,?)').run(
-      id,
-      coupleId,
-      req.user.id,
-      value.title,
-      value.mediaId,
-      value.date,
-    );
+    db.prepare(
+      'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
+    ).run(id, coupleId, req.user.id, value.title, value.mediaId, value.date);
     io.to(`couple:${coupleId}`).emit('moments:changed');
     res.status(201).json({ id });
   });
@@ -521,12 +517,11 @@ export function createApp(options: AppOptions = {}) {
     const value = anniversarySchema.parse(req.body);
     const id = randomUUID(),
       coupleId = couple(req);
-    db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?,?)').run(
+    db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?)').run(
       id,
       coupleId,
       value.title,
       value.date,
-      0,
     );
     io.to(`couple:${coupleId}`).emit('anniversaries:changed');
     res.status(201).json({ id });

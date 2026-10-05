@@ -18,7 +18,7 @@
 | POST           | /api/messages/read        | throughId（已看过的最新 ID）                                                    |
 | POST           | /api/media                | multipart 文件字段 file；返回媒体 ID 和签名预览 URL                             |
 | GET            | /api/media/:id/:variant   | 签名 thumbnail / preview，支持 Range                                            |
-| GET / POST     | /api/moments              | 查看／新增 title、date、mediaId                                                 |
+| GET / POST     | /api/moments              | 分页查看／新增 title、date、mediaId                                             |
 | PATCH / DELETE | /api/moments/:id          | 仅发布者可编辑、删除                                                            |
 | GET / POST     | /api/anniversaries        | 查看／新增 title、date（今天或过去，累计天数）                                  |
 | PATCH / DELETE | /api/anniversaries/:id    | 当前情侣可修改、删除                                                            |
@@ -31,17 +31,19 @@
 | GET            | /api/ai/tools             | OpenAI function calling 工具定义和上传接口说明                                  |
 | POST           | /api/ai/tools/:name       | session 对应用户作用域内执行工具                                                |
 
+相册 GET 返回 `{items,total,nextCursor}`，支持 `type=all|image|video`、`owner=all|mine|partner`、`search`（描述文字）、`from/to`（发生日期范围）、`sort=date_desc|date_asc|uploaded_desc`。默认每页 60，`limit` 为 1–100；继续加载时带上相同筛选排序参数和 `cursor=nextCursor`。所有条件仍限定在当前两人空间。相册条目提供独立的上传时间 `createdAt`，编辑发生日期不会改写上传时间。
+
 Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
 
-## @ai 用法
+## 命名助手用法
 
 - `@小爱 创建纪念日：我们第一次旅行，2025-11-01`
 - `@小爱 添加 To Do：七夕，农历 2026 年七月初七，每年重复，不是闰月`
-- `@ai 把我的昵称改成小爱`
-- 附上图片后：`@ai 把这张图片设为我的头像，昵称保持不变`
-- 附上图片／视频后：`@ai 把这个附件收藏到回忆，日期 2026-10-05，描述：一起看日落`
+- `@小爱 把我的昵称改成小爱`
+- 附上图片后：`@小爱 把这张图片设为我的头像，昵称保持不变`
+- 附上图片／视频后：`@小爱 把这个附件收藏到回忆，日期 2026-10-05，描述：一起看日落`
 
-输入需包含独立 `@助手名称`，例如 `@小桃 帮我…`，名称后用空格或标点；仍支持 `@ai`。名称不能含空格或 @。服务器保存请求后异步调用 provider，并以 `role=assistant` 写回同一个聊天空间。助手只能修改发起者自己的昵称／头像；纪念日及回忆都限制在当前关系空间。
+输入需包含独立 `@助手名称`，例如 `@小桃 帮我…`，名称后用空格或标点，只匹配当前配置名称（区分大小写）。名称不能含空格或 @。服务器保存请求后异步调用 provider，并以 `role=assistant` 写回同一个聊天空间。助手只能修改发起者自己的昵称／头像；纪念日及回忆都限制在当前关系空间。
 
 工具还包括 `list_todos`、`create_todo`、`update_todo`、`delete_todo`、`complete_todo` 和 `update_ai_profile`。待办 date 在 calendar=lunar 时代表农历年月日；repeat 是 none 或 yearly；leapMonth 是布尔值。
 
@@ -61,6 +63,6 @@ curl https://love.example.com/api/ai/tools/publish_moment \
   -d '{"mediaId":"MEDIA_UUID","title":"一起看日落","date":"2026-10-05"}'
 ```
 
-不要把永久 session token 给不可信 AI 服务；内置 @ai 在后端执行工具，不向 provider 发送用户 session token。API Key、Cookie 和服务端环境变量不是工具参数，AI 无法查询这些信息。
+不要把永久 session token 给不可信 AI 服务；内置助手 在后端执行工具，不向 provider 发送用户 session token。API Key、Cookie 和服务端环境变量不是工具参数，AI 无法查询这些信息。
 
 助手身份示例：`@小桃 把你的名字改成星星，并用本次图片作为你的头像`，调用 update_ai_profile。修改真人昵称需要明确说“我的昵称”，调用 update_profile。AI 回复的 assistant 字段包含 name 和带签名预览的 avatar。

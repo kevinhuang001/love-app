@@ -403,3 +403,120 @@ h3 {
 .bottom-nav [data-slot='tabs-trigger'] {
   box-shadow: none !important;
 }
+
+.album-page {
+  padding-top: 0;
+}
+.album-toolbar {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+.album-toolbar input {
+  background: var(--card);
+}
+.album-select,
+.album-sort {
+  min-height: 40px;
+  border-radius: 12px;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--foreground);
+  outline-color: var(--primary);
+}
+.album-sort {
+  border-color: transparent;
+  background: transparent;
+  padding-left: 0;
+}
+.album-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px 12px;
+}
+.album-grid.is-compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.album-item > .media-thumbnail {
+  aspect-ratio: 1;
+}
+.album-item > .media-thumbnail > img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  object-fit: cover;
+}
+.album-grid.is-compact .media-thumbnail {
+  border-radius: 5px;
+}
+.album-grid.is-compact .media-thumbnail .size-10 {
+  width: 28px;
+  height: 28px;
+}
+.album-viewer[data-slot='dialog-content'] {
+  inset: 0;
+  translate: none;
+  transform: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #111a16;
+  color: white;
+  animation: none;
+  overflow: hidden;
+}
+.album-viewer::before {
+  display: none;
+}
+.album-viewer-header {
+  padding-top: max(16px, env(safe-area-inset-top));
+}
+.album-viewer-media {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.album-viewer-media img,
+.album-viewer-media video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.album-viewer-media.is-zoomed {
+  display: block;
+  overflow: auto;
+}
+.album-viewer-media.is-zoomed img {
+  width: 200%;
+  height: auto;
+  max-width: none;
+  max-height: none;
+}
+.album-viewer-footer {
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+.album-viewer [data-slot='button']:hover {
+  background: #ffffff12;
+}
+@media (min-width: 640px) {
+  .album-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .album-grid.is-compact {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}

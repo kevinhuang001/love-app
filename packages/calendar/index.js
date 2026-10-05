@@ -72,12 +72,3 @@ export function lunarLabel(input) {
   const lunar = Lunar.fromYmd(y, input.leapMonth ? -m : m, d);
   return `农历${input.leapMonth ? '闰' : ''}${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
 }
-// Compatibility helper for existing callers; anniversaries no longer use countdown.
-export function countdown(date, yearly, current = today()) {
-  return (
-    nextTodo(
-      { date, calendar: 'solar', leapMonth: false, repeat: yearly ? 'yearly' : 'none' },
-      current,
-    )?.days ?? 0
-  );
-}

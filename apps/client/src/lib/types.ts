@@ -32,8 +32,15 @@ export type Message = {
   media: Media | null;
   assistant: { name: string; avatar: Media | null } | null;
 };
-export type Moment = { id: string; ownerId: string; title: string; date: string; media: Media };
-export type Anniversary = { id: string; title: string; date: string; yearly: number };
+export type Moment = {
+  id: string;
+  ownerId: string;
+  title: string;
+  date: string;
+  createdAt: string;
+  media: Media;
+};
+export type Anniversary = { id: string; title: string; date: string };
 export type Session = { server: string; token: string };
 
 export type Todo = {

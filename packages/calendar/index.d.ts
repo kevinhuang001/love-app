@@ -11,4 +11,3 @@ export function solarDate(input: Pick<Schedule, 'date' | 'calendar' | 'leapMonth
 export function daysTogether(start: string, current?: string): number;
 export function nextTodo(input: Schedule, current?: string): { date: string; days: number } | null;
 export function lunarLabel(input: Schedule): string;
-export function countdown(date: string, yearly: boolean, current?: string): number;

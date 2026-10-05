@@ -43,9 +43,11 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  fullScreen = false,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  fullScreen?: boolean;
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
@@ -53,7 +55,9 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          'love-sheet fixed bottom-0 left-1/2 z-50 grid max-h-[90dvh] w-full -translate-x-1/2 gap-5 overflow-y-auto rounded-t-[28px] border border-b-0 bg-card px-6 pt-10 pb-7 shadow-xl outline-none sm:top-1/2 sm:bottom-auto sm:max-w-lg sm:-translate-y-1/2 sm:rounded-2xl sm:border sm:pt-7',
+          fullScreen
+            ? 'fixed inset-0 z-50 flex h-dvh w-full flex-col outline-none'
+            : 'love-sheet fixed bottom-0 left-1/2 z-50 grid max-h-[90dvh] w-full -translate-x-1/2 gap-5 overflow-y-auto rounded-t-[28px] border border-b-0 bg-card px-6 pt-10 pb-7 shadow-xl outline-none sm:top-1/2 sm:bottom-auto sm:max-w-lg sm:-translate-y-1/2 sm:rounded-2xl sm:border sm:pt-7',
           className,
         )}
         {...props}

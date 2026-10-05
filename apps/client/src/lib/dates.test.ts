@@ -1,16 +1,31 @@
 import { describe, it, expect } from 'vitest';
-import { countdown, daysTogether, nextTodo, solarDate, lunarLabel } from './dates';
+import { daysTogether, nextTodo, solarDate, lunarLabel } from './dates';
 import { normalizeServer } from './api';
 describe('calendar days', () => {
   it('counts inclusive relationship days', () => {
     expect(daysTogether('2026-10-01', '2026-10-05')).toBe(5);
   });
   it('handles leap-year anniversaries on the last valid February day', () => {
-    expect(countdown('2024-02-29', true, '2026-02-28')).toBe(0);
+    expect(
+      nextTodo(
+        { date: '2024-02-29', calendar: 'solar', leapMonth: false, repeat: 'yearly' },
+        '2026-02-28',
+      )?.days,
+    ).toBe(0);
   });
   it('rolls annual dates forward, preserving one-time dates', () => {
-    expect(countdown('2020-10-01', true, '2026-10-05')).toBe(361);
-    expect(countdown('2026-10-01', false, '2026-10-05')).toBe(-4);
+    expect(
+      nextTodo(
+        { date: '2020-10-01', calendar: 'solar', leapMonth: false, repeat: 'yearly' },
+        '2026-10-05',
+      )?.days,
+    ).toBe(361);
+    expect(
+      nextTodo(
+        { date: '2026-10-01', calendar: 'solar', leapMonth: false, repeat: 'none' },
+        '2026-10-05',
+      )?.days,
+    ).toBe(-4);
   });
 });
 describe('backend URL', () => {

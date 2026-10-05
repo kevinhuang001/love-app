@@ -430,7 +430,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             </p>
           </div>
           <div className="flex items-center justify-between">
-            <Label htmlFor="ai-enabled">开启 @{profile.ai.name}（兼容 @ai）</Label>
+            <Label htmlFor="ai-enabled">开启 @{profile.ai.name}</Label>
             <Switch id="ai-enabled" checked={aiEnabled} onCheckedChange={setAiEnabled} />
           </div>
           <Button

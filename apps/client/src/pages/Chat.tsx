@@ -1,15 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Paperclip,
-  Send,
-  X,
-  Sparkles,
-  Check,
-  CheckCheck,
-  WifiOff,
-  LoaderCircle,
-} from 'lucide-react';
+import { Paperclip, Send, X, Check, CheckCheck, WifiOff, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
 import type { Message, Media } from '@/lib/types';
@@ -162,7 +153,7 @@ export function Chat() {
     );
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="聊天">
-      <div className="flex items-center gap-3 border-b bg-card px-5 py-3">
+      <div className="conversation-heading flex items-center gap-3 border-b bg-card px-5 py-5">
         {profile.partner.avatar ? (
           <img
             alt="另一半头像"
@@ -173,15 +164,23 @@ export function Chat() {
           <Avatar name={profile.partner.name} />
         )}
         <div>
-          <h2 className="text-sm font-semibold">{profile.partner.name}</h2>
+          <h2 className="text-base font-medium">{profile.partner.name}</h2>
           <p className="text-xs text-muted-foreground">
-            {typing ? '正在输入…' : connected ? '我们的私密对话' : '连接中 · 消息可重试'}
+            {typing ? '正在输入…' : connected ? '在线 · 两人对话' : '连接中 · 消息可重试'}
           </p>
         </div>
-        <span
-          className={`ml-auto size-2 rounded-full ${connected ? 'bg-emerald-500' : 'bg-amber-500'}`}
-          aria-label={connected ? '实时连接正常' : '实时连接中'}
-        />
+        <button
+          type="button"
+          onClick={openUs}
+          aria-label="打开空间设置"
+          className="ml-auto flex flex-col items-end gap-2"
+        >
+          <span className="wordmark text-lg">
+            love
+            <span className="brand-dot" />
+          </span>
+          <span className="text-[10px] text-muted-foreground">空间设置</span>
+        </button>
       </div>
       {!connected && (
         <div className="flex items-center justify-center gap-2 bg-secondary py-2 text-xs text-muted-foreground">
@@ -235,6 +234,12 @@ export function Chat() {
                 showDate =
                   index === 0 ||
                   message.createdAt.slice(0, 10) !== unique[index - 1].createdAt.slice(0, 10);
+              const sender =
+                message.role === 'assistant'
+                  ? { name: message.assistant?.name || '小爱', avatar: message.assistant?.avatar }
+                  : mine
+                    ? profile.user
+                    : profile.partner!;
               return (
                 <div key={message.id}>
                   {showDate && (
@@ -245,28 +250,33 @@ export function Chat() {
                       })}
                     </p>
                   )}
-                  <div className={`mb-4 flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                    <div className="max-w-[82%] sm:max-w-[65%]">
+                  <div
+                    data-own={mine}
+                    data-role={message.role}
+                    className={`message-row mb-5 flex items-start gap-2.5 ${mine ? 'flex-row-reverse' : ''}`}
+                  >
+                    <Avatar
+                      small
+                      name={sender.name}
+                      src={sender.avatar ? api.url(sender.avatar.thumbnailUrl) : undefined}
+                      alt={
+                        message.role === 'assistant'
+                          ? `${sender.name}的头像`
+                          : mine
+                            ? '你的聊天头像'
+                            : `${sender.name}的聊天头像`
+                      }
+                    />
+                    <div className="min-w-0 max-w-[calc(100%-44px)] sm:max-w-[65%]">
+                      {message.role === 'assistant' && (
+                        <p className="mb-1.5 text-[11px] text-muted-foreground">
+                          {message.assistant?.name || '小爱'}
+                          <span className="ml-1.5 text-[9px]">AI</span>
+                        </p>
+                      )}
                       <div
-                        className={`overflow-hidden rounded-2xl px-3.5 py-2.5 ${mine ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border bg-card'}`}
+                        className={`message-bubble overflow-hidden rounded-2xl px-3.5 py-2.5 ${mine ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border bg-card'}`}
                       >
-                        {message.role === 'assistant' && (
-                          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-primary">
-                            {message.assistant?.avatar ? (
-                              <img
-                                alt={`${message.assistant.name}的头像`}
-                                src={api.url(message.assistant.avatar.thumbnailUrl)}
-                                className="size-7 rounded-full object-cover"
-                              />
-                            ) : (
-                              <span className="grid size-7 place-items-center rounded-full bg-secondary">
-                                <Sparkles size={13} />
-                              </span>
-                            )}
-                            <span>{message.assistant?.name || '小爱'}</span>
-                            <span className="text-[9px] text-muted-foreground">AI</span>
-                          </div>
-                        )}
                         {message.media && <MediaPreview media={message.media} api={api} compact />}
                         {message.content && (
                           <p
@@ -303,33 +313,41 @@ export function Chat() {
         {pending.map((item) => (
           <div
             key={item.clientId}
-            className="mb-4 ml-auto max-w-[82%] rounded-2xl border border-dashed border-primary/40 bg-secondary p-3 text-sm"
+            className="message-row mb-5 flex flex-row-reverse items-start gap-2.5"
           >
-            {item.media && <MediaPreview api={api} media={item.media} compact />}
-            <p className="whitespace-pre-wrap break-words">{item.content}</p>
-            <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-              <span>{item.failed ? '发送失败，消息已保留' : '正在发送…'}</span>
-              <button
-                disabled={sending}
-                onClick={() => void deliver(item)}
-                className="text-primary"
-              >
-                重试
-              </button>
-              <button
-                disabled={sending}
-                onClick={() =>
-                  setPending((items) => items.filter((entry) => entry.clientId !== item.clientId))
-                }
-              >
-                移除
-              </button>
+            <Avatar
+              small
+              name={profile.user.name}
+              src={profile.user.avatar ? api.url(profile.user.avatar.thumbnailUrl) : undefined}
+              alt="你的聊天头像"
+            />
+            <div className="min-w-0 max-w-[calc(100%-44px)] rounded-2xl border border-dashed border-primary/40 bg-secondary p-3 text-sm">
+              {item.media && <MediaPreview api={api} media={item.media} compact />}
+              <p className="whitespace-pre-wrap break-words">{item.content}</p>
+              <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                <span>{item.failed ? '发送失败，消息已保留' : '正在发送…'}</span>
+                <button
+                  disabled={sending}
+                  onClick={() => void deliver(item)}
+                  className="text-primary"
+                >
+                  重试
+                </button>
+                <button
+                  disabled={sending}
+                  onClick={() =>
+                    setPending((items) => items.filter((entry) => entry.clientId !== item.clientId))
+                  }
+                >
+                  移除
+                </button>
+              </div>
             </div>
           </div>
         ))}
         <div ref={bottom} />
       </div>
-      <form onSubmit={send} className="border-t bg-card px-3 py-3 sm:px-6">
+      <form onSubmit={send} className="chat-composer border-t bg-card px-3 py-3 sm:px-6">
         {(attachment || uploading !== null) && (
           <div className="mb-3 flex items-center gap-3 rounded-xl bg-secondary px-3 py-2">
             {attachment ? (
@@ -383,7 +401,7 @@ export function Chat() {
           </Button>
           <Textarea
             aria-label="消息内容"
-            placeholder={`想和你说… 或 @${profile.ai.name} 帮我记下`}
+            placeholder={`发消息，或 @${profile.ai.name}`}
             value={text}
             maxLength={4000}
             onChange={(e) => {
@@ -402,7 +420,7 @@ export function Chat() {
               }
             }}
             rows={1}
-            className="max-h-32 min-h-11 rounded-2xl bg-background"
+            className="max-h-32 min-h-11 rounded-2xl border-transparent bg-secondary"
           />
           <Button
             type="submit"

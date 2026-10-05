@@ -90,11 +90,8 @@ export function Todos() {
     <section className="page-scroll page-enter p-5 sm:p-8">
       <div className="mb-5 flex justify-between">
         <div>
-          <p className="mb-2 text-[10px] tracking-widest text-primary">
-            SOMETHING TO LOOK FORWARD TO
-          </p>
-          <h2 className="text-2xl font-semibold">期待与安排</h2>
-          <p className="mt-2 text-sm text-muted-foreground">为下一次相见，留一点期待。</p>
+          <h2 className="text-2xl font-medium">待办与倒计时</h2>
+          <p className="mt-2 text-sm text-muted-foreground">设置日期，倒数到下一次。</p>
         </div>
         <Button
           size="icon"
@@ -120,11 +117,14 @@ export function Todos() {
       ) : !items.length ? (
         <Empty title="下一件想一起做的事" detail="具体日期、每年重复、农历节日，都可以记在这里。" />
       ) : (
-        <div className="space-y-3">
+        <div className="todo-list space-y-3">
           {items.map(({ item, next }) => (
-            <Card key={item.id} className={`gap-3 p-4 ${item.completed ? 'opacity-65' : ''}`}>
+            <Card
+              key={item.id}
+              className={`todo-item gap-3 p-4 ${item.completed ? 'opacity-65' : ''}`}
+            >
               <div className="flex items-start gap-3">
-                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-secondary text-primary">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-secondary text-primary">
                   <CalendarClock size={20} />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -142,7 +142,7 @@ export function Todos() {
                   )}
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="text-2xl font-semibold tabular-nums text-primary">
+                  <p className="text-2xl font-medium tabular-nums text-primary">
                     {item.completed
                       ? '完成'
                       : !next
@@ -346,7 +346,7 @@ export function Todos() {
                 {error}
               </p>
             ) : (
-              <p className="rounded-xl bg-secondary p-3 text-xs leading-6">
+              <p className="rounded-full bg-secondary p-3 text-xs leading-6">
                 {preview
                   ? `对应公历 ${preview.date} · ${preview.days < 0 ? `已逾期 ${-preview.days} 天` : preview.days === 0 ? '就是今天' : `还有 ${preview.days} 天`}`
                   : '已超过 2100 年支持范围'}

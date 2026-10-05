@@ -10,7 +10,12 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   const username = `user${suffix}`,
     partnerName = `partner${suffix}`;
   await page.goto('/');
+  await expect(page.getByLabel('服务器地址')).toBeHidden();
+  expect(await page.locator('body').evaluate((el) => getComputedStyle(el).fontFamily)).toContain(
+    'Noto Sans SC',
+  );
   await page.getByRole('tab', { name: '创建账号' }).click();
+  await page.getByText('服务器设置', { exact: true }).click();
   await page.getByLabel('服务器地址').fill('http://127.0.0.1:3000');
   await page.getByLabel('用户名', { exact: true }).fill(username);
   await page.getByLabel('怎么称呼你').fill('小一');
@@ -38,6 +43,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const other = await context.newPage();
   await other.goto('/');
+  await other.getByText('服务器设置', { exact: true }).click();
   await other.getByLabel('服务器地址').fill('http://127.0.0.1:3000');
   await other.getByLabel('用户名', { exact: true }).fill(partnerName);
   await other.getByLabel('密码', { exact: true }).fill('password123');
@@ -50,7 +56,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await page.getByRole('button', { name: '新增回忆' }).click();
   const image = await sharp({
-    create: { width: 1200, height: 800, channels: 3, background: '#c892a2' },
+    create: { width: 1200, height: 800, channels: 3, background: '#6f897a' },
   })
     .png()
     .toBuffer();
@@ -96,6 +102,26 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByLabel('昵称', { exact: true }).fill('小爱');
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.getByRole('heading', { name: '小爱', exact: true })).toBeVisible();
+  // Upload personal avatar and verify both participants see it on existing messages.
+  const ownChooserPromise = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '更换头像', exact: true }).click();
+  await (
+    await ownChooserPromise
+  ).setFiles({ name: 'personal.png', mimeType: 'image/png', buffer: image });
+  await expect(page.getByText('头像已更新', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '小爱', exact: true })).toBeVisible();
+  await expect(
+    other.locator('.message-row[data-own="false"] img[alt="小爱的聊天头像"]').first(),
+  ).toBeVisible();
+  await page.getByRole('tab', { name: '聊天', exact: true }).click();
+  await expect(
+    page.locator('.message-row[data-own="true"] img[alt="你的聊天头像"]').first(),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator('.message-row[data-own="true"] img[alt="你的聊天头像"]').first(),
+  ).toBeVisible();
+  await page.getByRole('tab', { name: '我们', exact: true }).click();
   await page.getByLabel('深色模式').click();
   await expect(page.locator('html')).toHaveClass(/dark/);
   const provider = createServer((_req, res) => {

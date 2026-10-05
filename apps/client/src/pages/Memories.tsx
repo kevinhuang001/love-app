@@ -48,7 +48,7 @@ export function Memories() {
       }
       await cache.invalidateQueries({ queryKey: ['moments'] });
       setOpen(false);
-      toast.success(edit ? '回忆已更新' : '又收藏了一个美好瞬间');
+      toast.success(edit ? '回忆已更新' : '回忆已保存');
     } catch (err) {
       toast.error((err as Error).message);
     } finally {
@@ -75,9 +75,9 @@ export function Memories() {
     <section className="page-scroll page-enter p-5 sm:p-8">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">那些一起的时刻</h2>
+          <h2 className="text-2xl font-medium tracking-tight">回忆相册</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            {query.data?.length || 0} 个值得珍藏的瞬间
+            {query.data?.length || 0} 个瞬间 · 照片与视频
           </p>
         </div>
         <Button size="icon" aria-label="新增回忆" onClick={() => begin()} className="rounded-full">
@@ -95,11 +95,14 @@ export function Memories() {
           action={<Button onClick={() => begin()}>收藏一个瞬间</Button>}
         />
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="memory-grid grid grid-cols-2 gap-x-3 gap-y-5 sm:grid-cols-3 lg:grid-cols-4">
           {query.data.map((moment) => (
-            <article key={moment.id} className="overflow-hidden rounded-2xl border bg-card">
+            <article
+              key={moment.id}
+              className="memory-item overflow-hidden rounded-xl bg-transparent"
+            >
               <MediaPreview api={api} media={moment.media} />
-              <div className="p-3">
+              <div className="px-0.5 pt-3">
                 <div className="mb-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
                   {moment.media.kind === 'video' ? <Film size={12} /> : <Image size={12} />}
                   {moment.date}
@@ -182,7 +185,7 @@ export function Memories() {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={300}
-                placeholder="那天的风，刚刚好…"
+                placeholder="为这张照片写点什么"
               />
             </div>
             <div className="space-y-2">

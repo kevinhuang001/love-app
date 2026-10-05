@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Copy, Link2, Bell, Moon, LogOut, Sparkles, Camera, Server, Heart } from 'lucide-react';
+import { Copy, Link2, Bell, Moon, LogOut, Sparkles, Camera, Server, Check } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { useApp } from '@/lib/context';
 import { enablePush, disablePush } from '@/lib/push';
@@ -71,11 +71,12 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     }
   }
   return (
-    <section className="page-scroll page-enter space-y-6 p-5 sm:p-8">
-      <div className="flex items-center gap-5">
+    <section className="page-scroll page-enter settings-page space-y-5 p-5 sm:p-8">
+      <div className="profile-heading flex items-center gap-5 py-2">
         <button
           aria-label="修改头像"
-          className="relative"
+          className="relative shrink-0"
+          disabled={busy}
           onClick={() => avatarFile.current?.click()}
         >
           {profile.user.avatar ? (
@@ -101,14 +102,25 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             if (file)
               void action(async () => {
                 const media = await api.upload(file, () => {});
-                await api.patch('/api/me', { name: profile.user.name, avatarMediaId: media.id });
+                await api.patch('/api/me', { avatarMediaId: media.id });
               }, '头像已更新');
+            e.target.value = '';
           }}
         />
         <div>
-          <p className="text-xs text-primary">我们的两人空间</p>
-          <h2 className="mt-1 text-2xl font-semibold">{profile.user.name}</h2>
+          <p className="text-[11px] text-muted-foreground">个人资料</p>
+          <h2 className="mt-1 text-2xl font-medium">{profile.user.name}</h2>
           <p className="mt-1 text-xs text-muted-foreground">@{profile.user.username}</p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            className="mt-2 h-7 px-0 text-xs text-primary"
+            onClick={() => avatarFile.current?.click()}
+          >
+            {busy ? '保存中…' : '更换头像'}
+          </Button>
         </div>
       </div>
       <Card className="gap-4 p-5">
@@ -130,9 +142,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               )}
               <div>
                 <p className="text-sm">{profile.partner.name}</p>
-                <p className="text-xs text-muted-foreground">一起分享生活的小事</p>
+                <p className="text-xs text-muted-foreground">已连接到同一个空间</p>
               </div>
-              <Heart size={18} className="ml-auto text-primary" />
+              <Check size={18} className="ml-auto text-primary" />
             </div>
             <Button
               variant="ghost"
@@ -290,9 +302,8 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           AI 助手
         </div>
         <p className="text-xs leading-6 text-muted-foreground">
-          配置兼容 OpenAI 的服务。在聊天里 @{profile.ai.name}，让助手管理纪念日和 To
-          Do、修改个人资料或它自己的名字和头像，或将附件收藏到相册。请求内容和附件 ID
-          会发送给你选择的服务。
+          在聊天中 @{profile.ai.name}，管理日期、待办和相册。消息及附件 ID 会发送给你配置的 AI
+          服务。
         </p>
         <div className="flex items-center gap-3 rounded-xl bg-secondary p-3">
           <button
@@ -452,7 +463,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
         </Button>
       </div>
       <p className="pb-4 text-center text-[10px] tracking-widest text-muted-foreground">
-        LOVE · JUST THE TWO OF US
+        love · 两个人的生活
       </p>
       <Dialog open={unpair} onOpenChange={setUnpair}>
         <DialogContent>

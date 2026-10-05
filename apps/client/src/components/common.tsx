@@ -1,13 +1,38 @@
-import { Heart, LoaderCircle, Play, ImageOff } from 'lucide-react';
+import { MessageCircle, LoaderCircle, Play, ImageOff } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import type { Api } from '@/lib/api';
 import type { Media } from '@/lib/types';
-export function Avatar({ name, large = false }: { name: string; large?: boolean }) {
+export function Avatar({
+  name,
+  large = false,
+  src,
+  alt,
+  small = false,
+}: {
+  name: string;
+  large?: boolean;
+  small?: boolean;
+  src?: string;
+  alt?: string;
+}) {
+  const [failedSrc, setFailedSrc] = useState<string>();
+  const classes = `person-avatar shrink-0 rounded-full ${large ? 'size-20 text-2xl' : small ? 'size-8 text-xs' : 'size-10 text-sm'}`;
+  if (src && failedSrc !== src)
+    return (
+      <img
+        alt={alt || `${name}的头像`}
+        src={src}
+        onError={() => setFailedSrc(src)}
+        className={`${classes} object-cover`}
+      />
+    );
   return (
     <span
-      className={`grid shrink-0 place-items-center rounded-full bg-secondary font-semibold text-primary ${large ? 'size-20 text-3xl' : 'size-10 text-base'}`}
+      role="img"
+      aria-label={alt || `${name}的头像`}
+      className={`${classes} grid place-items-center bg-secondary font-medium text-primary`}
     >
       {Array.from(name)[0]}
     </span>
@@ -24,11 +49,11 @@ export function Empty({
 }) {
   return (
     <div className="flex h-full min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
-      <div className="mb-5 grid size-16 place-items-center rounded-3xl bg-secondary text-primary">
-        <Heart size={28} strokeWidth={1.5} />
+      <div className="mb-5 grid size-12 place-items-center rounded-full border text-muted-foreground">
+        <MessageCircle size={21} strokeWidth={1.5} />
       </div>
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-2 max-w-xs text-sm leading-6 text-muted-foreground">{detail}</p>
+      <h2 className="text-base font-medium">{title}</h2>
+      <p className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">{detail}</p>
       {action && <div className="mt-5">{action}</div>}
     </div>
   );
@@ -101,8 +126,8 @@ export function MediaPreview({
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl">
-          <DialogTitle>{media.kind === 'video' ? '一起看这段回忆' : '一起看这张照片'}</DialogTitle>
-          <DialogDescription>加载手机适用的压缩预览</DialogDescription>
+          <DialogTitle>{media.kind === 'video' ? '视频预览' : '照片预览'}</DialogTitle>
+          <DialogDescription>轻点关闭返回聊天或相册</DialogDescription>
           {open &&
             (media.kind === 'video' ? (
               <video

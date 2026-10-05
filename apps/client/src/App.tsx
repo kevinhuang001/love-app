@@ -1,15 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
-import {
-  Heart,
-  MessageCircle,
-  Images,
-  CalendarHeart,
-  UsersRound,
-  Sparkles,
-  ListTodo,
-} from 'lucide-react';
+import { Heart, MessageCircle, Images, CalendarDays, UsersRound, ListTodo } from 'lucide-react';
 import { App as NativeApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { toast, Toaster } from 'sonner';
@@ -141,17 +133,15 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       value={{ api, profile: profile.data, socket, connected, openUs: () => setTab('us') }}
     >
       <Tabs value={tab} onValueChange={setTab} className="app-shell gap-0">
-        <header className="flex shrink-0 items-center gap-2.5 bg-card px-5 py-4">
-          <Heart size={23} strokeWidth={1.5} className="text-primary" />
-          <h1 className="text-xl font-semibold tracking-tight">
-            Love<span className="ml-2 text-xs font-normal text-muted-foreground">我们的日常</span>
-          </h1>
-          {tab === 'chat' && (
-            <span className="ml-auto flex items-center gap-1 text-[10px] text-muted-foreground">
-              <Sparkles size={12} />@{profile.data.ai.name} 可以帮忙
-            </span>
-          )}
-        </header>
+        {tab !== 'chat' && (
+          <header className="app-bar flex shrink-0 items-center justify-between px-6 py-4">
+            <h1 className="wordmark">
+              love
+              <span className="brand-dot" />
+            </h1>
+            <span className="text-[11px] text-muted-foreground">两个人的生活</span>
+          </header>
+        )}
         <div className="flex min-h-0 flex-1 flex-col">
           {tab === 'chat' ? (
             <Chat key={profile.data.user.coupleId} />
@@ -170,18 +160,18 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
             {[
               ['chat', '聊天', MessageCircle],
               ['memories', '回忆', Images],
-              ['dates', '纪念日', CalendarHeart],
+              ['dates', '纪念日', CalendarDays],
               ['todos', 'To Do', ListTodo],
               ['us', '我们', UsersRound],
             ].map(([value, label, Icon]) => {
-              const Glyph = Icon as typeof Heart;
+              const Glyph = Icon as typeof MessageCircle;
               return (
                 <TabsTrigger
                   key={value as string}
                   value={value as string}
-                  className="relative flex h-full flex-col gap-1 rounded-xl text-muted-foreground data-[state=active]:bg-secondary data-[state=active]:text-primary data-[state=active]:shadow-none"
+                  className="relative flex h-full flex-col gap-1.5 rounded-none border-0 text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
                 >
-                  <Glyph size={20} strokeWidth={tab === value ? 2 : 1.6} />
+                  <Glyph className="size-5" size={20} strokeWidth={tab === value ? 2 : 1.6} />
                   <span className="text-[10px]">{label as string}</span>
                   {value === 'chat' && unread > 0 && (
                     <span className="absolute top-1 right-1/4 rounded-full bg-primary px-1 text-[9px] text-primary-foreground">
@@ -234,12 +224,7 @@ export default function App() {
           }}
         />
       )}
-      <Toaster
-        richColors
-        position="top-center"
-        closeButton
-        toastOptions={{ className: 'love-toast' }}
-      />
+      <Toaster position="top-center" duration={2600} toastOptions={{ className: 'love-toast' }} />
     </>
   );
 }

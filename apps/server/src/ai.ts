@@ -316,8 +316,11 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
     case 'update_profile': {
       const v = z
         .object({
-          name: z.string().trim().min(1).max(40),
+          name: z.string().trim().min(1).max(40).optional(),
           avatarMediaId: z.string().uuid().optional(),
+        })
+        .refine((value) => value.name !== undefined || value.avatarMediaId !== undefined, {
+          message: '请提供昵称或头像',
         })
         .parse(input);
       if (
@@ -327,12 +330,10 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
           .get(v.avatarMediaId, userId)
       )
         throw new Error('头像必须是你自己上传的图片');
-      db.prepare('UPDATE users SET name=?,avatarMediaId=COALESCE(?,avatarMediaId) WHERE id=?').run(
-        v.name,
-        v.avatarMediaId || null,
-        userId,
-      );
-      return { name: v.name, avatarUpdated: Boolean(v.avatarMediaId) };
+      db.prepare(
+        'UPDATE users SET name=COALESCE(?,name),avatarMediaId=COALESCE(?,avatarMediaId) WHERE id=?',
+      ).run(v.name ?? null, v.avatarMediaId || null, userId);
+      return { name: v.name ?? user.name, avatarUpdated: Boolean(v.avatarMediaId) };
     }
     case 'update_ai_profile': {
       const v = aiProfileSchema.parse(input);

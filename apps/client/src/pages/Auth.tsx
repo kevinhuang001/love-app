@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Heart, ArrowRight, Server, ShieldCheck, Eye, EyeOff } from 'lucide-react';
+import { ArrowRight, Server, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,24 +36,21 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
     }
   }
   return (
-    <main className="min-h-dvh bg-background px-6 py-10 sm:py-16">
+    <main className="auth-page min-h-dvh px-7 py-10 sm:py-16">
       <div className="mx-auto max-w-sm">
-        <div className="mb-9">
-          <div className="mb-7 grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground">
-            <Heart strokeWidth={1.5} size={29} />
+        <div className="auth-heading mb-9">
+          <div className="mb-10 flex items-center justify-between">
+            <span className="wordmark">
+              love
+              <span className="brand-dot" />
+            </span>
+            <span className="text-[10px] tracking-widest text-muted-foreground">两人空间</span>
           </div>
-          <p className="mb-2 text-xs font-medium tracking-[.25em] text-primary">
-            JUST THE TWO OF US
-          </p>
-          <h1 className="text-4xl font-semibold tracking-tight">
-            把日常，
-            <br />
-            留给我们。
+          <h1 className="text-[28px] font-medium leading-snug tracking-tight">
+            {mode === 'login' ? '好久不见。' : '从这里，开始。'}
           </h1>
-          <p className="mt-4 text-sm leading-7 text-muted-foreground">
-            一句想念、一张照片、一段回忆。
-            <br />
-            属于两个人的小小空间。
+          <p className="mt-3 text-xs leading-6 text-muted-foreground">
+            登录后，回到你们的聊天和共同生活。
           </p>
         </div>
         <Tabs
@@ -63,7 +60,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
             setError('');
           }}
         >
-          <TabsList className="mb-6 w-full">
+          <TabsList className="auth-tabs mb-6 w-full">
             <TabsTrigger className="flex-1" value="login">
               欢迎回来
             </TabsTrigger>
@@ -73,22 +70,33 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
           </TabsList>
         </Tabs>
         <form onSubmit={submit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="server">
-              <Server size={14} /> 服务器地址
-            </Label>
-            <Input
-              id="server"
-              type="url"
-              value={server}
-              onChange={(e) => setServer(e.target.value)}
-              required
-              placeholder="https://love.example.com"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">你和另一半需要连接同一台服务器。</p>
-          </div>
+          <details className="server-disclosure rounded-xl border px-4 py-3">
+            <summary className="flex cursor-pointer items-center justify-between text-xs font-medium">
+              <span>服务器设置</span>
+              <span className="server-summary text-[11px] font-normal text-muted-foreground">
+                点击配置 URL
+              </span>
+            </summary>
+            <div className="pt-4">
+              {' '}
+              <div className="space-y-2">
+                <Label htmlFor="server">
+                  <Server size={14} /> 服务器地址
+                </Label>
+                <Input
+                  id="server"
+                  type="url"
+                  value={server}
+                  onChange={(e) => setServer(e.target.value)}
+                  required
+                  placeholder="https://love.example.com"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                />
+                <p className="text-xs text-muted-foreground">你和另一半需要连接同一台服务器。</p>
+              </div>
+            </div>
+          </details>
           <div className="space-y-2">
             <Label htmlFor="username">用户名</Label>
             <Input
@@ -153,10 +161,9 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
             <ArrowRight size={16} />
           </Button>
         </form>
-        <div className="mt-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-          <ShieldCheck size={14} />
-          自托管 · 两人空间 · HTTPS 传输
-        </div>
+        <p className="mt-7 text-center text-[11px] text-muted-foreground">
+          与你的另一半连接同一台服务器
+        </p>
       </div>
     </main>
   );

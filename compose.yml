@@ -1,0 +1,18 @@
+services:
+  love:
+    build: .
+    ports:
+      - '127.0.0.1:3000:3000'
+    environment:
+      NODE_ENV: production
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Configure MEDIA_SIGNING_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://localhost,capacitor://localhost}
+      FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
+      AI_ALLOWED_HOSTS: ${AI_ALLOWED_HOSTS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+    volumes:
+      - love-data:/app/data
+    restart: unless-stopped
+    init: true
+volumes:
+  love-data:

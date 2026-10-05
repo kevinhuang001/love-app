@@ -1,70 +1,50 @@
-# ❤️ Our Love Journey
+# Love · 我们的日常
 
-A private, beautiful, and interactive space designed specifically for couples to document their relationship, share memories, and never miss an anniversary.
+以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite + Socket.IO。
 
-## ✨ Features
+- **聊天**：实时文字、图片和视频，已读、输入提示、重连补取、持久化待发送消息和幂等重试。
+- **回忆**：照片／视频相册，大图预览、视频播放、编辑日期和描述。
+- **纪念日**：一起的天数、每年纪念日与一次性倒计时。
+- **我们**：配对、昵称、头像、主题、安卓通知、AI 配置和退出／切换服务器。
+- **@ai**：配置兼容 OpenAI 的服务 URL、模型与 API Key；通过工具管理纪念日、修改自己的昵称／头像、将上传附件保存到相册。
+- **媒体**：原文件保留，图片生成 WebP 缩略图和预览，视频转码为 H.264/AAC MP4 并生成封面。
+- **安卓推送**：原生 FCM 通知、设备注册、通知频道、后台推送与服务端持久化重试。
 
-- **💑 Couple Pairing**: Securely connect with your partner to share a private dashboard.
-- **📅 Anniversary Tracking**: Automatically calculate days together and countdown to upcoming special dates.
-- **🖼️ Sweet Memories**: A dedicated timeline and carousel to upload and cherish your favorite photos.
-- **💌 Love Notes**: Real-time private messaging to leave sweet notes for each other.
-- **🎨 Personalized Themes**: Customize the app's look and feel with various themes and colors.
-- **🌓 Dark Mode**: Full support for both light and dark modes for comfortable viewing anytime.
-- **📱 Responsive Design**: Fully optimized for mobile, tablet, and desktop experiences.
+## 开发
 
-## 🚀 Tech Stack
+```bash
+npm ci
+cp .env.example .env
+npm run dev
+```
 
-- **Frontend**: Vue 3, Vite, Pinia, Tailwind CSS, Vuestic UI
-- **Backend**: Node.js, Express, Sequelize (SQLite/PostgreSQL)
-- **Security**: JWT Authentication, Bcrypt password hashing
-- **Icons**: Material Icons, Font Awesome
+需要 Node **24** 和系统 **FFmpeg / ffprobe**。浏览器打开 `http://localhost:5173`，登录页服务器填 `http://localhost:3000`。两人分别注册，使用“我们”里的邀请码配对。
 
-## 🛠️ Installation & Setup
+```bash
+npm run typecheck
+npm test
+npm run build
+npm run test:e2e
+npm run android:prepare
+```
 
-### Prerequisites
+首次运行浏览器测试先执行 `npx playwright install --with-deps chromium`。
 
-- Node.js (v16+)
-- npm or yarn
+## Android APK
 
-### Quick Start
+每次 push／PR 的 GitHub Actions 会先运行 API 集成测试、前端单元测试和手机端 E2E，再生成可安装的 **love-android-apk** artifact。下载解压后安装 `app-debug.apk`。调试包用于自用和验证；发布签名步骤见 [Android 文档](docs/android.md)。
 
-1. **Clone the repository**:
+启用真实后台推送需要你自己的 Firebase 项目：仓库 Secret `GOOGLE_SERVICES_JSON` 配置安卓客户端，服务器设置 Firebase Admin 凭据。无配置时仍生成可安装的 APK，应用内不会宣称后台推送已就绪。
 
-   ```bash
-   git clone git@github.com-B:kevinhuang001/love-app.git
-   cd love-app
-   ```
+## 部署与接口
 
-2. **Install dependencies**:
+- [部署、备份和原项目数据](docs/deployment.md)
+- [Android 与推送配置](docs/android.md)
+- [API、Socket.IO 与 AI 工具](docs/api.md)
+- [架构、目录和测试](docs/architecture.md)
 
-   ```bash
-   npm install
-   ```
+新服务使用独立 schema 和 `/api` 接口；旧 Vue 客户端与新后端不兼容。旧源码和提交中的数据仍保存在 Git 历史中，升级前备份实际服务器的 SQLite 数据库和上传目录。
 
-3. **Configure Environment**:
-   Create a `.env` file in the root (optional, defaults are provided in the code).
+## License
 
-4. **Run the application**:
-
-   ```bash
-   # Start frontend (development mode)
-   npm run dev
-
-   # Start backend (server)
-   cd server
-   npm start
-   ```
-
-5. **Build for Production**:
-   ```bash
-   ./build.sh
-   ```
-   This will generate a `love-app-deploy.zip` containing both the optimized frontend and the backend server.
-
-## 📝 License
-
-This project is licensed under the MIT License.
-
----
-
-Made with ❤️ for all the lovers out there.
+MIT。shadcn/ui 的组件源文件保留于 `apps/client/src/components/ui`，来源与许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。

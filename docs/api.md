@@ -1,0 +1,58 @@
+# API 与 AI 工具
+
+登录页服务器地址是 origin；所有 HTTP 接口位于 `/api`。需要鉴权的接口使用 `Authorization: Bearer <session-token>`。除公开 health、登录／注册和带签名的媒体预览外都需要登录。
+
+| 方法           | 路径                    | 内容                                                    |
+| -------------- | ----------------------- | ------------------------------------------------------- |
+| GET            | /api/health             | 版本、服务状态、pushConfigured                          |
+| POST           | /api/auth/register      | username、password、name                                |
+| POST           | /api/auth/login         | username、password；返回 token、user、partner、couple   |
+| POST           | /api/auth/logout        | 可选 deviceToken；撤销会话和当前设备通知                |
+| GET / PATCH    | /api/me                 | 查看资料；修改 name、可选 avatarMediaId                 |
+| POST           | /api/pairing/invite     | 创建邀请码                                              |
+| POST           | /api/pairing/join       | code                                                    |
+| DELETE         | /api/pairing            | 断开当前关系                                            |
+| PATCH          | /api/couple             | startDate，YYYY-MM-DD                                   |
+| GET            | /api/messages?before=ID | 最近 50 条升序 items、hasMore                           |
+| POST           | /api/messages           | clientId（UUID）、content、可选 mediaId                 |
+| POST           | /api/messages/read      | throughId（已看过的最新 ID）                            |
+| POST           | /api/media              | multipart 文件字段 file；返回媒体 ID 和签名预览 URL     |
+| GET            | /api/media/:id/:variant | 签名 thumbnail / preview，支持 Range                    |
+| GET / POST     | /api/moments            | 查看／新增 title、date、mediaId                         |
+| PATCH / DELETE | /api/moments/:id        | 仅发布者可编辑、删除                                    |
+| GET / POST     | /api/anniversaries      | 查看／新增 title、date、yearly                          |
+| PATCH / DELETE | /api/anniversaries/:id  | 当前情侣可修改、删除                                    |
+| POST / DELETE  | /api/devices            | 当前设备 token 注册／注销                               |
+| GET / POST     | /api/ai/settings        | baseUrl、model、enabled、可选 apiKey；GET 只返回 hasKey |
+| GET            | /api/ai/tools           | OpenAI function calling 工具定义和上传接口说明          |
+| POST           | /api/ai/tools/:name     | session 对应用户作用域内执行工具                        |
+
+Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
+
+## @ai 用法
+
+- `@ai 创建纪念日：我们第一次旅行，2026-11-01，每年重复`
+- `@ai 把“第一次旅行”的日期改成 2026-11-02`
+- `@ai 把我的昵称改成小爱`
+- 附上图片后：`@ai 把这张图片设为我的头像，昵称保持不变`
+- 附上图片／视频后：`@ai 把这个附件收藏到回忆，日期 2026-10-05，描述：一起看日落`
+
+输入必须包含独立 `@ai` 标记，例如 `@ai 帮我…`。服务器保存请求后异步调用 provider，并以 `role=assistant` 写回同一个聊天空间。助手只能修改发起者自己的昵称／头像；纪念日及回忆都限制在当前关系空间。
+
+工具：`list_anniversaries`、`create_anniversary`、`update_anniversary`、`delete_anniversary`、`update_profile`、`list_recent_media`、`publish_moment`、`set_relationship_date`。工具 JSON Schema 可通过接口获取，供外部 AI 客户端集成。外部 AI 客户端先用 POST `/api/media` 上传二进制文件，再把返回的 mediaId 传给 `publish_moment` 或 `update_profile`。聊天内附件由应用先上传，AI 接收其 ID；AI 不能凭空上传未提供的本机文件。
+
+示例：
+
+```bash
+curl https://love.example.com/api/ai/tools \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+curl https://love.example.com/api/media \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -F 'file=@photo.jpg'
+curl https://love.example.com/api/ai/tools/publish_moment \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -H 'Content-Type: application/json' \
+  -d '{"mediaId":"MEDIA_UUID","title":"一起看日落","date":"2026-10-05"}'
+```
+
+不要把永久 session token 给不可信 AI 服务；内置 @ai 在后端执行工具，不向 provider 发送用户 session token。API Key、Cookie 和服务端环境变量不是工具参数，AI 无法查询这些信息。

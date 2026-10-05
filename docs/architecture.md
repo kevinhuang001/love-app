@@ -1,0 +1,38 @@
+# 架构与验证
+
+## 目录
+
+| 路径                          | 用途                                              |
+| ----------------------------- | ------------------------------------------------- |
+| apps/client/src/pages         | 手机四个 Tab 与登录                               |
+| apps/client/src/components/ui | shadcn/ui 官方源码组件                            |
+| apps/client/src/lib           | API、通知、类型、日期与上下文                     |
+| apps/server/src               | HTTP API、SQLite、Socket.IO、媒体、推送和 AI 工具 |
+| apps/server/test              | 真正运行 SQLite／API／Socket／FFmpeg 的集成测试   |
+| tests/e2e                     | Playwright 两个账号的手机端完整流程               |
+| scripts/android.mjs           | 可重复生成 Android 工程与推送配置                 |
+| docs                          | 部署、接口、安卓与架构文档                        |
+| .github/workflows             | CI 测试和 APK 构建                                |
+
+## 可靠性
+
+账号密码使用随机盐 scrypt；数据库仅保存 session token SHA-256 摘要，30 天过期，登出撤销 HTTP 与 Socket 会话。操作从 session 推导 userId／coupleId，不信任客户端传来的目标用户。邀请为一次性 12 位随机十六进制码，10 分钟有效。
+
+发送消息通过 HTTP 持久化后广播 Socket.IO；`senderId + clientId` 唯一约束使重试不会重复插入。客户端按关系空间持久化 outbox，切换账号／服务器／关系不会混入另一个队列。发送失败有手动重试与删除；重连自动尝试最早的一条。重连／恢复前台重新请求持久化历史，分页一次 50 条。
+
+媒体限制 100 MB，图片最多 5000 万像素，视频最多 5 分钟。最多同时处理 2 个上传；解码工具有执行时间限制；FFmpeg 参数以数组传递，不经过 shell。预览 WebP，视频 H.264/AAC、faststart、最长边适配 1280×720；列表仅加载缩略图，点击后才加载压缩大图／视频。原文件从不作为静态目录公开。
+
+AI 使用仅发起者可配置的凭据。队列先保存 @ai 请求，工具按当前关系重新鉴权；模型没有 SQL、Shell、文件系统或通用网络工具。最多 5 轮、每轮最多 8 个调用；工具结果与调用 ID 持久化用于重启恢复。同一请求不会重复写入 AI 回复。
+
+## CI
+
+`Test and build`：
+
+1. Node 24 安装锁定依赖，类型检查。
+2. 后端集成测试：鉴权、一次性配对、跨情侣隔离、实时消息、幂等重试、已读、分页、会话撤销、图片与视频处理、签名媒体链接、推送队列及 AI 工具隔离。
+3. 前端单元测试：日期／闰年／服务器 URL 校验。
+4. Web 与后端生产构建。
+5. Pixel 7 尺寸 Playwright：注册、配对、双会话聊天、图片上传预览、纪念日新增编辑、昵称、主题、AI 配置、登录持久化和横向溢出检查。
+6. Java 21 / Android SDK：生成工程、构建 APK，上传 artifact。
+
+测试失败时上传 trace、截图和视频（7 天）；Web 与 APK 也作为构建产物交付。API 测试不调用真实 AI 服务／真实 Firebase，使用可注入 provider 与推送 sender；真实设备后台通知仍需实际 Firebase 凭据和设备验证。

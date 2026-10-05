@@ -89,6 +89,8 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   expect(overflow).toBe(false);
   await page.reload();
   await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible();
+  const navigation = await page.getByRole('navigation', { name: '主导航' }).boundingBox();
+  expect(navigation!.height).toBeGreaterThanOrEqual(64);
   await page.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true });
   await context.close();
 });

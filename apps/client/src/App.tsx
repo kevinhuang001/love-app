@@ -152,7 +152,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
           )}
         </div>
         <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
-          <TabsList className="grid h-16 w-full grid-cols-4 rounded-none bg-transparent p-1">
+          <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-4 rounded-none bg-transparent p-1">
             {[
               ['chat', '聊天', MessageCircle],
               ['memories', '回忆', Images],

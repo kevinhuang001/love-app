@@ -43,10 +43,12 @@ writeFileSync(
 );
 const gradle = resolve(app, 'build.gradle');
 let build = readFileSync(gradle, 'utf8');
-if (!build.includes('LOVE_VERSION_CODE'))
-  build = build
-    .replace(/versionCode 1/, 'versionCode (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()')
-    .replace(/versionName "1.0"/, 'versionName "2.0.0"');
+build = build
+  .replace(
+    /^\s*versionCode(?:\s*=)?\s+.*$/m,
+    '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
+  )
+  .replace(/versionName "1.0"/, 'versionName "2.0.0"');
 writeFileSync(gradle, build);
 cap('sync', 'android');
 console.log(

@@ -126,9 +126,14 @@ export async function complete(baseUrl: string, key: string, body: unknown): Pro
           ...(key ? { Authorization: `Bearer ${key}` } : {}),
         },
         lookup: (hostname, options, callback) =>
-          dns.lookup(hostname, { ...options, all: false }, (error, address, family) => {
+          dns.lookup(hostname, options, (error, address, family) => {
             if (error) return callback(error, address, family);
-            if (!whitelisted && !publicAddress(address))
+            if (
+              !whitelisted &&
+              !(
+                typeof address === 'string' ? [address] : address.map((item) => item.address)
+              ).every(publicAddress)
+            )
               return callback(new Error('AI 地址禁止访问内网'), '', 4);
             callback(null, address, family);
           }),

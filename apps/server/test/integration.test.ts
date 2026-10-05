@@ -1,3 +1,4 @@
+import { createServer } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
@@ -9,7 +10,14 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import { createApp } from '../src/app.js';
-import { aiWorker, encryptKey, executeTool, publicAddress, validateAIUrl } from '../src/ai.js';
+import {
+  complete,
+  aiWorker,
+  encryptKey,
+  executeTool,
+  publicAddress,
+  validateAIUrl,
+} from '../src/ai.js';
 
 async function setup(t: Parameters<Parameters<typeof test>[1]>[0]) {
   const dir = await mkdtemp(join(tmpdir(), 'love-test-'));
@@ -328,4 +336,27 @@ test('@ai encrypted config, tool execution and per-user permissions', async (t) 
   assert.equal(publicAddress('8.8.8.8'), true);
   assert.throws(() => validateAIUrl('http://127.0.0.1:11434/v1'));
   assert.notEqual(encryptKey('same', 'key'), encryptKey('same', 'key'));
+});
+
+test('OpenAI-compatible HTTP transport supports approved self-hosted providers', async (t) => {
+  const old = process.env.AI_ALLOWED_HOSTS;
+  process.env.AI_ALLOWED_HOSTS = 'localhost';
+  const provider = createServer((req, res) => {
+    assert.equal(req.url, '/v1/chat/completions');
+    assert.equal(req.headers.authorization, 'Bearer provider-key');
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '连接正常' } }] }));
+  });
+  await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve));
+  t.after(() => {
+    provider.close();
+    if (old === undefined) delete process.env.AI_ALLOWED_HOSTS;
+    else process.env.AI_ALLOWED_HOSTS = old;
+  });
+  const port = (provider.address() as { port: number }).port;
+  const response = await complete(`http://localhost:${port}/v1`, 'provider-key', {
+    model: 'test',
+    messages: [],
+  });
+  assert.equal(response.choices[0].message.content, '连接正常');
 });

@@ -27,8 +27,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      SOURCE_RUN_ID: ${{ inputs.run_id || '37416187012' }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.0.0' }}
+      SOURCE_RUN_ID: ${{ inputs.run_id || '37453656707' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.0.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,29 +70,27 @@ jobs:
         run: |
           set -euo pipefail
           test -s release/app-debug.apk
-          if [ "$SOURCE_RUN_ID" = '37416187012' ]; then
-            printf '%s  %s\n' '9720d551d60ff640ab5c04be3cc6c83b2e110fd8f9ff955f8b058ea9ea88ec53' 'release/app-debug.apk' | sha256sum --check
-          fi
           apk="Love-${RELEASE_TAG}-debug.apk"
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          以实时聊天为首页的 Web / Android 应用，采用 React、shadcn/ui 和 Capacitor。
+          新增中国大陆安卓厂商推送，前台隐藏管理入口。
 
-          - 实时聊天、双方头像、图片与视频压缩预览。
-          - 相册批量上传、逐张拍摄日期识别、筛选排序、时间轴与全屏浏览。
-          - 正向累计纪念日与独立 To Do，支持公历／农历年度循环。
-          - 自定义 AI 服务、名字与头像，通过 @当前名字管理资料、日期与相册。
-          - 独立管理后台、访问／后台／操作日志、配对存储量与配额、SMTP、邮箱验证、白名单和图形验证码。
-          - Docker Compose 与 Caddy HTTPS 部署。
+          - 原生集成华为、荣耀、小米/Redmi、OPPO（兼容一加/realme）、vivo（兼容 iQOO）、魅族六家 SDK，通过极光的厂商通道投递，保留 FCM，国内通道优先。
+          - 通知权限与设备标识用途说明；用户开启通知前不初始化国内推送，FCM 默认关闭自动注册。
+          - 点击厂商通知可冷启动进入聊天；账号切换、令牌更新、关闭通知和退出登录同步设备注册。
+          - 服务端分流、持久重试、已读抑制、失效令牌清理和逐设备接受状态；后台展示提供者、设备数量与失败任务。
+          - 登录页与用户设置不显示管理入口。管理员自行访问 /#admin，服务端独立鉴权不变。
+          - Docker 新增极光服务端环境变量，Actions 新增厂商客户端配置 Secret，完整配置与验收见 Android 文档。
 
-          APK 来自通过 test、docker、android 三项任务的 GitHub Actions 构建，附 SHA-256 校验文件。
-          这是可安装的调试签名 APK；签名与此前调试包不同，已安装旧包时需卸载后安装。
-          安卓后台推送需要自行配置 Firebase 凭据；部署首次设置 ADMIN_USERNAME 与 ADMIN_PASSWORD，使用 love-v4 新数据卷。
+          APK 来自通过 test、docker、android 三项任务的 GitHub Actions 构建；CI 检查六家 SDK 的实际 DEX、Manifest 和通知权限，附 SHA-256 文件。
+          这是调试签名 APK。若与已安装版本签名不一致，需卸载旧包再安装；正式使用请固定 keystore，并配置真实签名指纹。
+          客户端未注入凭据时会标记推送未配置。真实离线送达需要极光账户、各厂商凭据/审核、服务端配置与真机验证；CI 不宣称已完成厂商实际送达测试。
+          已部署 v4 数据库的用户保留原数据卷即可，无需清空数据。
 
-          部署：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
+          安卓推送配置：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
+          Docker 部署：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
           管理后台：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
-          安卓配置：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           NOTES
       - name: Publish release with APK assets
         run: |

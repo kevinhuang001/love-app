@@ -60,7 +60,7 @@ FCM 依赖兼容的 Google Play services 及网络；在中国大陆即使有 GM
 这是**客户端 SDK 参数**。OPPO SDK 要求的客户端 AppSecret 会进入 APK；OPPO 服务端 MasterSecret/AppServerSecret、极光 MasterSecret、其他厂商服务端密钥不能进入上述 JSON。构建脚本会拒绝未知字段/不完整配置、自动补齐 OP-/MZ- 前缀。本地可保存为已忽略的 `config/jpush-android.json`。
 
 4. 华为通道还需要把 AppGallery Connect 的 `agconnect-services.json` 完整内容保存为 Actions Secret **AGCONNECT_SERVICES_JSON**；本地路径 `config/agconnect-services.json`。启用 `huawei: true` 而缺少该文件会明确构建失败。其他厂商不依赖该文件。
-5. 重跑 CI，安装生成 APK。APK 不会自动初始化国内推送；用户在“我们 → 聊天通知”开启通知、同意页面所述设备标识用途并授予通知权限后才注册。没有配置的 APK 会明确提示不可用，不能用它验证真机消息。
+5. 重跑 CI，安装生成 APK。APK 默认关闭 FCM 自动注册，也不会自动初始化国内推送；用户在“我们 → 聊天通知”开启通知、同意页面所述设备标识用途并授予通知权限后才注册。没有配置的 APK 会明确提示不可用，不能用它验证真机消息。
 
 ### 配置 Docker 服务端
 

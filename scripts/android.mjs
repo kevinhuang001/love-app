@@ -32,6 +32,11 @@ if (!manifest.includes('POST_NOTIFICATIONS'))
     '</manifest>',
     '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/></manifest>',
   );
+if (!manifest.includes('firebase_messaging_auto_init_enabled'))
+  manifest = manifest.replace(
+    '</application>',
+    '<meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" tools:replace="android:value"/><meta-data android:name="firebase_analytics_collection_enabled" android:value="false" tools:replace="android:value"/></application>',
+  );
 if (!manifest.includes('default_notification_icon'))
   manifest = manifest.replace(
     '</application>',

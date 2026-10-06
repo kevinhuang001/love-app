@@ -30,8 +30,8 @@ import {
 import { Loading, ErrorState } from '@/components/common';
 const bytes = (value: number) =>
   value >= 1024 ** 3
-    ? `${(value / 1024 ** 3).toFixed(2)} GB`
-    : `${(value / 1024 ** 2).toFixed(2)} MB`;
+    ? `${(value / 1024 ** 3).toFixed(2)} GiB`
+    : `${(value / 1024 ** 2).toFixed(2)} MiB`;
 const time = (value: string | null) =>
   value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
 const modes = { closed: '仅管理员建号', email: '开放邮箱注册', whitelist: '仅邮箱白名单' };

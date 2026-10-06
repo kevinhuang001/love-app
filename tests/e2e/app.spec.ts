@@ -506,14 +506,14 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
     .getByRole('button', { name: /设置.*的存储配额/ })
     .first()
     .click();
-  await page.getByLabel('空间上限（MB）').fill('128');
+  await page.getByLabel('空间上限（MiB）').fill('128');
   await page.getByRole('button', { name: '保存存储配额' }).click();
-  await expect(page.getByText('/ 128 MB', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('/ 128 MiB', { exact: false }).first()).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.getByLabel('SMTP 主机')).toHaveValue('smtp.example.test');
   await page.getByLabel('SMTP 密码或授权码').fill('new-smtp-test-secret');
   await page.getByLabel('注册方式').selectOption('whitelist');
-  await page.getByLabel('默认每对存储上限（MB）').fill('256');
+  await page.getByLabel('新配对默认存储上限（MiB）').fill('256');
   await page.getByLabel('允许注册的邮箱域名').fill('example.test');
   await page.getByRole('button', { name: '保存服务器设置', exact: true }).click();
   await expect(page.getByText('服务器设置已保存', { exact: true })).toBeVisible();

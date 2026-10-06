@@ -95,6 +95,12 @@ public class LocalNotificationService extends Service {
    try { Thread.sleep(retry); } catch(InterruptedException stop) { return; } retry=Math.min(30000,retry*2);
   }
  }
- private void stopWorker() { generation++; connected=false; if(connection!=null) connection.disconnect(); if(worker!=null) worker.interrupt(); }
+ private void stopWorker() {
+  generation++; connected=false;
+  HttpURLConnection retiring=connection; connection=null;
+  if(worker!=null) worker.interrupt();
+  // A socket close can wait on an active read; never block Android's main thread.
+  if(retiring!=null) new Thread(retiring::disconnect,"love-stream-close").start();
+ }
  @Override public void onDestroy() { stopWorker(); super.onDestroy(); }
 }

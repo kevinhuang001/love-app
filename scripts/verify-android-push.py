@@ -3,6 +3,7 @@ from pathlib import Path
 from zipfile import ZipFile
 import subprocess
 import os
+import re
 apk=Path('apps/client/android/app/build/outputs/apk/debug/app-debug.apk')
 with ZipFile(apk) as archive:
     dex=b'\n'.join(archive.read(n) for n in archive.namelist() if n.endswith('.dex'))
@@ -13,7 +14,10 @@ with ZipFile(apk) as archive:
     assert not any(n.endswith('services.json') or 'push-build.json' in n for n in archive.namelist())
 aapt=Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0/aapt'
 manifest=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),'AndroidManifest.xml'],text=True)
-assert 'LocalNotificationService' in manifest and 'specialUse' in manifest
+assert 'LocalNotificationService' in manifest
+# aapt renders enum flags as integers rather than their source XML names.
+assert re.search(r'foregroundServiceType[^\n]*\(type 0x11\)0x40000000\b', manifest), 'Missing specialUse service type'
+assert 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' in manifest
 permissions=subprocess.check_output([str(aapt),'dump','permissions',str(apk)],text=True)
 for permission in ['POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE_SPECIAL_USE']:
     assert permission in permissions

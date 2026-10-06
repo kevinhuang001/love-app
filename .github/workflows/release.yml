@@ -1,0 +1,103 @@
+name: Publish Android release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release.yml]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Test and build run containing the APK
+        required: true
+        type: string
+      tag:
+        description: New version tag, for example v2.0.1
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_RUN_ID: ${{ inputs.run_id || '37416187012' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.0.0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify tested source and current main
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-\.][A-Za-z0-9.\-]+)?$ ]]
+          gh run view "$SOURCE_RUN_ID" --json conclusion,headSha,workflowName > source-run.json
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" > source-jobs.json
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync('source-run.json', 'utf8'));
+          const jobs = JSON.parse(readFileSync('source-jobs.json', 'utf8')).jobs;
+          assert.equal(run.workflowName, 'Test and build');
+          assert.equal(run.conclusion, 'success');
+          assert.match(run.headSha, /^[a-f0-9]{40}$/);
+          for (const name of ['test', 'docker', 'android'])
+            assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `${name} must pass`);
+          writeFileSync('source-sha.txt', run.headSha);
+          JS
+          source_sha=$(cat source-sha.txt)
+          git merge-base --is-ancestor "$source_sha" origin/main
+          git diff --exit-code "$source_sha" HEAD -- . ':(exclude).github/workflows/release.yml'
+          # Never replace an existing published version.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'This release tag already exists; choose a new tag.' >&2
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: love-android-apk
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Prepare APK and checksum
+        run: |
+          set -euo pipefail
+          test -s release/app-debug.apk
+          if [ "$SOURCE_RUN_ID" = '37416187012' ]; then
+            printf '%s  %s\n' '9720d551d60ff640ab5c04be3cc6c83b2e110fd8f9ff955f8b058ea9ea88ec53' 'release/app-debug.apk' | sha256sum --check
+          fi
+          apk="Love-${RELEASE_TAG}-debug.apk"
+          mv release/app-debug.apk "release/$apk"
+          (cd release && sha256sum "$apk" > "$apk.sha256")
+          cat > release/NOTES.md <<'NOTES'
+          以实时聊天为首页的 Web / Android 应用，采用 React、shadcn/ui 和 Capacitor。
+
+          - 实时聊天、双方头像、图片与视频压缩预览。
+          - 相册批量上传、逐张拍摄日期识别、筛选排序、时间轴与全屏浏览。
+          - 正向累计纪念日与独立 To Do，支持公历／农历年度循环。
+          - 自定义 AI 服务、名字与头像，通过 @当前名字管理资料、日期与相册。
+          - 独立管理后台、访问／后台／操作日志、配对存储量与配额、SMTP、邮箱验证、白名单和图形验证码。
+          - Docker Compose 与 Caddy HTTPS 部署。
+
+          APK 来自通过 test、docker、android 三项任务的 GitHub Actions 构建，附 SHA-256 校验文件。
+          这是可安装的调试签名 APK；签名与此前调试包不同，已安装旧包时需卸载后安装。
+          安卓后台推送需要自行配置 Firebase 凭据；部署首次设置 ADMIN_USERNAME 与 ADMIN_PASSWORD，使用 love-v4 新数据卷。
+
+          部署：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
+          管理后台：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
+          安卓配置：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
+          NOTES
+      - name: Publish release with APK assets
+        run: |
+          set -euo pipefail
+          apk="Love-${RELEASE_TAG}-debug.apk"
+          gh release create "$RELEASE_TAG" "release/$apk" "release/$apk.sha256" \
+            --target "$GITHUB_SHA" --title "Love $RELEASE_TAG" --notes-file release/NOTES.md --draft
+          gh release edit "$RELEASE_TAG" --draft=false --latest

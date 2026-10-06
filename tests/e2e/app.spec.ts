@@ -25,8 +25,9 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByLabel('密码', { exact: true }).fill('password123');
   await verifyEmail(page, `${username}@example.test`);
   await page.getByRole('button', { name: '开始我们的故事' }).click();
-  await expect(page.getByRole('heading', { name: '想说的话，都留在这里' })).toBeVisible();
-  await page.getByRole('button', { name: '连接另一半' }).click();
+  await expect(page.getByText('连接另一半', { exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '主导航' })).toHaveCount(0);
+  await expect(page.getByLabel('AI 服务 URL')).toHaveCount(0);
   await page.getByRole('button', { name: '生成我的邀请码' }).click();
   const code = await page.locator('.font-mono').innerText();
   const partner = await register(request, {
@@ -201,7 +202,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await page.getByLabel('密码', { exact: true }).fill(password);
   await verifyEmail(page, `${username}@example.test`);
   await page.getByRole('button', { name: '开始我们的故事' }).click();
-  await expect(page.getByRole('heading', { name: '想说的话，都留在这里' })).toBeVisible();
+  await expect(page.getByText('连接另一半', { exact: true })).toBeVisible();
   const self = await (await apiLogin(request, { username, password })).json();
   const peer = await (
     await register(request, { username: `peer${stamp}`, name: '阿宁', password })
@@ -215,7 +216,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
     headers: peerHeaders,
     data: { code: invite.code },
   });
-  await expect(page.getByRole('heading', { name: '阿宁', exact: true })).toBeVisible();
+  await expect(page.getByText('已经找到你', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await page.getByRole('button', { name: '新增回忆' }).click();
   const image = await sharp({
@@ -382,7 +383,7 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
   await page.getByLabel('密码', { exact: true }).fill(password);
   await verifyEmail(page, `${username}@example.test`);
   await page.getByRole('button', { name: '开始我们的故事' }).click();
-  await expect(page.getByRole('heading', { name: '想说的话，都留在这里' })).toBeVisible();
+  await expect(page.getByText('连接另一半', { exact: true })).toBeVisible();
   const self = await (await apiLogin(request, { username, password })).json();
   const peer = await (
     await register(request, { username: `peer${stamp}`, name: '阿宁', password })
@@ -396,7 +397,7 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
     headers: peerHeaders,
     data: { code: invite.code },
   });
-  await expect(page.getByRole('heading', { name: '阿宁', exact: true })).toBeVisible();
+  await expect(page.getByText('已经找到你', { exact: true })).toBeVisible();
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await page.getByRole('button', { name: '新增回忆' }).click();
 
@@ -505,14 +506,14 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
     .getByRole('button', { name: /设置.*的存储配额/ })
     .first()
     .click();
-  await page.getByLabel('空间上限（MB）').fill('128');
+  await page.getByLabel('空间上限（MiB）').fill('128');
   await page.getByRole('button', { name: '保存存储配额' }).click();
-  await expect(page.getByText('/ 128 MB', { exact: false }).first()).toBeVisible();
+  await expect(page.getByText('/ 128 MiB', { exact: false }).first()).toBeVisible();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await expect(page.getByLabel('SMTP 主机')).toHaveValue('smtp.example.test');
   await page.getByLabel('SMTP 密码或授权码').fill('new-smtp-test-secret');
   await page.getByLabel('注册方式').selectOption('whitelist');
-  await page.getByLabel('默认每对存储上限（MB）').fill('256');
+  await page.getByLabel('新配对默认存储上限（MiB）').fill('256');
   await page.getByLabel('允许注册的邮箱域名').fill('example.test');
   await page.getByRole('button', { name: '保存服务器设置', exact: true }).click();
   await expect(page.getByText('服务器设置已保存', { exact: true })).toBeVisible();

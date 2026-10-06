@@ -6,7 +6,6 @@ const config: CapacitorConfig = {
   server: { androidScheme: 'https' },
   plugins: {
     Keyboard: { resize: 'native' },
-    PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
   },
 };
 export default config;

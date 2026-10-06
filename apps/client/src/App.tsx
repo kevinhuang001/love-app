@@ -7,7 +7,12 @@ import { Capacitor } from '@capacitor/core';
 import { toast, Toaster } from 'sonner';
 import { Api, readSession, saveSession } from './lib/api';
 import { AppContext } from './lib/context';
-import { clearPushListeners, disablePush, enablePush, getDeviceToken } from './lib/push';
+import {
+  clearNotificationListener,
+  disableNotifications,
+  enableNotifications,
+  notificationStatus,
+} from './lib/notifications';
 import type { Profile, Session, Message } from './lib/types';
 import { AdminPortal } from './pages/Admin';
 import { Auth } from './pages/Auth';
@@ -99,26 +104,39 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
   useEffect(() => {
     if (tab === 'chat') setUnread(0);
   }, [tab, unread]);
+  const paired = Boolean(profile.data?.couple && profile.data.partner);
   useEffect(() => {
-    if (Capacitor.isNativePlatform() && localStorage.getItem('love.push.enabled') === 'true')
-      void enablePush(
-        api,
-        () => {
-          setTab('chat');
-          void cache.invalidateQueries();
-        },
-        (message) => toast.error(message),
-      ).catch((err) => toast.error(err.message));
-    return () => {
-      void clearPushListeners();
-    };
-  }, [api, cache]);
+    if (!profile.data) return;
+    if (!paired) {
+      setTab('us');
+      setUnread(0);
+      for (const key of ['messages', 'moments', 'anniversaries', 'todos', 'ai-settings'])
+        cache.removeQueries({ queryKey: [key] });
+    }
+    if (Capacitor.isNativePlatform()) {
+      let active = true;
+      void notificationStatus()
+        .then(async (state) => {
+          if (!active) return;
+          if (!paired) await disableNotifications();
+          else if (state.enabled)
+            await enableNotifications(api, profile.data!, () => {
+              setTab('chat');
+              void cache.invalidateQueries();
+            });
+        })
+        .catch((error) => toast.error(error.message));
+      return () => {
+        active = false;
+        void clearNotificationListener();
+      };
+    }
+  }, [api, paired, profile.data?.user.id, profile.data?.couple?.id, cache]);
   async function logout() {
-    const token = getDeviceToken();
+    await disableNotifications();
     try {
-      await disablePush(api);
+      await api.post('/api/auth/logout', {});
     } finally {
-      await api.post('/api/auth/logout', { deviceToken: token });
       await end();
     }
   }
@@ -137,7 +155,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       value={{ api, profile: profile.data, socket, connected, openUs: () => setTab('us') }}
     >
       <Tabs value={tab} onValueChange={setTab} className="app-shell gap-0">
-        {tab !== 'chat' && (
+        {(!paired || tab !== 'chat') && (
           <header className="app-bar flex shrink-0 items-center justify-between px-6 py-4">
             <h1 className="wordmark">
               love
@@ -147,7 +165,9 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
           </header>
         )}
         <div className="flex min-h-0 flex-1 flex-col">
-          {tab === 'chat' ? (
+          {!paired ? (
+            <Us logout={logout} onChat={() => setTab('chat')} />
+          ) : tab === 'chat' ? (
             <Chat key={profile.data.user.coupleId} />
           ) : tab === 'memories' ? (
             <Memories />
@@ -159,34 +179,36 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
             <Us logout={logout} onChat={() => setTab('chat')} />
           )}
         </div>
-        <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
-          <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-5 rounded-none bg-transparent p-1">
-            {[
-              ['chat', '聊天', MessageCircle],
-              ['memories', '回忆', Images],
-              ['dates', '纪念日', CalendarDays],
-              ['todos', 'To Do', ListTodo],
-              ['us', '我们', UsersRound],
-            ].map(([value, label, Icon]) => {
-              const Glyph = Icon as typeof MessageCircle;
-              return (
-                <TabsTrigger
-                  key={value as string}
-                  value={value as string}
-                  className="relative flex h-full flex-col gap-1.5 rounded-none border-0 text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                >
-                  <Glyph className="size-5" size={20} strokeWidth={tab === value ? 2 : 1.6} />
-                  <span className="text-[10px]">{label as string}</span>
-                  {value === 'chat' && unread > 0 && (
-                    <span className="absolute top-1 right-1/4 rounded-full bg-primary px-1 text-[9px] text-primary-foreground">
-                      {unread > 99 ? '99+' : unread}
-                    </span>
-                  )}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-        </nav>
+        {paired && (
+          <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
+            <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-5 rounded-none bg-transparent p-1">
+              {[
+                ['chat', '聊天', MessageCircle],
+                ['memories', '回忆', Images],
+                ['dates', '纪念日', CalendarDays],
+                ['todos', 'To Do', ListTodo],
+                ['us', '我们', UsersRound],
+              ].map(([value, label, Icon]) => {
+                const Glyph = Icon as typeof MessageCircle;
+                return (
+                  <TabsTrigger
+                    key={value as string}
+                    value={value as string}
+                    className="relative flex h-full flex-col gap-1.5 rounded-none border-0 text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                  >
+                    <Glyph className="size-5" size={20} strokeWidth={tab === value ? 2 : 1.6} />
+                    <span className="text-[10px]">{label as string}</span>
+                    {value === 'chat' && unread > 0 && (
+                      <span className="absolute top-1 right-1/4 rounded-full bg-primary px-1 text-[9px] text-primary-foreground">
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </nav>
+        )}
       </Tabs>
     </AppContext.Provider>
   );
@@ -213,6 +235,7 @@ export default function App() {
   }, []);
   const end = useMemo(
     () => async () => {
+      await disableNotifications();
       await saveSession(null);
       setSession(null);
       cache.clear();

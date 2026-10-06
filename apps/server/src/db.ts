@@ -28,8 +28,6 @@ export function openDatabase(path: string) {
     CREATE INDEX IF NOT EXISTS moments_couple_date ON moments(coupleId,date,id);
     CREATE INDEX IF NOT EXISTS moments_couple_uploaded ON moments(coupleId,createdAt,id);
     CREATE TABLE IF NOT EXISTS anniversaries(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), title TEXT NOT NULL, date TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS devices(token TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), updatedAt INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS push_jobs(id INTEGER PRIMARY KEY, messageId INTEGER UNIQUE REFERENCES messages(id), recipientId TEXT REFERENCES users(id), attempts INTEGER NOT NULL DEFAULT 0, nextAt INTEGER NOT NULL);
     `);
   db.exec(`CREATE TABLE IF NOT EXISTS todos(
     id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), title TEXT NOT NULL,

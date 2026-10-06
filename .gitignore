@@ -6,10 +6,6 @@ node_modules/
 data/
 dist/
 apps/client/android/
-apps/client/src/push-build.json
-config/google-services.json
-config/agconnect-services.json
-config/jpush-android.json
 *.jks
 *.keystore
 playwright-report/

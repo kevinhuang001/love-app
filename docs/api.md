@@ -4,10 +4,10 @@
 
 | 方法           | 路径                      | 内容                                                                                |
 | -------------- | ------------------------- | ----------------------------------------------------------------------------------- |
-| GET            | /api/health               | 版本、服务状态、pushConfigured                                                      |
+| GET            | /api/health               | 版本、服务状态、notifications: local                                                      |
 | POST           | /api/auth/register        | username、password、name、email、verificationId、code                               |
 | POST           | /api/auth/login           | username（或邮箱）、password、captchaId、captcha；返回 token、user、partner、couple |
-| POST           | /api/auth/logout          | 可选 deviceToken；撤销会话和当前设备通知                                            |
+| POST           | /api/auth/logout          | 撤销会话并关闭对应本地通知连接                                            |
 | GET / PATCH    | /api/me                   | 查看资料；修改 name、可选 avatarMediaId                                             |
 | POST           | /api/pairing/invite       | 创建邀请码                                                                          |
 | POST           | /api/pairing/join         | code                                                                                |
@@ -22,7 +22,6 @@
 | PATCH / DELETE | /api/moments/:id          | 仅发布者可编辑、删除                                                                |
 | GET / POST     | /api/anniversaries        | 查看／新增 title、date（今天或过去，累计天数）                                      |
 | PATCH / DELETE | /api/anniversaries/:id    | 当前情侣可修改、删除                                                                |
-| POST / DELETE  | /api/devices              | 当前设备 token 注册／注销                                                           |
 | GET / POST     | /api/todos                | title、date、calendar、leapMonth、repeat；支持农历                                  |
 | PATCH / DELETE | /api/todos/:id            | 编辑或删除当前情侣的待办                                                            |
 | POST           | /api/todos/:id/completion | completed；完成循环事项跳到下一次                                                   |
@@ -35,7 +34,7 @@
 
 | 方法                | 路径                                                    | 内容                                                                      |
 | ------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| GET                 | /api/auth/config                                        | 公开注册模式、邮件可用状态、管理员是否配置                                |
+| GET                 | /api/auth/config                                        | 公开注册模式、邮件可用状态                                |
 | GET                 | /api/auth/captcha?purpose=login或register或reset或admin | id、PNG data URL、有效秒数；不返回答案                                    |
 | POST                | /api/auth/email-code                                    | email、purpose=register或reset、captchaId、captcha；返回 verificationId   |
 | POST                | /api/auth/reset-password                                | email、verificationId、code、password；成功撤销所有用户会话               |
@@ -47,7 +46,7 @@
 | GET / POST          | /api/admin/users                                        | 搜索分页；创建 username、name、email、password、confirmedEmail=true       |
 | PATCH               | /api/admin/users/:id                                    | disabled、password 或 revokeSessions=true                                 |
 | GET                 | /api/admin/couples                                      | 搜索分页、双方、容量、条目数、配额                                        |
-| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 继承默认，0 不限                                           |
+| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 分配当前默认额度，0 禁止上传                                           |
 | GET / PATCH         | /api/admin/settings                                     | registration、domains、defaultQuotaMiB、retentionDays、smtp；密码响应脱敏 |
 | POST                | /api/admin/smtp/test                                    | email                                                                     |
 | GET / POST / DELETE | /api/admin/allowlist                                    | email、note；DELETE body 传 email                                         |
@@ -92,3 +91,11 @@ curl https://love.example.com/api/ai/tools/publish_moment \
 不要把永久 session token 给不可信 AI 服务；内置助手 在后端执行工具，不向 provider 发送用户 session token。API Key、Cookie 和服务端环境变量不是工具参数，AI 无法查询这些信息。
 
 助手身份示例：`@小桃 把你的名字改成星星，并用本次图片作为你的头像`，调用 update_ai_profile。修改真人昵称需要明确说“我的昵称”，调用 update_profile。AI 回复的 assistant 字段包含 name 和带签名预览的 avatar。
+
+## 配对权限与本地通知
+
+未配对的用户仅可 GET/PATCH `/api/me`、POST `/api/me/avatar`、创建/加入配对以及退出登录。其余认证功能接口在处理请求与媒体上传前返回 409。管理员会话独立，不受用户配对门槛影响。
+
+POST `/api/me/avatar` 为图片 multipart 上传，最大 2 MiB，保存为当前个人头像并清理旧个人头像。POST `/api/media` 必须已配对，按当前配对额度原子核算三个文件的实际大小；超额返回 413 并清理本次文件。`/api/me` 的 couple 包含 `storageBytes` 和 `quotaBytes`。
+
+GET `/api/notifications/stream` 使用 Bearer 认证，返回 SSE。可选 `after` 是上次消息 ID；不传时从当前最新位置开始。事件 `ready` 含 cursor/coupleId，`message` 含 messageId，`cursor` 表示无需提醒的已读或自己的消息，`stop` 表示停止接收。每 15 秒心跳，单用户最多 5 个连接；会话、配对或账号失效时关闭。流不携带聊天正文或附件。安卓原生服务处理重连和本地通知，不存在第三方提供者注册接口。

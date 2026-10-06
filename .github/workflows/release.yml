@@ -1,8 +1,9 @@
 name: Publish Android release
 on:
-  push:
+  workflow_run:
+    workflows: [Test and build]
+    types: [completed]
     branches: [main]
-    paths: [.github/workflows/release.yml]
   workflow_dispatch:
     inputs:
       run_id:
@@ -10,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.0.1
+        description: New version tag, for example v2.1.0
         required: true
         type: string
 permissions:
@@ -21,18 +22,19 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      SOURCE_RUN_ID: ${{ inputs.run_id || '37453656707' }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.0.1' }}
+      SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.1.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
       - name: Verify tested source and current main
         run: |
           set -euo pipefail
@@ -74,23 +76,21 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          新增中国大陆安卓厂商推送，前台隐藏管理入口。
+          安卓改为仅使用自建连接与本地通知；容量按配对分配。
 
-          - 原生集成华为、荣耀、小米/Redmi、OPPO（兼容一加/realme）、vivo（兼容 iQOO）、魅族六家 SDK，通过极光的厂商通道投递，保留 FCM，国内通道优先。
-          - 通知权限与设备标识用途说明；用户开启通知前不初始化国内推送，FCM 默认关闭自动注册。
-          - 点击厂商通知可冷启动进入聊天；账号切换、令牌更新、关闭通知和退出登录同步设备注册。
-          - 服务端分流、持久重试、已读抑制、失效令牌清理和逐设备接受状态；后台展示提供者、设备数量与失败任务。
-          - 登录页与用户设置不显示管理入口。管理员自行访问 /#admin，服务端独立鉴权不变。
-          - Docker 新增极光服务端环境变量，Actions 新增厂商客户端配置 Secret，完整配置与验收见 Android 文档。
+          - 原生前台服务直接连接自建 HTTPS 后端，自动重连、补取遗漏消息并生成本地通知，点击进入聊天。
+          - 删除第三方推送 SDK、厂商配置、凭据与设备注册代码；不需要推送平台账号。
+          - 未配对仅可修改个人资料、创建或加入配对；聊天、相册、纪念日、待办、AI 及普通媒体上传由界面和 API 同时限制。
+          - 新配对默认分配 1 GiB，管理员可以单独调整。0 禁止新增上传；并发上传按实际文件大小原子核算，超额清理本次文件。
+          - 个人头像独立限额 2 MiB，仅保留压缩后的当前头像；管理员入口仍隐藏，仅直接访问 /#admin。
 
-          APK 来自通过 test、docker、android 三项任务的 GitHub Actions 构建；CI 检查六家 SDK 的实际 DEX、Manifest 和通知权限，附 SHA-256 文件。
-          这是调试签名 APK。若与已安装版本签名不一致，需卸载旧包再安装；正式使用请固定 keystore，并配置真实签名指纹。
-          客户端未注入凭据时会标记推送未配置。真实离线送达需要极光账户、各厂商凭据/审核、服务端配置与真机验证；CI 不宣称已完成厂商实际送达测试。
-          已部署 v4 数据库的用户保留原数据卷即可，无需清空数据。
+          APK 来自通过 test、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
+          通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
+          现有 schema 4 数据卷无需清空。已有额度 0 现在禁止上传，请管理员按需要分配容量。
 
-          安卓推送配置：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
-          Docker 部署：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
-          管理后台：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
+          Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
+          Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
+          管理：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
           NOTES
       - name: Publish release with APK assets
         run: |

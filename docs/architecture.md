@@ -36,6 +36,6 @@ AI 使用仅发起者可配置的凭据。队列先保存 @配置名称请求，
 6. Pixel 7 尺寸 Playwright：注册、配对、双会话聊天、图片上传预览、纪念日新增编辑、昵称、主题、AI 配置、登录持久化、相册排序／筛选／日期识别、后台账号／配额／SMTP／白名单／日志及横向溢出检查。
 7. Java 21 / Android SDK：生成工程、构建 APK，上传 artifact。
 
-测试失败时上传 trace、截图和视频（7 天）；Web 与 APK 也作为构建产物交付。API 测试不调用真实 AI 服务／真实 Firebase，使用可注入 provider 与推送 sender；真实设备后台通知仍需实际 Firebase 凭据和设备验证。
+测试失败时上传 trace、截图和视频（7 天）；Web 与 APK 也作为构建产物交付。API 测试使用隔离数据库和可控 AI 服务，通知采用自建认证 SSE 流；测试覆盖事件隔离、重连及权限撤销。原生 APK 不包含第三方推送 SDK；锁屏和电池策略仍需真实设备验证。
 
 `packages/calendar` 为前后端共享的公历／农历计算模块，确保 UI、HTTP 与 AI 工具使用同一日期语义。底部导航为聊天、回忆、纪念日、To Do、我们。CI docker job 验证生产镜像启动与重启持久化，android 依赖 test 与 docker 两个 job 成功。

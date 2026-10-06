@@ -47,12 +47,12 @@ export type ControlSettings = z.infer<typeof settingsSchema>;
 const defaults: ControlSettings = {
   registration: 'closed',
   domains: [],
-  defaultQuotaMiB: 0,
+  defaultQuotaMiB: 1024,
   retentionDays: 30,
   smtp: { host: '', port: 587, security: 'starttls', user: '', from: '', senderName: 'Love' },
 };
 export type ControlOptions = {
-  pushSenders?: import('./push.js').PushSenders;
+  notificationConnections?: () => number;
   adminBootstrap?: { username: string; password: string };
   mailSender?: MailSender;
   onCaptcha?: (id: string, answer: string) => void;
@@ -500,14 +500,7 @@ export function createControl(
         ),
         aiPending: count("SELECT COUNT(*) n FROM ai_jobs WHERE status='pending'"),
         aiFailed: count('SELECT COUNT(*) n FROM ai_jobs WHERE error IS NOT NULL'),
-        pushPending: count('SELECT COUNT(*) n FROM push_jobs WHERE attempts<5'),
-        pushFailed: count('SELECT COUNT(*) n FROM push_jobs WHERE attempts>=5'),
-        pushProviders: Object.keys(options.pushSenders || {}),
-        pushDevices: db
-          .prepare(
-            "SELECT substr(token,1,instr(token,':')-1) provider,COUNT(*) count FROM devices GROUP BY provider",
-          )
-          .all(),
+        notificationConnections: options.notificationConnections?.() || 0,
         uptime: Math.floor(process.uptime()),
         node: process.version,
         registration: readSettings().registration,
@@ -572,7 +565,6 @@ export function createControl(
         if (password) db.prepare('UPDATE users SET password=? WHERE id=?').run(password, id);
         if (v.disabled || password || v.revokeSessions) {
           db.prepare('DELETE FROM sessions WHERE userId=?').run(id);
-          db.prepare('DELETE FROM devices WHERE userId=?').run(id);
           db.prepare('DELETE FROM invites WHERE userId=?').run(id);
         }
         audit(admin(req), 'account.updated', id, {
@@ -608,7 +600,7 @@ export function createControl(
             ...r,
             members,
             active: members.length === 2,
-            effectiveQuotaMiB: r.quotaMiB ?? readSettings().defaultQuotaMiB,
+            effectiveQuotaMiB: r.quotaMiB ?? 0,
           };
         }),
         total,
@@ -622,11 +614,9 @@ export function createControl(
           .object({ quotaMiB: z.number().int().min(0).max(1_000_000).nullable() })
           .parse(req.body);
       if (!db.prepare('SELECT id FROM couples WHERE id=?').get(id)) fail(404, '两人空间不存在');
-      if (v.quotaMiB === null) db.prepare('DELETE FROM couple_limits WHERE coupleId=?').run(id);
-      else
-        db.prepare(
-          'INSERT INTO couple_limits VALUES(?,?) ON CONFLICT(coupleId) DO UPDATE SET quotaMiB=excluded.quotaMiB',
-        ).run(id, v.quotaMiB);
+      db.prepare(
+        'INSERT INTO couple_limits VALUES(?,?) ON CONFLICT(coupleId) DO UPDATE SET quotaMiB=excluded.quotaMiB',
+      ).run(id, v.quotaMiB ?? readSettings().defaultQuotaMiB);
       audit(admin(req), 'couple.quota.updated', id, { quotaMiB: v.quotaMiB });
       res.sendStatus(204);
     });
@@ -708,9 +698,9 @@ export function createControl(
     next();
   }
   function quota(coupleId: string | null) {
-    if (!coupleId) return 0;
+    if (!coupleId) fail(409, '请先与另一半配对');
     const row = db.prepare('SELECT quotaMiB FROM couple_limits WHERE coupleId=?').get(coupleId);
-    return Number(row?.quotaMiB ?? readSettings().defaultQuotaMiB) * 1024 * 1024;
+    return Number(row?.quotaMiB ?? 0) * 1024 * 1024;
   }
   function usage(coupleId: string) {
     return Number(

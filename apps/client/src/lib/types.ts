@@ -10,7 +10,7 @@ export type Profile = {
   ai: AIIdentity;
   user: User;
   partner: User | null;
-  couple: { id: string; startDate: string | null } | null;
+  couple: { id: string; startDate: string | null; storageBytes: number; quotaBytes: number } | null;
 };
 export type Media = {
   id: string;

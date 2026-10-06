@@ -25,7 +25,9 @@ import {
   validSignature,
 } from './security.js';
 import { processMedia } from './media.js';
-import { pushWorker, deviceKey, pushProviders, type PushSenders } from './push.js';
+import { notificationStreams } from './notifications.js';
+import sharp from 'sharp';
+import { writeFile } from 'node:fs/promises';
 import {
   aiConfigSchema,
   validateAIUrl,
@@ -61,7 +63,6 @@ export type AppOptions = ControlOptions & {
   uploads?: string;
   mediaSecret?: string;
   origins?: string[];
-  pushSenders?: PushSenders;
   production?: boolean;
   staticDir?: string;
 };
@@ -69,8 +70,7 @@ export function createApp(options: AppOptions = {}) {
   const db = openDatabase(options.database || 'data/love.sqlite');
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
-  db.exec(`CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS push_installations(installationId TEXT PRIMARY KEY,deviceKey TEXT NOT NULL UNIQUE REFERENCES devices(token) ON DELETE CASCADE)`);
+  db.exec('CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   if (
     !options.mediaSecret &&
     !db.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get()
@@ -94,8 +94,14 @@ export function createApp(options: AppOptions = {}) {
   const app = express();
   const http = createServer(app);
   const io = new Server(http, { cors: { origin }, maxHttpBufferSize: 16_384 });
-  const control = createControl(db, secret, options, (id) =>
-    io.in(`user:${id}`).disconnectSockets(true),
+  const control = createControl(
+    db,
+    secret,
+    { ...options, notificationConnections: () => streams.count() },
+    (id) => {
+      streams.closeUser(id);
+      io.in(`user:${id}`).disconnectSockets(true);
+    },
   );
   app.use(control.access);
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
@@ -128,13 +134,19 @@ export function createApp(options: AppOptions = {}) {
       ? { user, hash, expires: session.expires }
       : null;
   };
+  const streams = notificationStreams(db, lookup);
   const authenticate = (req: Request, _res: Response, next: NextFunction) => {
     const found = lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
     if (!found) return next(new HttpError(401, '登录已过期，请重新登录'));
     Object.assign(req, { user: found.user, sessionHash: found.hash });
     next();
   };
-  const couple = (req: AuthRequest) => req.user.coupleId || fail(409, '请先与另一半配对');
+  const couple = (req: AuthRequest) => {
+    const id = req.user.coupleId;
+    if (!id || Number(db.prepare('SELECT COUNT(*) n FROM users WHERE coupleId=?').get(id)!.n) !== 2)
+      fail(409, '请先与另一半配对');
+    return id!;
+  };
   const partner = (user: User) =>
     user.coupleId
       ? (db
@@ -183,11 +195,15 @@ export function createApp(options: AppOptions = {}) {
     };
   };
   const profile = (user: User) => ({
-    ai: aiIdentity(user),
+    ai: user.coupleId ? aiIdentity(user) : { name: '', avatar: null, enabled: false },
     user: publicUser(user),
     partner: partner(user) ? publicUser(partner(user)!) : null,
     couple: user.coupleId
-      ? db.prepare('SELECT * FROM couples WHERE id=?').get(user.coupleId)
+      ? {
+          ...db.prepare('SELECT * FROM couples WHERE id=?').get(user.coupleId),
+          storageBytes: control.usage(user.coupleId),
+          quotaBytes: control.quota(user.coupleId),
+        }
       : null,
   });
   const ownedMedia = (id: string | undefined, req: AuthRequest) => {
@@ -202,9 +218,8 @@ export function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.0.1',
-      pushConfigured: Boolean(Object.keys(options.pushSenders || {}).length),
-      pushProviders: Object.keys(options.pushSenders || {}),
+      version: '2.1.0',
+      notifications: 'local',
     }),
   );
   const loginLimit = rateLimit({
@@ -327,6 +342,17 @@ export function createApp(options: AppOptions = {}) {
       message: { error: '请求过于频繁' },
     }),
   );
+  app.use('/api', (req, _res, next) => {
+    const personal = ['/me', '/me/avatar', '/auth/logout', '/pairing/invite', '/pairing/join'];
+    if (!personal.includes(req.path)) {
+      try {
+        couple(req as AuthRequest);
+      } catch (error) {
+        return next(error);
+      }
+    }
+    next();
+  });
   const route = (
     method: 'get' | 'post' | 'patch' | 'delete',
     path: string,
@@ -340,12 +366,8 @@ export function createApp(options: AppOptions = {}) {
     res.json(profile(db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id) as User));
   });
   route('post', '/api/auth/logout', (req, res) => {
-    const { deviceToken } = z.object({ deviceToken: z.string().optional() }).parse(req.body);
-    transaction(db, () => {
-      db.prepare('DELETE FROM sessions WHERE hash=?').run(req.sessionHash);
-      if (deviceToken)
-        db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(deviceToken, req.user.id);
-    });
+    db.prepare('DELETE FROM sessions WHERE hash=?').run(req.sessionHash);
+    streams.closeSession(req.sessionHash);
     io.in(`session:${req.sessionHash}`).disconnectSockets(true);
     res.sendStatus(204);
   });
@@ -372,6 +394,10 @@ export function createApp(options: AppOptions = {}) {
       if (from.coupleId || current.coupleId) fail(409, '其中一人已经配对');
       const id = randomUUID();
       db.prepare('INSERT INTO couples(id) VALUES(?)').run(id);
+      db.prepare('INSERT INTO couple_limits VALUES(?,?)').run(
+        id,
+        control.readSettings().defaultQuotaMiB,
+      );
       db.prepare('UPDATE users SET coupleId=? WHERE id IN (?,?)').run(id, from.id, req.user.id);
       db.prepare('DELETE FROM invites WHERE userId IN (?,?)').run(from.id, req.user.id);
       return from.id;
@@ -385,7 +411,9 @@ export function createApp(options: AppOptions = {}) {
   });
   route('delete', '/api/pairing', (req, res) => {
     const id = couple(req);
+    const members = db.prepare('SELECT id FROM users WHERE coupleId=?').all(id);
     db.prepare('UPDATE users SET coupleId=NULL WHERE coupleId=?').run(id);
+    for (const member of members) streams.closeUser(String(member.id));
     io.to(`couple:${id}`).emit('profile:changed');
     io.in(`couple:${id}`).socketsLeave(`couple:${id}`);
     res.sendStatus(204);
@@ -398,6 +426,92 @@ export function createApp(options: AppOptions = {}) {
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     res.json({ startDate });
   });
+  const avatarUpload = multer({
+    dest: join(uploads, 'tmp'),
+    limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 },
+  });
+  app.post('/api/me/avatar', (req, res, next) =>
+    avatarUpload.single('file')(req, res, async (error) => {
+      const id = randomUUID(),
+        preview = `${id}.avatar.webp`,
+        thumbnail = `${id}.avatar-thumb.webp`;
+      let committed = false;
+      try {
+        if (error) throw error;
+        if (!req.file || !req.file.mimetype.startsWith('image/'))
+          fail(400, '头像请选择图片，最大 2 MB');
+        const image = sharp(req.file!.path, { limitInputPixels: 20_000_000 }).rotate();
+        const [large, small] = await Promise.all([
+          image.clone().resize(512, 512, { fit: 'cover' }).webp({ quality: 80 }).toBuffer(),
+          image.clone().resize(256, 256, { fit: 'cover' }).webp({ quality: 75 }).toBuffer(),
+        ]);
+        await Promise.all([
+          writeFile(join(uploads, preview), large),
+          writeFile(join(uploads, thumbnail), small),
+        ]);
+        const old = transaction(db, () => {
+          const auth = lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
+          if (!auth) fail(401, '登录已过期');
+          const previous = db
+            .prepare('SELECT * FROM media WHERE id=? AND coupleId IS NULL AND ownerId=?')
+            .get(
+              (auth!.user as User & { avatarMediaId?: string }).avatarMediaId || '',
+              auth!.user.id,
+            );
+          db.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
+            id,
+            null,
+            auth!.user.id,
+            'image',
+            preview,
+            preview,
+            thumbnail,
+            512,
+            512,
+            null,
+            new Date().toISOString(),
+          );
+          db.prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)').run(
+            id,
+            0,
+            large.length,
+            small.length,
+            large.length + small.length,
+          );
+          db.prepare('UPDATE users SET avatarMediaId=? WHERE id=?').run(id, auth!.user.id);
+          if (previous) {
+            db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
+            db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
+          }
+          return previous;
+        });
+        committed = true;
+        if (old)
+          await Promise.all(
+            [...new Set([String(old.preview), String(old.thumbnail)])].map((name) =>
+              rm(join(uploads, name), { force: true }),
+            ),
+          );
+        io.to(`user:${(req as AuthRequest).user.id}`).emit('profile:changed');
+        if ((req as AuthRequest).user.coupleId)
+          io.to(`couple:${(req as AuthRequest).user.coupleId}`).emit('profile:changed');
+        res.status(201).json(mediaView(id));
+      } catch (err) {
+        if (!committed)
+          await Promise.all(
+            [preview, thumbnail].map((name) => rm(join(uploads, name), { force: true })),
+          );
+        next(
+          err instanceof HttpError
+            ? err
+            : new HttpError(422, '头像无法处理，请选择不超过 2 MB 的有效图片'),
+        );
+      } finally {
+        if (req.file) await rm(req.file.path, { force: true });
+      }
+    }),
+  );
+  route('get', '/api/notifications/stream', (req, res) => streams.open(req, res));
   route('get', '/api/messages', (req, res) => {
     const before =
       req.query.before === undefined
@@ -441,17 +555,13 @@ export function createApp(options: AppOptions = {}) {
           new Date().toISOString(),
         );
       const id = Number(result.lastInsertRowid);
-      db.prepare('INSERT INTO push_jobs(messageId,recipientId,nextAt) VALUES(?,?,?)').run(
-        id,
-        recipient.id,
-        Date.now(),
-      );
       if (mentionsAI(value.content, String(aiIdentity(req.user).name)))
         db.prepare('INSERT INTO ai_jobs(messageId,userId) VALUES(?,?)').run(id, req.user.id);
       return db.prepare('SELECT * FROM messages WHERE id=?').get(id)!;
     });
     const result = messageView(row);
     io.to(`couple:${coupleId}`).emit('message:new', result);
+    streams.flush();
     res.status(201).json(result);
   });
   route('post', '/api/messages/read', (req, res) => {
@@ -480,6 +590,9 @@ export function createApp(options: AppOptions = {}) {
     '/api/media',
     (req, _res, next) => {
       try {
+        const id = couple(req as AuthRequest);
+        if (control.usage(id) >= control.quota(id))
+          fail(413, '两人空间存储已达到配额，请联系管理员');
         if (processing >= 2) fail(429, '正在处理其他媒体，请稍后重试');
         processing++;
         next();
@@ -520,7 +633,7 @@ export function createApp(options: AppOptions = {}) {
             )
               fail(409, '账号或配对状态已改变，请重新登录');
             const limit = control.quota(current.coupleId);
-            if (limit && current.coupleId && control.usage(current.coupleId) + totalBytes > limit)
+            if (!current.coupleId || control.usage(current.coupleId) + totalBytes > limit)
               fail(413, '两人空间存储已达到配额，请联系管理员');
             db.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
               media.id,
@@ -725,48 +838,6 @@ export function createApp(options: AppOptions = {}) {
     io.to(`couple:${req.user.coupleId}`).emit('anniversaries:changed');
     res.sendStatus(204);
   });
-  route('post', '/api/devices', (req, res) => {
-    const { provider, token, installationId } = z
-      .object({
-        provider: z.enum(pushProviders),
-        token: z.string().min(8).max(4096),
-        installationId: z.string().uuid(),
-      })
-      .parse(req.body);
-    if (!options.pushSenders?.[provider]) fail(503, '服务器尚未配置该推送渠道');
-    const key = deviceKey(provider, token);
-    transaction(db, () => {
-      const previous = db
-        .prepare('SELECT deviceKey FROM push_installations WHERE installationId=?')
-        .get(installationId);
-      if (previous)
-        db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(
-          String(previous.deviceKey),
-          req.user.id,
-        );
-      db.prepare(
-        'INSERT INTO devices VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET userId=excluded.userId,updatedAt=excluded.updatedAt',
-      ).run(key, req.user.id, Date.now());
-      db.prepare('DELETE FROM push_installations WHERE deviceKey=? AND installationId<>?').run(
-        key,
-        installationId,
-      );
-      db.prepare(
-        'INSERT INTO push_installations VALUES(?,?) ON CONFLICT(installationId) DO UPDATE SET deviceKey=excluded.deviceKey',
-      ).run(installationId, key);
-    });
-    res.sendStatus(204);
-  });
-  route('delete', '/api/devices', (req, res) => {
-    const { provider, token } = z
-      .object({ provider: z.enum(pushProviders), token: z.string() })
-      .parse(req.body);
-    db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(
-      deviceKey(provider, token),
-      req.user.id,
-    );
-    res.sendStatus(204);
-  });
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
   if (options.staticDir) {
     app.use(express.static(resolve(options.staticDir)));
@@ -829,11 +900,13 @@ export function createApp(options: AppOptions = {}) {
       control.log('info', 'realtime.disconnected', { userId: user.id, reason });
     });
   });
-  const tick = pushWorker(db, options.pushSenders, (code) => control.log('warn', code));
   const runAI = aiWorker({
     db,
     secret,
-    notify: (id, row) => io.to(`couple:${id}`).emit('message:new', messageView(row)),
+    notify: (id, row) => {
+      io.to(`couple:${id}`).emit('message:new', messageView(row));
+      streams.flush();
+    },
     changed: (id, userId) => {
       io.to(`user:${userId}`).emit('profile:changed');
       for (const event of [
@@ -847,7 +920,6 @@ export function createApp(options: AppOptions = {}) {
   });
   let lastPrune = 0;
   const timer = setInterval(() => {
-    void tick().catch(() => control.log('error', 'push.worker.failed'));
     void runAI().catch(() => control.log('error', 'ai.worker.failed'));
     db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
     db.prepare('DELETE FROM invites WHERE expires<?').run(Date.now());
@@ -863,11 +935,11 @@ export function createApp(options: AppOptions = {}) {
     io,
     db,
     control,
-    tick,
     runAI,
     close: async () => {
       clearInterval(timer);
       await control.bootstrap.catch(() => {});
+      streams.close();
       control.close();
       await new Promise<void>((resolve) => io.close(() => resolve()));
       db.close();

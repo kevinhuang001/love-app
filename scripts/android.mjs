@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { configureChinaPush } from './android-push.mjs';
 const client = resolve('apps/client');
 function cap(...args) {
   const r = spawnSync(
@@ -17,16 +18,24 @@ if (process.env.GOOGLE_SERVICES_JSON)
   writeFileSync(resolve(app, 'google-services.json'), process.env.GOOGLE_SERVICES_JSON);
 else if (existsSync(resolve('config/google-services.json')))
   copyFileSync(resolve('config/google-services.json'), resolve(app, 'google-services.json'));
+else rmSync(resolve(app, 'google-services.json'), { force: true });
 const firebaseConfigured = existsSync(resolve(app, 'google-services.json'));
-writeFileSync(resolve(client, 'src/push-build.json'), JSON.stringify({ firebaseConfigured }));
+const china = configureChinaPush(client, app);
+const pushConfig = { firebaseConfigured, ...china };
+writeFileSync(resolve(client, 'src/push-build.json'), JSON.stringify(pushConfig));
 const builtConfig = resolve(client, 'dist/push-build.json');
-writeFileSync(builtConfig, JSON.stringify({ firebaseConfigured }));
+writeFileSync(builtConfig, JSON.stringify(pushConfig));
 const manifestPath = resolve(app, 'src/main/AndroidManifest.xml');
 let manifest = readFileSync(manifestPath, 'utf8');
 if (!manifest.includes('POST_NOTIFICATIONS'))
   manifest = manifest.replace(
     '</manifest>',
     '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/></manifest>',
+  );
+if (!manifest.includes('firebase_messaging_auto_init_enabled'))
+  manifest = manifest.replace(
+    '</application>',
+    '<meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" tools:replace="android:value"/><meta-data android:name="firebase_analytics_collection_enabled" android:value="false" tools:replace="android:value"/></application>',
   );
 if (!manifest.includes('default_notification_icon'))
   manifest = manifest.replace(
@@ -48,11 +57,9 @@ build = build
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "1.0"/, 'versionName "2.0.0"');
+  .replace(/versionName "[^\"]*"/, 'versionName "2.0.1"');
 writeFileSync(gradle, build);
 cap('sync', 'android');
 console.log(
-  firebaseConfigured
-    ? 'Android ready with Firebase push configuration.'
-    : 'Android ready. Push is unavailable until google-services.json is supplied.',
+  `Android ready. FCM configured: ${firebaseConfigured}; domestic push configured: ${china.jpushConfigured}; vendor count: ${china.vendors.length}`,
 );

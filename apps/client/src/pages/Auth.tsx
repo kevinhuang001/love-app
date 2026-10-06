@@ -11,7 +11,6 @@ export type AuthConfig = {
   registration: 'closed' | 'email' | 'whitelist';
   registrationAvailable: boolean;
   mailAvailable: boolean;
-  adminConfigured: boolean;
 };
 export function Auth({ onSession }: { onSession: (session: Session) => Promise<void> }) {
   const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login'),
@@ -347,11 +346,6 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
             返回登录
           </button>
         )}
-        <div className="mt-6 text-center">
-          <a href="#admin" className="text-xs text-muted-foreground">
-            管理后台
-          </a>
-        </div>
         <details className="server-disclosure mt-5 rounded-xl border px-4 py-3">
           <summary className="flex cursor-pointer items-center justify-between text-xs font-medium">
             <span>服务器设置</span>

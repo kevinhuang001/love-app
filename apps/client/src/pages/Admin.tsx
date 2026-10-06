@@ -94,6 +94,9 @@ type Overview = {
   aiPending: number;
   aiFailed: number;
   pushPending: number;
+  pushFailed: number;
+  pushProviders: string[];
+  pushDevices: { provider: string; count: number }[];
   uptime: number;
   node: string;
   registration: Config['registration'];
@@ -178,7 +181,7 @@ export function AdminPortal() {
     if (!publicApi) return;
     const abort = new AbortController();
     void publicApi
-      .request<{ adminConfigured: boolean }>('/api/auth/config', { signal: abort.signal })
+      .request<{ adminConfigured: boolean }>('/api/admin/status', { signal: abort.signal })
       .then((r) => setConfigured(r.adminConfigured))
       .catch(() => setConfigured(null));
     return () => abort.abort();
@@ -996,6 +999,21 @@ function Dashboard({ data: d }: { data: Overview }) {
             <dd className="mt-1.5">
               {Math.floor(d.uptime / 3600)} 小时 {Math.floor((d.uptime % 3600) / 60)} 分钟 · Node{' '}
               {d.node}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">推送渠道</dt>
+            <dd className="mt-1.5">
+              {d.pushProviders.length
+                ? d.pushProviders
+                    .map((p) => (p === 'jpush' ? '国内厂商（极光）' : 'FCM'))
+                    .join(' / ')
+                : '尚未配置'}
+            </dd>
+            <dd className="mt-1.5 text-muted-foreground">
+              {d.pushDevices.map((p) => `${p.provider}: ${p.count} 台`).join(' · ') ||
+                '暂无注册设备'}{' '}
+              · {d.pushFailed} 个推送任务失败
             </dd>
           </div>
           <div>

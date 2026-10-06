@@ -52,6 +52,7 @@ const defaults: ControlSettings = {
   smtp: { host: '', port: 587, security: 'starttls', user: '', from: '', senderName: 'Love' },
 };
 export type ControlOptions = {
+  pushSenders?: import('./push.js').PushSenders;
   adminBootstrap?: { username: string; password: string };
   mailSender?: MailSender;
   onCaptcha?: (id: string, answer: string) => void;
@@ -230,6 +231,11 @@ export function createControl(
       legacyHeaders: false,
       message: { error: '验证码请求过于频繁，请稍后重试' },
     });
+    app.get('/api/admin/status', (_req, res) =>
+      res.json({
+        adminConfigured: Boolean(db.prepare('SELECT id FROM administrators LIMIT 1').get()),
+      }),
+    );
     app.get('/api/auth/config', async (_req, res) => {
       await bootstrap.catch(() => {});
       const s = readSettings();
@@ -237,7 +243,6 @@ export function createControl(
         registration: s.registration,
         registrationAvailable: s.registration !== 'closed' && readySMTP(s),
         mailAvailable: readySMTP(s),
-        adminConfigured: Boolean(db.prepare('SELECT id FROM administrators LIMIT 1').get()),
         captchaRequired: true,
       });
     });
@@ -495,7 +500,14 @@ export function createControl(
         ),
         aiPending: count("SELECT COUNT(*) n FROM ai_jobs WHERE status='pending'"),
         aiFailed: count('SELECT COUNT(*) n FROM ai_jobs WHERE error IS NOT NULL'),
-        pushPending: count('SELECT COUNT(*) n FROM push_jobs'),
+        pushPending: count('SELECT COUNT(*) n FROM push_jobs WHERE attempts<5'),
+        pushFailed: count('SELECT COUNT(*) n FROM push_jobs WHERE attempts>=5'),
+        pushProviders: Object.keys(options.pushSenders || {}),
+        pushDevices: db
+          .prepare(
+            "SELECT substr(token,1,instr(token,':')-1) provider,COUNT(*) count FROM devices GROUP BY provider",
+          )
+          .all(),
         uptime: Math.floor(process.uptime()),
         node: process.version,
         registration: readSettings().registration,

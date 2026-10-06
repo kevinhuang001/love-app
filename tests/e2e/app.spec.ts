@@ -11,6 +11,8 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   const username = `user${suffix}`,
     partnerName = `partner${suffix}`;
   await page.goto('/');
+  await expect(page.getByRole('link', { name: '管理后台' })).toHaveCount(0);
+  await expect(page.locator('a[href*="admin"]')).toHaveCount(0);
   await expect(page.getByLabel('服务器地址')).toBeHidden();
   expect(await page.locator('body').evaluate((el) => getComputedStyle(el).fontFamily)).toContain(
     'Noto Sans SC',
@@ -526,7 +528,7 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
   await page.getByRole('button', { name: '日志', exact: true }).click();
   await expect(page.getByText('/api/admin/smtp/test', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '后台日志', exact: true }).click();
-  await expect(page.getByText('server.started', { exact: true })).toBeVisible();
+  await expect(page.getByText('server.started', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '操作记录', exact: true }).click();
   await expect(page.getByText('settings.updated', { exact: true }).first()).toBeVisible();
   await page.reload();

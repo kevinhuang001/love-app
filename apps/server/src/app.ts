@@ -25,7 +25,7 @@ import {
   validSignature,
 } from './security.js';
 import { processMedia } from './media.js';
-import { pushWorker, type PushSender } from './push.js';
+import { pushWorker, deviceKey, pushProviders, type PushSenders } from './push.js';
 import {
   aiConfigSchema,
   validateAIUrl,
@@ -61,7 +61,7 @@ export type AppOptions = ControlOptions & {
   uploads?: string;
   mediaSecret?: string;
   origins?: string[];
-  pushSender?: PushSender;
+  pushSenders?: PushSenders;
   production?: boolean;
   staticDir?: string;
 };
@@ -69,7 +69,8 @@ export function createApp(options: AppOptions = {}) {
   const db = openDatabase(options.database || 'data/love.sqlite');
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
-  db.exec('CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  db.exec(`CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS push_installations(installationId TEXT PRIMARY KEY,deviceKey TEXT NOT NULL UNIQUE REFERENCES devices(token) ON DELETE CASCADE)`);
   if (
     !options.mediaSecret &&
     !db.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get()
@@ -199,7 +200,12 @@ export function createApp(options: AppOptions = {}) {
       fail(403, '不能使用此媒体');
   };
   app.get('/api/health', (_req, res) =>
-    res.json({ status: 'ok', version: '2.0.0', pushConfigured: Boolean(options.pushSender) }),
+    res.json({
+      status: 'ok',
+      version: '2.0.1',
+      pushConfigured: Boolean(Object.keys(options.pushSenders || {}).length),
+      pushProviders: Object.keys(options.pushSenders || {}),
+    }),
   );
   const loginLimit = rateLimit({
     windowMs: 900_000,
@@ -720,15 +726,45 @@ export function createApp(options: AppOptions = {}) {
     res.sendStatus(204);
   });
   route('post', '/api/devices', (req, res) => {
-    const { token } = z.object({ token: z.string().min(20).max(4096) }).parse(req.body);
-    db.prepare(
-      'INSERT INTO devices VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET userId=excluded.userId,updatedAt=excluded.updatedAt',
-    ).run(token, req.user.id, Date.now());
+    const { provider, token, installationId } = z
+      .object({
+        provider: z.enum(pushProviders),
+        token: z.string().min(8).max(4096),
+        installationId: z.string().uuid(),
+      })
+      .parse(req.body);
+    if (!options.pushSenders?.[provider]) fail(503, '服务器尚未配置该推送渠道');
+    const key = deviceKey(provider, token);
+    transaction(db, () => {
+      const previous = db
+        .prepare('SELECT deviceKey FROM push_installations WHERE installationId=?')
+        .get(installationId);
+      if (previous)
+        db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(
+          String(previous.deviceKey),
+          req.user.id,
+        );
+      db.prepare(
+        'INSERT INTO devices VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET userId=excluded.userId,updatedAt=excluded.updatedAt',
+      ).run(key, req.user.id, Date.now());
+      db.prepare('DELETE FROM push_installations WHERE deviceKey=? AND installationId<>?').run(
+        key,
+        installationId,
+      );
+      db.prepare(
+        'INSERT INTO push_installations VALUES(?,?) ON CONFLICT(installationId) DO UPDATE SET deviceKey=excluded.deviceKey',
+      ).run(installationId, key);
+    });
     res.sendStatus(204);
   });
   route('delete', '/api/devices', (req, res) => {
-    const { token } = z.object({ token: z.string() }).parse(req.body);
-    db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(token, req.user.id);
+    const { provider, token } = z
+      .object({ provider: z.enum(pushProviders), token: z.string() })
+      .parse(req.body);
+    db.prepare('DELETE FROM devices WHERE token=? AND userId=?').run(
+      deviceKey(provider, token),
+      req.user.id,
+    );
     res.sendStatus(204);
   });
   app.use('/api', (_req, res) => res.status(404).json({ error: '接口不存在' }));
@@ -793,7 +829,7 @@ export function createApp(options: AppOptions = {}) {
       control.log('info', 'realtime.disconnected', { userId: user.id, reason });
     });
   });
-  const tick = pushWorker(db, options.pushSender);
+  const tick = pushWorker(db, options.pushSenders, (code) => control.log('warn', code));
   const runAI = aiWorker({
     db,
     secret,

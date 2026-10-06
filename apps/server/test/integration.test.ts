@@ -273,14 +273,28 @@ test('durable push, invalid token cleanup and suppression for read messages', as
     a = await s.register('alice'),
     b = await s.register('bob');
   await s.pair(a.token, b.token);
-  await s.api(b.token).post('/api/devices', { token: 'valid-device-token-00000000' }).expect(204);
-  await s.api(b.token).post('/api/devices', { token: 'invalid-device-token-000000' }).expect(204);
+  await s
+    .api(b.token)
+    .post('/api/devices', {
+      provider: 'fcm',
+      token: 'valid-device-token-00000000',
+      installationId: randomUUID(),
+    })
+    .expect(204);
+  await s
+    .api(b.token)
+    .post('/api/devices', {
+      provider: 'fcm',
+      token: 'invalid-device-token-000000',
+      installationId: randomUUID(),
+    })
+    .expect(204);
   const message = await s
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '提醒' })
     .expect(201);
   await s.tick();
-  assert.equal(s.delivered.length, 1);
+  assert.equal(s.delivered.length, 2);
   assert.equal(s.delivered[0].messageId, message.body.id);
   assert.equal(s.db.prepare('SELECT * FROM devices').all().length, 1);
   const next = await s
@@ -289,10 +303,10 @@ test('durable push, invalid token cleanup and suppression for read messages', as
     .expect(201);
   await s.api(b.token).post('/api/messages/read', { throughId: next.body.id }).expect(204);
   await s.tick();
-  assert.equal(s.delivered.length, 1);
+  assert.equal(s.delivered.length, 2);
   await s
     .api(b.token)
-    .post('/api/auth/logout', { deviceToken: 'valid-device-token-00000000' })
+    .post('/api/auth/logout', { deviceToken: 'fcm:valid-device-token-00000000' })
     .expect(204);
   assert.equal(s.db.prepare('SELECT * FROM devices').all().length, 0);
 });

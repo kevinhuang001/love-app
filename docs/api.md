@@ -4,10 +4,10 @@
 
 | 方法           | 路径                      | 内容                                                                                |
 | -------------- | ------------------------- | ----------------------------------------------------------------------------------- |
-| GET            | /api/health               | 版本、服务状态、pushConfigured                                                      |
+| GET            | /api/health               | 版本、服务状态、notifications: local                                                      |
 | POST           | /api/auth/register        | username、password、name、email、verificationId、code                               |
 | POST           | /api/auth/login           | username（或邮箱）、password、captchaId、captcha；返回 token、user、partner、couple |
-| POST           | /api/auth/logout          | 可选 deviceToken；撤销会话和当前设备通知                                            |
+| POST           | /api/auth/logout          | 撤销会话并关闭对应本地通知连接                                            |
 | GET / PATCH    | /api/me                   | 查看资料；修改 name、可选 avatarMediaId                                             |
 | POST           | /api/pairing/invite       | 创建邀请码                                                                          |
 | POST           | /api/pairing/join         | code                                                                                |
@@ -46,7 +46,7 @@
 | GET / POST          | /api/admin/users                                        | 搜索分页；创建 username、name、email、password、confirmedEmail=true       |
 | PATCH               | /api/admin/users/:id                                    | disabled、password 或 revokeSessions=true                                 |
 | GET                 | /api/admin/couples                                      | 搜索分页、双方、容量、条目数、配额                                        |
-| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 使用默认，0 禁止上传                                           |
+| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 分配当前默认额度，0 禁止上传                                           |
 | GET / PATCH         | /api/admin/settings                                     | registration、domains、defaultQuotaMiB、retentionDays、smtp；密码响应脱敏 |
 | POST                | /api/admin/smtp/test                                    | email                                                                     |
 | GET / POST / DELETE | /api/admin/allowlist                                    | email、note；DELETE body 传 email                                         |

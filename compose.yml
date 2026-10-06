@@ -6,6 +6,8 @@ services:
       - '127.0.0.1:${LOVE_PORT:-3000}:3000'
     environment:
       NODE_ENV: production
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TZ: Asia/Shanghai
       MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Configure MEDIA_SIGNING_SECRET}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${LOVE_DOMAIN:-localhost},https://localhost,capacitor://localhost}

@@ -8,7 +8,7 @@ RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 FROM node:24-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 ENV LANG=C.UTF-8 TZ=Asia/Shanghai NODE_ENV=production PORT=3000 DATABASE_PATH=/app/data/love.sqlite UPLOADS_PATH=/app/data/media

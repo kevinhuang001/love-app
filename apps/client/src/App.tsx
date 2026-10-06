@@ -9,6 +9,7 @@ import { Api, readSession, saveSession } from './lib/api';
 import { AppContext } from './lib/context';
 import { clearPushListeners, enablePush, getDeviceToken } from './lib/push';
 import type { Profile, Session, Message } from './lib/types';
+import { AdminPortal } from './pages/Admin';
 import { Auth } from './pages/Auth';
 import { Chat } from './pages/Chat';
 import { Memories } from './pages/Memories';
@@ -188,6 +189,12 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
   );
 }
 export default function App() {
+  const [adminRoute, setAdminRoute] = useState(window.location.hash === '#admin');
+  useEffect(() => {
+    const change = () => setAdminRoute(window.location.hash === '#admin');
+    window.addEventListener('hashchange', change);
+    return () => window.removeEventListener('hashchange', change);
+  }, []);
   const [session, setSession] = useState<Session | null>(null),
     [ready, setReady] = useState(false),
     cache = useQueryClient();
@@ -211,7 +218,9 @@ export default function App() {
   );
   return (
     <>
-      {!ready ? (
+      {adminRoute ? (
+        <AdminPortal />
+      ) : !ready ? (
         <Loading />
       ) : session ? (
         <Space session={session} end={end} />

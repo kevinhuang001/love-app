@@ -247,7 +247,7 @@ export const tools = toolDefinitions.map(([name, description, properties]) => ({
 }));
 export function executeTool(db: DB, userId: string, name: string, input: unknown) {
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as User | undefined;
-  if (!user) throw new Error('用户不存在');
+  if (!user || user.disabled) throw new Error('用户不存在');
   const coupleId = user.coupleId;
   if (!coupleId && !['update_profile', 'update_ai_profile'].includes(name))
     throw new Error('请先配对');
@@ -473,7 +473,7 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
         persistReply('请先在“我们”中配置并开启 AI 助手。');
         return;
       }
-      if (user.coupleId !== job.coupleId) {
+      if (user.disabled || user.coupleId !== job.coupleId) {
         db.prepare("UPDATE ai_jobs SET status='cancelled' WHERE messageId=?").run(job.messageId);
         return;
       }

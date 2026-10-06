@@ -9,6 +9,9 @@ import multer from 'multer';
 import { createServer } from 'node:http';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { stat, rm } from 'node:fs/promises';
+import { createControl, type ControlOptions } from './control.js';
+import { HttpError, fail } from './errors.js';
 import { resolve, join } from 'node:path';
 import { Server } from 'socket.io';
 import { z } from 'zod';
@@ -33,17 +36,6 @@ import {
 } from './ai.js';
 
 type AuthRequest = Request & { user: User; sessionHash: string };
-class HttpError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-const fail = (status: number, message: string): never => {
-  throw new HttpError(status, message);
-};
 const text = z.string().trim();
 const date = z
   .string()
@@ -62,8 +54,9 @@ const safeUser = (user: User) => ({
   username: user.username,
   name: user.name,
   coupleId: user.coupleId,
+  email: user.email,
 });
-export type AppOptions = {
+export type AppOptions = ControlOptions & {
   database?: string;
   uploads?: string;
   mediaSecret?: string;
@@ -98,6 +91,12 @@ export function createApp(options: AppOptions = {}) {
     callback: (err: Error | null, allowed?: boolean) => void,
   ) => callback(null, !value || origins.includes(value));
   const app = express();
+  const http = createServer(app);
+  const io = new Server(http, { cors: { origin }, maxHttpBufferSize: 16_384 });
+  const control = createControl(db, secret, options, (id) =>
+    io.in(`user:${id}`).disconnectSockets(true),
+  );
+  app.use(control.access);
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
   app.use(
     helmet({
@@ -116,8 +115,6 @@ export function createApp(options: AppOptions = {}) {
   );
   app.use(cors({ origin }));
   app.use(express.json({ limit: '32kb' }));
-  const http = createServer(app);
-  const io = new Server(http, { cors: { origin }, maxHttpBufferSize: 16_384 });
   const lookup = (token: string): { user: User; hash: string; expires: number } | null => {
     const hash = hashToken(token);
     const session = db
@@ -126,7 +123,9 @@ export function createApp(options: AppOptions = {}) {
     const user = session
       ? (db.prepare('SELECT * FROM users WHERE id=?').get(session.userId) as User)
       : undefined;
-    return user && session ? { user, hash, expires: session.expires } : null;
+    return user && !user.disabled && user.verifiedAt && session
+      ? { user, hash, expires: session.expires }
+      : null;
   };
   const authenticate = (req: Request, _res: Response, next: NextFunction) => {
     const found = lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
@@ -209,40 +208,87 @@ export function createApp(options: AppOptions = {}) {
     legacyHeaders: false,
     message: { error: '尝试过于频繁，请稍后重试' },
   });
+  control.installPublic(app);
+  control.installAdmin(app);
   for (const mode of ['register', 'login'])
     app.post(`/api/auth/${mode}`, loginLimit, async (req, res) => {
-      const value = credentials.parse(req.body);
-      let user = db.prepare('SELECT * FROM users WHERE username=?').get(value.username) as
-        User | undefined;
-      if (mode === 'register') {
-        if (user) fail(409, '此用户名已存在');
-        const password = await hashPassword(value.password);
-        user = {
-          id: randomUUID(),
-          username: value.username,
-          name: value.name || value.username,
-          password,
-          coupleId: null,
+      const signup = mode === 'register';
+      const value = signup
+        ? credentials
+            .extend({
+              email: z.string().trim().toLowerCase().email().max(254),
+              verificationId: z.string().uuid(),
+              code: z.string().regex(/^\d{6}$/),
+            })
+            .parse(req.body)
+        : z
+            .object({
+              username: text.toLowerCase().min(3).max(254),
+              password: z.string().min(1).max(128),
+            })
+            .parse(req.body);
+      if (!signup) control.consumeCaptcha(req, 'login');
+      let user = db
+        .prepare('SELECT * FROM users WHERE username=? OR email=?')
+        .get(value.username, value.username) as User | undefined;
+      if (signup) {
+        const registration = value as z.infer<typeof credentials> & {
+          email: string;
+          verificationId: string;
+          code: string;
         };
-        try {
-          db.prepare('INSERT INTO users(id,username,name,password) VALUES(?,?,?,?)').run(
-            user.id,
-            user.username,
-            user.name,
-            password,
-          );
-        } catch {
-          fail(409, '此用户名已存在');
+        control.registeredEmailAllowed(registration.email);
+        if (user) fail(409, '此用户名已存在');
+        const password = await hashPassword(value.password),
+          id = randomUUID();
+        control.registeredEmailAllowed(registration.email);
+        control.consumeEmail(
+          registration.email,
+          'register',
+          registration.verificationId,
+          registration.code,
+          () => {
+            try {
+              db.prepare(
+                'INSERT INTO users(id,username,name,password,email,verifiedAt) VALUES(?,?,?,?,?,?)',
+              ).run(
+                id,
+                value.username,
+                registration.name || value.username,
+                password,
+                registration.email,
+                new Date().toISOString(),
+              );
+            } catch {
+              fail(409, '用户名或邮箱已存在');
+            }
+          },
+        );
+        user = db.prepare('SELECT * FROM users WHERE id=?').get(id) as User;
+        control.log('info', 'account.registered', { userId: id });
+      } else {
+        if (!user || !(await verifyPassword(value.password, user.password))) {
+          control.log('warn', 'account.login.failed');
+          fail(401, '用户名或密码错误');
         }
-      } else if (!user || !(await verifyPassword(value.password, user.password)))
-        fail(401, '用户名或密码错误');
+        const current = db.prepare('SELECT * FROM users WHERE id=?').get(user!.id) as User;
+        if (current.password !== user!.password) fail(401, '用户名或密码错误');
+        if (current.disabled) fail(403, '此账号已停用，请联系管理员');
+        if (!current.verifiedAt) fail(403, '请先完成邮箱验证');
+        user = current;
+      }
       const token = newToken();
       db.prepare('INSERT INTO sessions VALUES(?,?,?)').run(
         hashToken(token),
         user!.id,
         Date.now() + 30 * 86400_000,
       );
-      res.status(mode === 'register' ? 201 : 200).json({ token, ...profile(user!) });
+      db.prepare('UPDATE users SET lastLoginAt=? WHERE id=?').run(
+        new Date().toISOString(),
+        user!.id,
+      );
+      control.log('info', 'account.login', { userId: user!.id });
+      res.status(signup ? 201 : 200).json({ token, ...profile(user!) });
     });
   app.get('/api/media/:id/:variant', (req, res) => {
     const { id, variant } = req.params;
@@ -437,29 +483,65 @@ export function createApp(options: AppOptions = {}) {
     },
     (req, res, next) =>
       upload.single('file')(req, res, async (error) => {
+        let generatedFiles: string[] = [],
+          committed = false;
         try {
           if (error) throw error;
           if (!req.file) fail(400, '请选择支持的图片或视频');
           const media = await processMedia(req.file!.path, req.file!.mimetype, uploads);
+          generatedFiles = [media.original, media.preview, media.thumbnail].map((name) =>
+            join(uploads, name),
+          );
           const user = db
             .prepare('SELECT * FROM users WHERE id=?')
             .get((req as AuthRequest).user.id) as User;
-          if (user.coupleId !== (req as AuthRequest).user.coupleId) fail(409, '配对关系已改变');
-          db.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
-            media.id,
-            user.coupleId!,
-            user.id,
-            media.kind,
-            media.original,
-            media.preview,
-            media.thumbnail,
-            media.width || null,
-            media.height || null,
-            media.duration,
-            new Date().toISOString(),
+          if (user.disabled || user.coupleId !== (req as AuthRequest).user.coupleId)
+            fail(409, '配对关系已改变');
+          const sizes = await Promise.all(
+            [media.original, media.preview, media.thumbnail].map((name) =>
+              stat(join(uploads, name)).then((s) => s.size),
+            ),
           );
+          const totalBytes = sizes.reduce((a, b) => a + b, 0);
+          transaction(db, () => {
+            const current = db.prepare('SELECT * FROM users WHERE id=?').get(user.id) as User;
+            if (
+              current.disabled ||
+              current.coupleId !== user.coupleId ||
+              !db
+                .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
+                .get((req as AuthRequest).sessionHash, Date.now())
+            )
+              fail(409, '账号或配对状态已改变，请重新登录');
+            const limit = control.quota(current.coupleId);
+            if (limit && current.coupleId && control.usage(current.coupleId) + totalBytes > limit)
+              fail(413, '两人空间存储已达到配额，请联系管理员');
+            db.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(
+              media.id,
+              user.coupleId!,
+              user.id,
+              media.kind,
+              media.original,
+              media.preview,
+              media.thumbnail,
+              media.width || null,
+              media.height || null,
+              media.duration,
+              new Date().toISOString(),
+            );
+            db.prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)').run(
+              media.id,
+              sizes[0],
+              sizes[1],
+              sizes[2],
+              totalBytes,
+            );
+          });
+          committed = true;
           res.status(201).json({ ...mediaView(media.id), capturedDate: media.capturedDate });
         } catch (err) {
+          if (!committed)
+            await Promise.all(generatedFiles.map((path) => rm(path, { force: true })));
           next(
             err instanceof HttpError || err instanceof multer.MulterError
               ? err
@@ -655,6 +737,11 @@ export function createApp(options: AppOptions = {}) {
     app.get('/{*path}', (_req, res) => res.sendFile(resolve(options.staticDir!, 'index.html')));
   }
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (error instanceof HttpError && error.status >= 400)
+      control.log(error.status >= 500 ? 'error' : 'warn', 'http.rejected', {
+        path: _req.path,
+        status: error.status,
+      });
     if (error instanceof z.ZodError)
       return res
         .status(400)
@@ -662,7 +749,11 @@ export function createApp(options: AppOptions = {}) {
     if (error instanceof multer.MulterError)
       return res.status(413).json({ error: '文件超出限制，最大 100 MB' });
     if (error instanceof HttpError) return res.status(error.status).json({ error: error.message });
-    console.error(error);
+    control.log('error', 'http.unexpected', {
+      path: _req.path,
+      requestId: (_req as Request & { requestId?: string }).requestId,
+      error: error instanceof Error ? error.name : 'UnknownError',
+    });
     res.status(500).json({ error: '服务暂时不可用' });
   });
   io.use((socket, next) => {
@@ -673,6 +764,7 @@ export function createApp(options: AppOptions = {}) {
   });
   io.on('connection', (socket) => {
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(socket.data.userId) as User;
+    control.log('info', 'realtime.connected', { userId: user.id });
     socket.join(`user:${user.id}`);
     socket.join(`session:${socket.data.hash}`);
     if (user.coupleId) socket.join(`couple:${user.coupleId}`);
@@ -696,7 +788,10 @@ export function createApp(options: AppOptions = {}) {
       if (current.coupleId)
         socket.to(`couple:${current.coupleId}`).emit('typing', { userId: user.id });
     });
-    socket.on('disconnect', () => clearTimeout(expiryTimer));
+    socket.on('disconnect', (reason) => {
+      clearTimeout(expiryTimer);
+      control.log('info', 'realtime.disconnected', { userId: user.id, reason });
+    });
   });
   const tick = pushWorker(db, options.pushSender);
   const runAI = aiWorker({
@@ -714,11 +809,16 @@ export function createApp(options: AppOptions = {}) {
         io.to(`couple:${id}`).emit(event);
     },
   });
+  let lastPrune = 0;
   const timer = setInterval(() => {
-    void tick();
-    void runAI();
+    void tick().catch(() => control.log('error', 'push.worker.failed'));
+    void runAI().catch(() => control.log('error', 'ai.worker.failed'));
     db.prepare('DELETE FROM sessions WHERE expires<?').run(Date.now());
     db.prepare('DELETE FROM invites WHERE expires<?').run(Date.now());
+    if (Date.now() - lastPrune > 60_000) {
+      control.prune();
+      lastPrune = Date.now();
+    }
   }, 5000);
   timer.unref();
   return {
@@ -726,10 +826,13 @@ export function createApp(options: AppOptions = {}) {
     http,
     io,
     db,
+    control,
     tick,
     runAI,
     close: async () => {
       clearInterval(timer);
+      await control.bootstrap.catch(() => {});
+      control.close();
       await new Promise<void>((resolve) => io.close(() => resolve()));
       db.close();
     },

@@ -13,6 +13,8 @@
 - **媒体**：原文件保留，图片生成 WebP 缩略图和预览，视频转码为 H.264/AAC MP4 并生成封面。
 - **安卓推送**：原生 FCM 通知、设备注册、通知频道、后台推送与服务端持久化重试。
 
+- **管理后台**：独立登录、账号与配对、媒体容量及配额、访问／后台／操作日志、SMTP、邮箱注册／白名单、图形与邮件验证码。
+
 ## 开发
 
 ```bash
@@ -21,7 +23,7 @@ cp .env.example .env
 npm run dev
 ```
 
-需要 Node **24** 和系统 **FFmpeg / ffprobe**。浏览器打开 `http://localhost:5173`，登录页服务器填 `http://localhost:3000`。两人分别注册，使用“我们”里的邀请码配对。
+需要 Node **24**、系统 **FFmpeg / ffprobe** 和 `fonts-dejavu-core`。在 `.env` 填首次管理员 `ADMIN_USERNAME` 与至少 12 字符的 `ADMIN_PASSWORD`。浏览器打开 `http://localhost:5173`，登录页服务器填 `http://localhost:3000`。先通过“管理后台”创建账号，或配置 SMTP 后启用验证邮箱注册，再使用“我们”里的邀请码配对。
 
 ```bash
 npm run typecheck
@@ -43,28 +45,31 @@ npm run android:prepare
 
 ```bash
 cp .env.docker.example .env
-# 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET 和 LOVE_DOMAIN
+# 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET、LOVE_DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
 # 生成密钥：openssl rand -hex 32
 # 若使用下面的 HTTPS 反代，将 TRUST_PROXY=1，并允许 https://你的域名
 # 将域名解析到服务器，并开放 80/443
 
-docker compose -p love-v3 --profile https up -d --build
+docker compose -p love-v4 --profile https up -d --build
 ```
 
-若部署过旧版，先停止旧服务。`love-v3` 使用新的数据卷，不删除旧卷。
+若部署过旧版，先停止旧服务。`love-v4` 使用新的数据卷，不删除旧卷。
 
-Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose -p love-v3 up -d --build`，访问 `http://localhost:3000`。
+Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose -p love-v4 up -d --build`，访问 `http://localhost:3000`。
 
-CI 会实际构建并启动 Docker 镜像，检查 Web 字体、中文 API、聊天、农历待办以及容器重启后的数据保留。此配置不会自动连接或部署到你的服务器。
+首次打开登录页进入“管理后台”；默认关闭自行注册。配置 SMTP 后可启用邮箱注册或白名单，白名单用户自己创建账号并完成邮件验证。
+
+CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、管理员权限、账号、配额、日志、聊天、农历待办及重启持久化。此配置不会自动连接或部署到你的服务器。
 
 ## 部署与接口
 
 - [部署与备份](docs/deployment.md)
+- [管理后台与邮箱注册](docs/admin.md)
 - [Android 与推送配置](docs/android.md)
 - [API、Socket.IO 与 AI 工具](docs/api.md)
 - [架构、目录和测试](docs/architecture.md)
 
-当前仅支持最新 API 与数据库结构（schema 3），不包含旧版本别名、迁移或导入逻辑。部署使用新的数据目录；登录页底部展开“服务器设置”配置 URL。
+当前仅支持最新 API 与数据库结构（schema 4），不包含旧版本别名、迁移或导入逻辑。部署使用新的数据目录；登录页底部展开“服务器设置”配置 URL。
 
 ## License
 

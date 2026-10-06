@@ -19,47 +19,7 @@ import {
   validateAIUrl,
 } from '../src/ai.js';
 
-async function setup(t: Parameters<Parameters<typeof test>[1]>[0]) {
-  const dir = await mkdtemp(join(tmpdir(), 'love-test-'));
-  const delivered: { tokens: string[]; messageId: number }[] = [];
-  const server = createApp({
-    database: join(dir, 'test.sqlite'),
-    uploads: join(dir, 'media'),
-    mediaSecret: 'test-secret-at-least-thirty-two-chars',
-    pushSender: async (tokens, messageId) => {
-      delivered.push({ tokens, messageId });
-      return tokens.filter((token) => token.startsWith('invalid'));
-    },
-  });
-  await new Promise<void>((resolve) => server.http.listen(0, '127.0.0.1', resolve));
-  const address = server.http.address() as { port: number };
-  const base = `http://127.0.0.1:${address.port}`;
-  t.after(async () => {
-    await server.close();
-    await rm(dir, { recursive: true, force: true });
-  });
-  const register = async (username: string) => {
-    const response = await request(server.app)
-      .post('/api/auth/register')
-      .send({ username, name: username, password: 'password123' })
-      .expect(201);
-    return response.body as { token: string; user: { id: string } };
-  };
-  const api = (token: string) => ({
-    get: (path: string) => request(server.app).get(path).auth(token, { type: 'bearer' }),
-    post: (path: string, body: unknown) =>
-      request(server.app).post(path).auth(token, { type: 'bearer' }).send(body),
-    delete: (path: string) => request(server.app).delete(path).auth(token, { type: 'bearer' }),
-    patch: (path: string, body: unknown) =>
-      request(server.app).patch(path).auth(token, { type: 'bearer' }).send(body),
-  });
-  const pair = async (a: string, b: string) => {
-    const invite = await api(a).post('/api/pairing/invite', {}).expect(200);
-    await api(b).post('/api/pairing/join', { code: invite.body.code }).expect(200);
-    return invite.body.code;
-  };
-  return { ...server, api, register, pair, base, dir, delivered };
-}
+import { setup } from './support.js';
 
 test('authentication, one-use pairing and isolation between couples', async (t) => {
   const s = await setup(t),
@@ -68,10 +28,7 @@ test('authentication, one-use pairing and isolation between couples', async (t) 
     c = await s.register('charlie'),
     d = await s.register('dana');
   await request(s.app).get('/api/me').expect(401);
-  await request(s.app)
-    .post('/api/auth/login')
-    .send({ username: 'alice', password: 'wrong123' })
-    .expect(401);
+  assert.equal((await s.login('alice', 'wrong123')).status, 401);
   const code = await s.pair(a.token, b.token);
   await s.pair(c.token, d.token);
   await s.api(c.token).post('/api/pairing/join', { code }).expect(400);

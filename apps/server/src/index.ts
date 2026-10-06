@@ -14,8 +14,13 @@ const server = createApp({
   origins: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()),
   pushSender: firebaseSender(),
   production,
+  adminBootstrap:
+    process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD
+      ? { username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD }
+      : undefined,
   staticDir: production ? resolve('../client/dist') : undefined,
 });
+await server.control.bootstrap;
 const port = Number(process.env.PORT || 3000);
 server.http.listen(port, '0.0.0.0', () => console.log(`Love API listening on :${port}`));
 for (const signal of ['SIGTERM', 'SIGINT'])

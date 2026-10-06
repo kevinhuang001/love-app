@@ -19,6 +19,7 @@
     "firebase-admin": "14.5.0",
     "helmet": "8.3.0",
     "multer": "2.4.0",
+    "nodemailer": "10.0.15",
     "sharp": "0.35.5",
     "socket.io": "4.8.4",
     "zod": "4.6.5"
@@ -27,7 +28,10 @@
     "@types/cors": "2.8.19",
     "@types/express": "5.0.6",
     "@types/multer": "2.3.0",
+    "@types/nodemailer": "8.0.2",
+    "@types/smtp-server": "3.5.13",
     "@types/supertest": "7.2.1",
+    "smtp-server": "3.19.17",
     "supertest": "7.3.1"
   }
 }

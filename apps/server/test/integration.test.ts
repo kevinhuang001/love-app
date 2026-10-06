@@ -159,6 +159,7 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .attach('file', image, { filename: 'photo.png', contentType: 'image/png' })
     .expect(201);
   assert.equal(upload.body.kind, 'image');
+  assert.equal(upload.body.capturedDate, null);
   const thumb = await request(s.app).get(upload.body.thumbnailUrl).expect(200);
   const info = await sharp(thumb.body).metadata();
   assert.ok(info.width! <= 480);
@@ -192,6 +193,8 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     'libx264',
     '-pix_fmt',
     'yuv420p',
+    '-metadata',
+    'creation_time=2024-02-29T16:05:00Z',
     videoPath,
   ]);
   assert.equal(ffmpeg.status, 0);
@@ -201,6 +204,7 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .attach('file', await readFile(videoPath), { filename: 'video.mp4', contentType: 'video/mp4' })
     .expect(201);
   assert.equal(video.body.kind, 'video');
+  assert.equal(video.body.capturedDate, '2024-03-01');
   assert.ok(video.body.duration > 0);
   await request(s.app).get(video.body.previewUrl).set('Range', 'bytes=0-99').expect(206);
   const memory = await s
@@ -214,6 +218,97 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .patch(`/api/moments/${memory.body.id}`, { title: '新的描述', date: '2026-10-04' })
     .expect(204);
   await s.api(stranger.token).get('/api/moments').expect(409);
+});
+
+test('each uploaded photo detects its own capture date without using upload or modification time', async (t) => {
+  const s = await setup(t),
+    a = await s.register('datealice'),
+    b = await s.register('datebob');
+  await s.pair(a.token, b.token);
+  const photo = () =>
+    sharp({ create: { width: 60, height: 40, channels: 3, background: '#6f897a' } });
+  const fixtures = [
+    {
+      name: 'original.jpg',
+      bytes: await photo()
+        .withExif({
+          IFD2: {
+            DateTimeOriginal: '2024:02:29 23:59:58',
+            DateTimeDigitized: '2026:03:01 00:00:00',
+            OffsetTimeOriginal: '-08:00',
+          },
+        })
+        .jpeg()
+        .toBuffer(),
+      expected: '2024-02-29',
+    },
+    {
+      name: 'digitized.jpg',
+      bytes: await photo()
+        .withExif({ IFD2: { DateTimeDigitized: '2025:01:02 01:02:03' } })
+        .jpeg()
+        .toBuffer(),
+      expected: '2025-01-02',
+    },
+    {
+      name: 'modified-only.jpg',
+      bytes: await photo()
+        .withExif({ IFD0: { DateTime: '2026:10:01 12:00:00' } })
+        .jpeg()
+        .toBuffer(),
+      expected: null,
+    },
+    {
+      name: 'invalid.jpg',
+      bytes: await photo()
+        .withExif({ IFD2: { DateTimeOriginal: '2025:02:29 12:00:00' } })
+        .jpeg()
+        .toBuffer(),
+      expected: null,
+    },
+    { name: 'IMG_20200101.png', bytes: await photo().png().toBuffer(), expected: null },
+    {
+      name: 'metadata.webp',
+      bytes: await photo()
+        .withExif({ IFD2: { DateTimeOriginal: '2023:12:31 23:59:58' } })
+        .webp()
+        .toBuffer(),
+      expected: '2023-12-31',
+    },
+  ];
+  for (const fixture of fixtures) {
+    const media = await request(s.app)
+      .post('/api/media')
+      .auth(a.token, { type: 'bearer' })
+      .attach('file', fixture.bytes, { filename: fixture.name })
+      .expect(201);
+    assert.equal(media.body.capturedDate, fixture.expected, fixture.name);
+    const original = s.db.prepare('SELECT original FROM media WHERE id=?').get(media.body.id)!;
+    assert.deepEqual(
+      await readFile(join(s.dir, 'media', String(original.original))),
+      fixture.bytes,
+    );
+    const thumb = await request(s.app).get(media.body.thumbnailUrl).expect(200);
+    assert.equal((await sharp(thumb.body).metadata()).exif, undefined);
+    await s
+      .api(a.token)
+      .post('/api/moments', { mediaId: media.body.id, title: fixture.name })
+      .expect(400);
+    await s
+      .api(a.token)
+      .post('/api/moments', {
+        mediaId: media.body.id,
+        title: fixture.name,
+        date: fixture.expected || '2022-07-08',
+      })
+      .expect(201);
+  }
+  const saved = (await s.api(b.token).get('/api/moments')).body.items;
+  for (const fixture of fixtures)
+    assert.equal(
+      saved.find((item: { title: string }) => item.title === fixture.name).date,
+      fixture.expected || '2022-07-08',
+    );
 });
 
 test('durable push, invalid token cleanup and suppression for read messages', async (t) => {

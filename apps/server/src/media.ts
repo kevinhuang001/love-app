@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
+import { imageCaptureDate, videoCaptureDate } from './capture-date.js';
 function run(command: string, args: string[], timeout = 180_000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -39,6 +40,7 @@ export async function processMedia(source: string, mime: string, dir: string) {
     if (mime.startsWith('image/')) {
       const image = sharp(source, { limitInputPixels: 50_000_000 }).rotate();
       const info = await image.metadata();
+      const capturedDate = await imageCaptureDate(info.exif);
       if (!['jpeg', 'png', 'webp', 'avif', 'heif'].includes(info.format || ''))
         throw new Error('不支持此图片格式');
       await image
@@ -61,6 +63,7 @@ export async function processMedia(source: string, mime: string, dir: string) {
         width: info.width,
         height: info.height,
         duration: null,
+        capturedDate,
       };
     }
     if (!mime.startsWith('video/')) throw new Error('只能上传图片或视频');
@@ -132,6 +135,7 @@ export async function processMedia(source: string, mime: string, dir: string) {
       width: stream.width,
       height: stream.height,
       duration,
+      capturedDate: videoCaptureDate(metadata.format?.tags, stream.tags),
     };
   } catch (error) {
     await Promise.all(

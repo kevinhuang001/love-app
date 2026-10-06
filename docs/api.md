@@ -16,7 +16,7 @@
 | GET            | /api/messages?before=ID   | 最近 50 条升序 items、hasMore                                                   |
 | POST           | /api/messages             | clientId（UUID）、content、可选 mediaId                                         |
 | POST           | /api/messages/read        | throughId（已看过的最新 ID）                                                    |
-| POST           | /api/media                | multipart 文件字段 file；返回媒体 ID 和签名预览 URL                             |
+| POST           | /api/media                | multipart 文件字段 file；返回媒体 ID、签名预览 URL 和 capturedDate              |
 | GET            | /api/media/:id/:variant   | 签名 thumbnail / preview，支持 Range                                            |
 | GET / POST     | /api/moments              | 分页查看／新增 title、date、mediaId                                             |
 | PATCH / DELETE | /api/moments/:id          | 仅发布者可编辑、删除                                                            |
@@ -32,6 +32,8 @@
 | POST           | /api/ai/tools/:name       | session 对应用户作用域内执行工具                                                |
 
 相册 GET 返回 `{items,total,nextCursor}`，支持 `type=all|image|video`、`owner=all|mine|partner`、`search`（描述文字）、`from/to`（发生日期范围）、`sort=date_desc|date_asc|uploaded_desc`。默认每页 60，`limit` 为 1–100；继续加载时带上相同筛选排序参数和 `cursor=nextCursor`。所有条件仍限定在当前两人空间。相册条目提供独立的上传时间 `createdAt`，编辑发生日期不会改写上传时间。
+
+`POST /api/media` 在压缩前读取原文件元数据，返回 `capturedDate: "YYYY-MM-DD" | null`。照片优先 EXIF `DateTimeOriginal`，其次 `CreateDate`；保留相机记录的当地日期，不用服务器时区转换。视频优先 QuickTime 原始带时区的创建日期，其次 `creation_time`（UTC 转为应用日期时区 Asia/Shanghai）。不使用 EXIF 文件修改时间、文件名、文件修改时间或上传时间；缺失、损坏或无效的拍摄日期返回 null，媒体仍可上传。界面选择文件后先上传和识别，未识别时逐个文件补填日期，最后为每个文件分别调用 `POST /api/moments`，其 `date` 必填。提交相册失败时保留已上传的媒体 ID 与用户填写的日期，重试不会重新上传已成功的文件。数据库结构不变，拍摄日期保存于各条 moments.date。
 
 Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
 

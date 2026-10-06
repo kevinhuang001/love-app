@@ -458,7 +458,7 @@ export function createApp(options: AppOptions = {}) {
             media.duration,
             new Date().toISOString(),
           );
-          res.status(201).json(mediaView(media.id));
+          res.status(201).json({ ...mediaView(media.id), capturedDate: media.capturedDate });
         } catch (err) {
           next(
             err instanceof HttpError || err instanceof multer.MulterError

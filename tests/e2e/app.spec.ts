@@ -63,6 +63,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page
     .locator('input[type=file]')
     .setInputFiles({ name: 'memory.png', mimeType: 'image/png', buffer: image });
+  await page.getByLabel('拍摄日期 · memory.png').fill('2026-06-15');
   await page.getByLabel('写下这一刻').fill('一起散步');
   await page.getByRole('button', { name: '保存回忆' }).click();
   await expect(page.getByText('一起散步', { exact: true })).toBeVisible();
@@ -224,7 +225,8 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   ]);
   await expect(page.getByText('已选择 2 个文件 · 点击重选')).toBeVisible();
   await page.getByLabel('写下这一刻').fill('周末');
-  await page.getByLabel('发生日期').fill('2026-06-15');
+  await page.getByLabel('拍摄日期 · walk1.png').fill('2026-06-15');
+  await page.getByLabel('拍摄日期 · walk2.png').fill('2026-06-16');
   await page.getByRole('button', { name: '保存回忆' }).click();
   await expect(page.getByText('已保存 2 个回忆', { exact: true })).toBeVisible();
   await expect(page.getByTestId('album-item')).toHaveCount(2);
@@ -355,4 +357,113 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
     'true',
   );
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
+});
+
+test('per-file capture dates, manual fallback and publication retry retain uploaded media', async ({
+  page,
+  request,
+}) => {
+  const stamp = Date.now().toString().slice(-9),
+    username = `album${stamp}`,
+    password = 'password123';
+  await page.goto('/');
+  const login = await page.getByRole('button', { name: '进入我们的空间' }).boundingBox();
+  const server = await page.locator('details.server-disclosure').boundingBox();
+  expect(server!.y).toBeGreaterThanOrEqual(login!.y + login!.height);
+  await page.getByRole('tab', { name: '创建账号' }).click();
+  await page.getByText('服务器设置', { exact: true }).click();
+  await page.getByLabel('服务器地址').fill('http://127.0.0.1:3000');
+  await page.getByLabel('用户名', { exact: true }).fill(username);
+  await page.getByLabel('怎么称呼你').fill('小林');
+  await page.getByLabel('密码', { exact: true }).fill(password);
+  await page.getByRole('button', { name: '开始我们的故事' }).click();
+  await expect(page.getByRole('heading', { name: '想说的话，都留在这里' })).toBeVisible();
+  const self = await (
+    await request.post('http://127.0.0.1:3000/api/auth/login', { data: { username, password } })
+  ).json();
+  const peer = await (
+    await request.post('http://127.0.0.1:3000/api/auth/register', {
+      data: { username: `peer${stamp}`, name: '阿宁', password },
+    })
+  ).json();
+  const headers = { Authorization: `Bearer ${self.token}` },
+    peerHeaders = { Authorization: `Bearer ${peer.token}` };
+  const invite = await (
+    await request.post('http://127.0.0.1:3000/api/pairing/invite', { headers, data: {} })
+  ).json();
+  await request.post('http://127.0.0.1:3000/api/pairing/join', {
+    headers: peerHeaders,
+    data: { code: invite.code },
+  });
+  await expect(page.getByRole('heading', { name: '阿宁', exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await page.getByRole('button', { name: '新增回忆' }).click();
+
+  const image = () =>
+    sharp({ create: { width: 900, height: 600, channels: 3, background: '#789684' } });
+  const first = await image()
+    .withExif({ IFD2: { DateTimeOriginal: '2024:02:29 23:59:58' } })
+    .jpeg()
+    .toBuffer();
+  const second = await image()
+    .withExif({ IFD2: { DateTimeOriginal: '2025:12:01 00:05:00' } })
+    .jpeg()
+    .toBuffer();
+  const missing = await image().png().toBuffer();
+  let uploads = 0;
+  page.on('request', (req) => {
+    if (req.url().endsWith('/api/media') && req.method() === 'POST') uploads++;
+  });
+  await page.locator('input[type=file]').setInputFiles([
+    { name: 'leap.jpg', mimeType: 'image/jpeg', buffer: first },
+    { name: 'winter.jpg', mimeType: 'image/jpeg', buffer: second },
+    { name: 'no-date.png', mimeType: 'image/png', buffer: missing },
+  ]);
+  const rows = page.getByTestId('upload-file');
+  await expect(rows.filter({ hasText: 'leap.jpg' })).toContainText('2024-02-29');
+  await expect(rows.filter({ hasText: 'winter.jpg' })).toContainText('2025-12-01');
+  const manual = page.getByLabel('拍摄日期 · no-date.png');
+  await expect(manual).toHaveValue('');
+  await expect(page.getByRole('dialog').locator('input[type=date]')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: '保存回忆' })).toBeEnabled();
+  await page.getByRole('button', { name: '保存回忆' }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  expect(await manual.evaluate((el) => (el as HTMLInputElement).validity.valueMissing)).toBe(true);
+  await manual.fill('2026-06-01');
+  await page.getByRole('button', { name: '修改winter.jpg的日期' }).click();
+  await page.getByLabel('拍摄日期 · winter.jpg').fill('2025-12-05');
+  await page.getByLabel('写下这一刻').fill('逐张日期');
+  let failed = false;
+  await page.route('**/api/moments', async (route) => {
+    if (route.request().method() === 'POST' && !failed) {
+      failed = true;
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: '测试保存失败' }),
+      });
+    } else await route.continue();
+  });
+  await page.getByRole('button', { name: '保存回忆' }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText('leap.jpg');
+  await expect(rows).toContainText('2024-02-29');
+  await expect(page.getByRole('button', { name: '保存回忆' })).toBeEnabled();
+  await page.getByRole('button', { name: '保存回忆' }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByTestId('album-item')).toHaveCount(3);
+  expect(uploads).toBe(3);
+  const moments = (
+    await (await request.get('http://127.0.0.1:3000/api/moments', { headers })).json()
+  ).items;
+  expect(moments.map((item: { date: string }) => item.date).sort()).toEqual([
+    '2024-02-29',
+    '2025-12-05',
+    '2026-06-01',
+  ]);
+  await page.reload();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await expect(page.getByTestId('album-item')).toHaveCount(3);
+  for (const date of ['2024-02-29', '2025-12-05', '2026-06-01'])
+    await expect(page.locator(`[data-testid="album-item"][data-date="${date}"]`)).toHaveCount(1);
 });

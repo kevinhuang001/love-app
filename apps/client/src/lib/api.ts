@@ -1,6 +1,6 @@
 import { Preferences } from '@capacitor/preferences';
 import { Capacitor } from '@capacitor/core';
-import type { Session, Media } from './types';
+import type { Session, UploadedMedia } from './types';
 export function normalizeServer(input: string): string {
   const url = new URL(input.trim());
   if (
@@ -55,7 +55,7 @@ export class Api {
   url(path: string) {
     return `${this.session.server}${path}`;
   }
-  async upload(file: File, onProgress: (progress: number) => void): Promise<Media> {
+  async upload(file: File, onProgress: (progress: number) => void): Promise<UploadedMedia> {
     if (file.size > 100 * 1024 * 1024) throw new Error('文件不能超过 100 MB');
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();

@@ -21,6 +21,7 @@ export type Media = {
   height: number;
   duration: number | null;
 };
+export type UploadedMedia = Media & { capturedDate: string | null };
 export type Message = {
   id: number;
   role: 'user' | 'assistant';

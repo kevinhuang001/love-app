@@ -27,55 +27,114 @@ import {
 import { Empty, Loading, MediaThumbnail, ErrorState } from '@/components/common';
 import { AlbumViewer } from '@/components/AlbumViewer';
 import { useApp } from '@/lib/context';
-import type { Moment } from '@/lib/types';
+import type { Moment, UploadedMedia } from '@/lib/types';
 import { today } from '@/lib/dates';
 import { albumDefaults, loadAlbumOptions, type AlbumOptions } from '@/lib/album';
 type AlbumPage = { items: Moment[]; total: number; nextCursor: string | null };
+type UploadFile = {
+  id: string;
+  file: File;
+  media?: UploadedMedia;
+  date: string;
+  editDate: boolean;
+  error?: string;
+};
 function UploadSelection({
   files,
   busy,
   onRemove,
+  onChange,
 }: {
-  files: File[];
+  files: UploadFile[];
   busy: boolean;
   onRemove: (index: number) => void;
+  onChange: (id: string, value: Partial<UploadFile>) => void;
 }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
-    const next = files.map((file) => URL.createObjectURL(file));
+    const next = files.map((item) => URL.createObjectURL(item.file));
     setUrls(next);
     return () => next.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
   return (
-    <ul className="mt-3 max-h-44 space-y-2 overflow-y-auto">
-      {files.map((file, index) => (
+    <ul className="mt-3 max-h-[40dvh] space-y-3 overflow-y-auto">
+      {files.map((item, index) => (
         <li
-          key={`${index}-${file.name}`}
-          className="flex items-center gap-3 rounded-xl bg-secondary p-2"
+          key={item.id}
+          data-testid="upload-file"
+          data-file={item.file.name}
+          className="space-y-3 rounded-xl border border-border p-3"
         >
-          {file.type.startsWith('image/') ? (
-            <img src={urls[index]} alt="待上传照片" className="size-12 rounded-lg object-cover" />
+          <div className="flex items-center gap-3">
+            {item.file.type.startsWith('image/') ? (
+              <img src={urls[index]} alt="待上传照片" className="size-12 rounded-lg object-cover" />
+            ) : (
+              <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-secondary">
+                <Film className="size-5" />
+              </span>
+            )}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs">{item.file.name}</span>
+              <span className="text-[10px] text-muted-foreground">
+                {(item.file.size / 1024 / 1024).toFixed(1)} MB
+              </span>
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
+              aria-label={`移除文件${index + 1}`}
+              disabled={busy}
+              onClick={() => onRemove(index)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+          {!item.media ? (
+            <p
+              role={item.error ? 'alert' : 'status'}
+              className={item.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
+            >
+              {item.error || '正在上传并识别日期…'}
+            </p>
+          ) : item.editDate ? (
+            <div className="space-y-2">
+              <Label htmlFor={`capture-${item.id}`} className="block break-all text-xs">
+                拍摄日期 · {item.file.name}
+              </Label>
+              {!item.media.capturedDate && (
+                <p className="text-[11px] text-muted-foreground">
+                  没有找到拍摄日期，请为这个文件填写。
+                </p>
+              )}
+              <Input
+                id={`capture-${item.id}`}
+                type="date"
+                required
+                disabled={busy}
+                min="1900-01-01"
+                max="2100-12-31"
+                value={item.date}
+                onChange={(e) => onChange(item.id, { date: e.target.value })}
+              />
+            </div>
           ) : (
-            <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-card">
-              <Film className="size-5" />
-            </span>
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span>
+                <span className="mr-2 text-muted-foreground">已识别</span>
+                <time>{item.date}</time>
+              </span>
+              <button
+                type="button"
+                className="shrink-0 py-2 text-primary"
+                disabled={busy}
+                aria-label={`修改${item.file.name}的日期`}
+                onClick={() => onChange(item.id, { editDate: true })}
+              >
+                修改日期
+              </button>
+            </div>
           )}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs">{file.name}</span>
-            <span className="text-[10px] text-muted-foreground">
-              {(file.size / 1024 / 1024).toFixed(1)} MB
-            </span>
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            type="button"
-            aria-label={`移除文件${index + 1}`}
-            disabled={busy}
-            onClick={() => onRemove(index)}
-          >
-            <X className="size-4" />
-          </Button>
         </li>
       ))}
     </ul>
@@ -124,7 +183,7 @@ export function Memories() {
     [edit, setEdit] = useState<Moment | null>(null),
     [title, setTitle] = useState(''),
     [date, setDate] = useState(today()),
-    [files, setFiles] = useState<File[]>([]),
+    [files, setFiles] = useState<UploadFile[]>([]),
     [busy, setBusy] = useState(false),
     [progress, setProgress] = useState(0),
     [uploadIndex, setUploadIndex] = useState(0),
@@ -152,6 +211,40 @@ export function Memories() {
     setProgress(0);
     setOpen(true);
   }
+  async function prepare(chosen: UploadFile[]) {
+    setBusy(true);
+    try {
+      for (let i = 0; i < chosen.length; i++) {
+        const item = chosen[i];
+        if (item.media) continue;
+        setUploadIndex(i + 1);
+        setProgress(0);
+        setFiles((items) => items.map((v) => (v.id === item.id ? { ...v, error: undefined } : v)));
+        try {
+          const media = await api.upload(item.file, setProgress);
+          setFiles((items) =>
+            items.map((v) =>
+              v.id === item.id
+                ? {
+                    ...v,
+                    media,
+                    date: media.capturedDate || '',
+                    editDate: !media.capturedDate,
+                    error: undefined,
+                  }
+                : v,
+            ),
+          );
+        } catch (error) {
+          setFiles((items) =>
+            items.map((v) => (v.id === item.id ? { ...v, error: (error as Error).message } : v)),
+          );
+        }
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -162,19 +255,20 @@ export function Memories() {
         toast.success('回忆已更新');
       } else {
         if (!files.length) throw new Error('请选择照片或视频');
-        const remaining: File[] = [];
+        const remaining: UploadFile[] = [];
         let saved = 0;
         const errors: string[] = [];
         for (let i = 0; i < files.length; i++) {
           setUploadIndex(i + 1);
           setProgress(0);
           try {
-            const media = await api.upload(files[i], setProgress);
-            await api.post('/api/moments', { title, date, mediaId: media.id });
+            const item = files[i];
+            if (!item.media || !item.date) throw new Error('请先完成上传并填写这个文件的拍摄日期');
+            await api.post('/api/moments', { title, date: item.date, mediaId: item.media.id });
             saved++;
           } catch (error) {
             remaining.push(files[i]);
-            errors.push(`${files[i].name}：${(error as Error).message}`);
+            errors.push(`${files[i].file.name}：${(error as Error).message}`);
           }
         }
         setFiles(remaining);
@@ -394,7 +488,7 @@ export function Memories() {
             detail={
               term || type !== 'all' || extraFilters
                 ? '试试其他关键词，或清除筛选条件。'
-                : '上传照片或视频，记下发生的日期。'
+                : '上传照片或视频，拍摄日期会自动识别。'
             }
             action={
               term || type !== 'all' || extraFilters ? (
@@ -560,7 +654,7 @@ export function Memories() {
           <DialogHeader>
             <DialogTitle>{edit ? '编辑这个瞬间' : '收藏一个瞬间'}</DialogTitle>
             <DialogDescription>
-              照片和视频会生成压缩预览。单个文件最多 100 MB，视频最长 5 分钟。
+              选择后自动上传并读取拍摄日期，每个文件分别保存。单个文件最多 100 MB，视频最长 5 分钟。
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
@@ -582,8 +676,15 @@ export function Memories() {
                       toast.error('每个文件最多 100 MB');
                       return;
                     }
-                    setFiles(chosen);
+                    const drafts = chosen.map((file) => ({
+                      id: crypto.randomUUID(),
+                      file,
+                      date: '',
+                      editDate: false,
+                    }));
+                    setFiles(drafts);
                     e.target.value = '';
+                    void prepare(drafts);
                   }}
                 />
                 <Button
@@ -607,7 +708,21 @@ export function Memories() {
                     files={files}
                     busy={busy}
                     onRemove={(index) => setFiles((items) => items.filter((_, i) => i !== index))}
+                    onChange={(id, value) =>
+                      setFiles((items) => items.map((v) => (v.id === id ? { ...v, ...value } : v)))
+                    }
                   />
+                )}
+                {files.some((item) => item.error && !item.media) && (
+                  <Button
+                    className="mt-3"
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void prepare(files)}
+                  >
+                    重试上传失败的文件
+                  </Button>
                 )}
               </div>
             )}
@@ -621,22 +736,29 @@ export function Memories() {
                 placeholder="为这张照片写点什么"
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="memory-date">发生日期</Label>
-              <Input
-                id="memory-date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-              />
-            </div>
+            {edit && (
+              <div className="space-y-2">
+                <Label htmlFor="memory-date">发生日期</Label>
+                <Input
+                  id="memory-date"
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  min="1900-01-01"
+                  max="2100-12-31"
+                  required
+                />
+              </div>
+            )}
             <DialogFooter>
-              <Button type="submit" disabled={busy}>
+              <Button
+                type="submit"
+                disabled={busy || (!edit && (!files.length || files.some((item) => !item.media)))}
+              >
                 {busy
                   ? edit
                     ? '保存中…'
-                    : `第 ${uploadIndex} / ${files.length} 个 · ${progress === 100 ? '压缩处理中…' : `上传 ${progress}%`}`
+                    : `第 ${uploadIndex} / ${files.length} 个 · ${files.every((item) => item.media) ? '保存中…' : progress === 100 ? '处理并识别日期…' : `上传 ${progress}%`}`
                   : '保存回忆'}
               </Button>
             </DialogFooter>

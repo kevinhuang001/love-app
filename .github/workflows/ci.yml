@@ -63,6 +63,8 @@ jobs:
     timeout-minutes: 25
     env:
       GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+      JPUSH_ANDROID_CONFIG: ${{ secrets.JPUSH_ANDROID_CONFIG }}
+      AGCONNECT_SERVICES_JSON: ${{ secrets.AGCONNECT_SERVICES_JSON }}
       LOVE_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +85,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
         working-directory: apps/client/android
+      - run: python scripts/verify-android-push.py
       - uses: actions/upload-artifact@v4
         with:
           name: love-android-apk

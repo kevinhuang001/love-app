@@ -74,3 +74,5 @@ CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、
 ## License
 
 MIT。shadcn/ui 的组件源文件保留于 `apps/client/src/components/ui`，来源与许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
+安卓国内消息通知现支持华为、荣耀、小米、OPPO、vivo、魅族的极光厂商通道，客户端与 Docker 凭据配置见 [Android / 消息通知](docs/android.md)。管理入口已从前台移除，管理员自行访问 `/#admin`。

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
+import { configureChinaPush } from './android-push.mjs';
 const client = resolve('apps/client');
 function cap(...args) {
   const r = spawnSync(
@@ -18,9 +19,11 @@ if (process.env.GOOGLE_SERVICES_JSON)
 else if (existsSync(resolve('config/google-services.json')))
   copyFileSync(resolve('config/google-services.json'), resolve(app, 'google-services.json'));
 const firebaseConfigured = existsSync(resolve(app, 'google-services.json'));
-writeFileSync(resolve(client, 'src/push-build.json'), JSON.stringify({ firebaseConfigured }));
+const china = configureChinaPush(client, app);
+const pushConfig = { firebaseConfigured, ...china };
+writeFileSync(resolve(client, 'src/push-build.json'), JSON.stringify(pushConfig));
 const builtConfig = resolve(client, 'dist/push-build.json');
-writeFileSync(builtConfig, JSON.stringify({ firebaseConfigured }));
+writeFileSync(builtConfig, JSON.stringify(pushConfig));
 const manifestPath = resolve(app, 'src/main/AndroidManifest.xml');
 let manifest = readFileSync(manifestPath, 'utf8');
 if (!manifest.includes('POST_NOTIFICATIONS'))
@@ -48,11 +51,9 @@ build = build
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "1.0"/, 'versionName "2.0.0"');
+  .replace(/versionName "1.0"/, 'versionName "2.0.1"');
 writeFileSync(gradle, build);
 cap('sync', 'android');
 console.log(
-  firebaseConfigured
-    ? 'Android ready with Firebase push configuration.'
-    : 'Android ready. Push is unavailable until google-services.json is supplied.',
+  `Android ready. FCM configured: ${firebaseConfigured}; domestic push configured: ${china.jpushConfigured}; vendor count: ${china.vendors.length}`,
 );

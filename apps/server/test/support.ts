@@ -20,9 +20,11 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
       if (options.mailSender) await options.mailSender(config, message);
       mailbox.push(message);
     },
-    pushSender: async (tokens, messageId) => {
-      delivered.push({ tokens, messageId });
-      return tokens.filter((token) => token.startsWith('invalid'));
+    pushSenders: {
+      fcm: async (token, messageId) => {
+        delivered.push({ tokens: [token], messageId });
+        return token.startsWith('invalid') ? 'invalid' : 'sent';
+      },
     },
   });
   await server.control.bootstrap;

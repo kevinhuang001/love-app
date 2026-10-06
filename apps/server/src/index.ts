@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { createApp } from './app.js';
-import { firebaseSender } from './push.js';
+import { configuredPushSenders } from './push.js';
 const production = process.env.NODE_ENV === 'production';
 if (
   production &&
@@ -12,7 +12,7 @@ const server = createApp({
   uploads: process.env.UPLOADS_PATH || '../../data/media',
   mediaSecret: process.env.MEDIA_SIGNING_SECRET,
   origins: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()),
-  pushSender: firebaseSender(),
+  pushSenders: configuredPushSenders(),
   production,
   adminBootstrap:
     process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD

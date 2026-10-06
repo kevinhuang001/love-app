@@ -7,7 +7,7 @@ import { Capacitor } from '@capacitor/core';
 import { toast, Toaster } from 'sonner';
 import { Api, readSession, saveSession } from './lib/api';
 import { AppContext } from './lib/context';
-import { clearPushListeners, enablePush, getDeviceToken } from './lib/push';
+import { clearPushListeners, disablePush, enablePush, getDeviceToken } from './lib/push';
 import type { Profile, Session, Message } from './lib/types';
 import { AdminPortal } from './pages/Admin';
 import { Auth } from './pages/Auth';
@@ -114,10 +114,13 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     };
   }, [api, cache]);
   async function logout() {
-    await api.post('/api/auth/logout', { deviceToken: getDeviceToken() });
-    await clearPushListeners();
-    localStorage.removeItem('love.push.enabled');
-    await end();
+    const token = getDeviceToken();
+    try {
+      await disablePush(api);
+    } finally {
+      await api.post('/api/auth/logout', { deviceToken: token });
+      await end();
+    }
   }
   if (profile.isPending) return <Loading />;
   if (profile.isError)

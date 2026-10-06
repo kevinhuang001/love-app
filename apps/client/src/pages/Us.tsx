@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Copy, Link2, Bell, Moon, LogOut, Sparkles, Camera, Server, Check } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { useApp } from '@/lib/context';
-import { enablePush, disablePush } from '@/lib/push';
+import { enablePush, disablePush, pushDescription } from '@/lib/push';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,6 +36,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     [busy, setBusy] = useState(false),
     [unpair, setUnpair] = useState(false),
     [signout, setSignout] = useState(false),
+    [pushStatus, setPushStatus] = useState(''),
     [push, setPush] = useState(localStorage.getItem('love.push.enabled') === 'true'),
     [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const [aiUrl, setAiUrl] = useState(''),
@@ -272,7 +273,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               聊天通知
             </Label>
             <p className="mt-1 text-xs text-muted-foreground">
-              {Capacitor.isNativePlatform() ? '安卓后台新消息通知' : '后台推送请使用安卓 APK'}
+              {Capacitor.isNativePlatform()
+                ? pushStatus || '国内厂商通道 / FCM 后台通知'
+                : '后台推送请使用安卓 APK'}
             </p>
           </div>
           <Switch
@@ -291,10 +294,14 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
                   localStorage.removeItem('love.push.enabled');
                 }
                 setPush(value);
+                setPushStatus(value ? await pushDescription() : '');
               })
             }
           />
         </div>
+        <p className="text-[11px] leading-5 text-muted-foreground">
+          开启通知后，推送服务会处理设备标识和通知令牌，用于把新消息送到这台手机。国内通道由极光及对应手机厂商提供，通知不包含聊天正文。
+        </p>
       </Card>
       <Card className="gap-4 p-5">
         <div className="flex items-center gap-2 font-medium">

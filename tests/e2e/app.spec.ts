@@ -11,6 +11,8 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   const username = `user${suffix}`,
     partnerName = `partner${suffix}`;
   await page.goto('/');
+  await expect(page.getByRole('link', { name: '管理后台' })).toHaveCount(0);
+  await expect(page.locator('a[href*="admin"]')).toHaveCount(0);
   await expect(page.getByLabel('服务器地址')).toBeHidden();
   expect(await page.locator('body').evaluate((el) => getComputedStyle(el).fontFamily)).toContain(
     'Noto Sans SC',

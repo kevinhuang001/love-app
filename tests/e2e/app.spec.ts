@@ -528,7 +528,7 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
   await page.getByRole('button', { name: '日志', exact: true }).click();
   await expect(page.getByText('/api/admin/smtp/test', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '后台日志', exact: true }).click();
-  await expect(page.getByText('server.started', { exact: true })).toBeVisible();
+  await expect(page.getByText('server.started', { exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '操作记录', exact: true }).click();
   await expect(page.getByText('settings.updated', { exact: true }).first()).toBeVisible();
   await page.reload();

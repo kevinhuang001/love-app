@@ -58,6 +58,23 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
       setAiName(config.data.name);
     }
   }, [config.data]);
+  useEffect(() => {
+    if (!push || !Capacitor.isNativePlatform()) return;
+    let active = true;
+    const update = () => {
+      void pushDescription()
+        .then((description) => {
+          if (active) setPushStatus(description);
+        })
+        .catch(() => {});
+    };
+    update();
+    const timer = window.setInterval(update, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [push]);
   useEffect(() => setName(profile.user.name), [profile.user.name]);
   async function action(fn: () => Promise<unknown>, message?: string) {
     setBusy(true);

@@ -70,7 +70,7 @@ export function createApp(options: AppOptions = {}) {
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
   db.exec(`CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS push_installations(installationId TEXT PRIMARY KEY,deviceKey TEXT NOT NULL)`);
+    CREATE TABLE IF NOT EXISTS push_installations(installationId TEXT PRIMARY KEY,deviceKey TEXT NOT NULL UNIQUE REFERENCES devices(token) ON DELETE CASCADE)`);
   if (
     !options.mediaSecret &&
     !db.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get()
@@ -745,11 +745,15 @@ export function createApp(options: AppOptions = {}) {
           req.user.id,
         );
       db.prepare(
-        'INSERT INTO push_installations VALUES(?,?) ON CONFLICT(installationId) DO UPDATE SET deviceKey=excluded.deviceKey',
-      ).run(installationId, key);
-      db.prepare(
         'INSERT INTO devices VALUES(?,?,?) ON CONFLICT(token) DO UPDATE SET userId=excluded.userId,updatedAt=excluded.updatedAt',
       ).run(key, req.user.id, Date.now());
+      db.prepare('DELETE FROM push_installations WHERE deviceKey=? AND installationId<>?').run(
+        key,
+        installationId,
+      );
+      db.prepare(
+        'INSERT INTO push_installations VALUES(?,?) ON CONFLICT(installationId) DO UPDATE SET deviceKey=excluded.deviceKey',
+      ).run(installationId, key);
     });
     res.sendStatus(204);
   });

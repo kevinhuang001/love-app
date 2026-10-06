@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { configureChinaPush } from './android-push.mjs';
 const client = resolve('apps/client');
@@ -18,6 +18,7 @@ if (process.env.GOOGLE_SERVICES_JSON)
   writeFileSync(resolve(app, 'google-services.json'), process.env.GOOGLE_SERVICES_JSON);
 else if (existsSync(resolve('config/google-services.json')))
   copyFileSync(resolve('config/google-services.json'), resolve(app, 'google-services.json'));
+else rmSync(resolve(app, 'google-services.json'), { force: true });
 const firebaseConfigured = existsSync(resolve(app, 'google-services.json'));
 const china = configureChinaPush(client, app);
 const pushConfig = { firebaseConfigured, ...china };
@@ -51,7 +52,7 @@ build = build
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "1.0"/, 'versionName "2.0.1"');
+  .replace(/versionName "[^\"]*"/, 'versionName "2.0.1"');
 writeFileSync(gradle, build);
 cap('sync', 'android');
 console.log(

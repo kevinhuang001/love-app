@@ -1,12 +1,12 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // All six plugins are compiled even in an unconfigured APK; no reflection/stubs.
-export function configureChinaPush(client, app) {
+export function configureChinaPush(client, app, configDir = resolve('config')) {
   const source =
     process.env.JPUSH_ANDROID_CONFIG ||
-    (existsSync('config/jpush-android.json')
-      ? readFileSync('config/jpush-android.json', 'utf8')
+    (existsSync(resolve(configDir, 'jpush-android.json'))
+      ? readFileSync(resolve(configDir, 'jpush-android.json'), 'utf8')
       : '{}');
   const config = JSON.parse(source);
   const allowed = ['appKey', 'huawei', 'honor', 'xiaomi', 'oppo', 'vivo', 'meizu'];
@@ -47,8 +47,9 @@ export function configureChinaPush(client, app) {
   const agconnect = resolve(app, 'agconnect-services.json');
   if (process.env.AGCONNECT_SERVICES_JSON)
     writeFileSync(agconnect, process.env.AGCONNECT_SERVICES_JSON);
-  else if (existsSync('config/agconnect-services.json'))
-    copyFileSync('config/agconnect-services.json', agconnect);
+  else if (existsSync(resolve(configDir, 'agconnect-services.json')))
+    copyFileSync(resolve(configDir, 'agconnect-services.json'), agconnect);
+  else rmSync(agconnect, { force: true });
   if (config.huawei && !existsSync(agconnect))
     throw new Error('启用华为通道必须提供 AGCONNECT_SERVICES_JSON');
   const configured = Boolean(config.appKey);
@@ -97,6 +98,11 @@ ${config.huawei ? "apply plugin: 'com.huawei.agconnect'" : ''}
     text = text.replaceAll(
       'mavenCentral()',
       "mavenCentral()\n        maven { url 'https://developer.huawei.com/repo/' }",
+    );
+  if (!text.includes('https://developer.hihonor.com/repo'))
+    text = text.replaceAll(
+      "maven { url 'https://developer.huawei.com/repo/' }",
+      "maven { url 'https://developer.huawei.com/repo/' }\n        maven { url 'https://developer.hihonor.com/repo' }",
     );
   if (config.huawei && !text.includes('com.huawei.agconnect:agcp'))
     text = text.replace(

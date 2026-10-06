@@ -42,12 +42,15 @@ export async function disablePush(api: Api) {
       await api.request('/api/devices', { method: 'DELETE', body: JSON.stringify(current) });
   } finally {
     device = undefined;
-    if (Capacitor.isNativePlatform()) {
-      if (enabledProvider === 'jpush') await ChinaPush.unregister();
-      if (enabledProvider === 'fcm') await PushNotifications.unregister();
+    try {
+      if (Capacitor.isNativePlatform()) {
+        if (enabledProvider === 'jpush') await ChinaPush.unregister();
+        if (enabledProvider === 'fcm') await PushNotifications.unregister();
+      }
+    } finally {
+      enabledProvider = undefined;
+      localStorage.removeItem('love.push.enabled');
     }
-    enabledProvider = undefined;
-    localStorage.removeItem('love.push.enabled');
   }
 }
 
@@ -102,6 +105,8 @@ export async function enablePush(api: Api, onOpen: () => void, onError: (message
       await clearPushListeners();
       await ChinaPush.unregister();
       enabledProvider = undefined;
+      device = undefined;
+      localStorage.removeItem('love.push.enabled');
       throw error;
     }
   } else {
@@ -148,6 +153,8 @@ export async function enablePush(api: Api, onOpen: () => void, onError: (message
       await clearPushListeners();
       await PushNotifications.unregister();
       enabledProvider = undefined;
+      device = undefined;
+      localStorage.removeItem('love.push.enabled');
       throw error;
     } finally {
       window.clearTimeout(timeout);

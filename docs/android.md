@@ -72,7 +72,7 @@ JPUSH_MASTER_SECRET=极光MasterSecret
 JPUSH_THIRD_PARTY_CHANNEL='{"xiaomi":{"channel_id":"已审核的聊天频道","mi_template_id":"私信模板ID","mi_template_param":"{\"app_name\":\"Love\"}"},"oppo":{"channel_id":"已审核的聊天频道"},"vivo":{"classification":1,"category":"IM"}}'
 ```
 
-**以上 channel/template/category 是结构示例，必须使用各厂商审核通过的真实值**，不能直接照抄中文示例或擅自宣称消息类别。华为/荣耀的分类、OPPO 私信模板等参数也可通过 `JPUSH_THIRD_PARTY_CHANNEL` 的对应厂商字段配置；接口按极光 `options.third_party_channel` 结构原样传递。通知正文固定为“你的人给你发来了一条消息”，不会上传聊天正文或附件。项目不申请定位、电话状态、查询所有应用、外部存储权限。
+**以上 channel/template/category 是结构示例，必须使用各厂商审核通过的真实值**，不能直接照抄中文示例或擅自宣称消息类别。华为/荣耀的分类、OPPO 私信模板等参数也可通过 `JPUSH_THIRD_PARTY_CHANNEL` 的对应厂商字段配置；接口按极光 `options.third_party_channel` 结构原样传递。vivo 的本地频道 ID `messages` 也需要在 vivo 平台审核配置，并保持与 APK 创建的频道一致。通知正文固定为“你的人给你发来了一条消息”，不会上传聊天正文或附件。项目不申请定位、电话状态、查询所有应用、外部存储权限。
 
 客户端仅将极光 Registration ID 注册到自己的服务器；服务端以 Basic 鉴权调用固定的 `https://api.jpush.cn/v3/push`，并设置六家厂商 `first_ospush` 策略。同时配置 FCM 与国内推送时，客户端优先国内通道，每台安装只保留一个当前注册令牌，不同时发两份通知。国内通道运行时注册失败会提示错误，不静默降级到在中国可能不可达的 FCM。
 

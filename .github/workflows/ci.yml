@@ -62,9 +62,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-      JPUSH_ANDROID_CONFIG: ${{ secrets.JPUSH_ANDROID_CONFIG }}
-      AGCONNECT_SERVICES_JSON: ${{ secrets.AGCONNECT_SERVICES_JSON }}
       LOVE_VERSION_CODE: ${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4

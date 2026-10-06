@@ -7,7 +7,6 @@ import { createApp } from '../src/app.js';
 import type { MailMessage, MailSender } from '../src/mail.js';
 export async function setup(t: TestContext, options: { mailSender?: MailSender } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'love-test-')),
-    delivered: { tokens: string[]; messageId: number }[] = [],
     answers = new Map<string, string>(),
     mailbox: MailMessage[] = [];
   const server = createApp({
@@ -19,12 +18,6 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
     mailSender: async (config, message) => {
       if (options.mailSender) await options.mailSender(config, message);
       mailbox.push(message);
-    },
-    pushSenders: {
-      fcm: async (token, messageId) => {
-        delivered.push({ tokens: [token], messageId });
-        return token.startsWith('invalid') ? 'invalid' : 'sent';
-      },
     },
   });
   await server.control.bootstrap;
@@ -110,7 +103,6 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
     pair,
     base,
     dir,
-    delivered,
     captcha,
     emailCode,
     login,

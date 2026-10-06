@@ -4,7 +4,12 @@ import { toast } from 'sonner';
 import { Copy, Link2, Bell, Moon, LogOut, Sparkles, Camera, Server, Check } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { useApp } from '@/lib/context';
-import { enablePush, disablePush, pushDescription } from '@/lib/push';
+import {
+  enableNotifications,
+  disableNotifications,
+  notificationStatus,
+  openBatterySettings,
+} from '@/lib/notifications';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,7 +42,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     [unpair, setUnpair] = useState(false),
     [signout, setSignout] = useState(false),
     [pushStatus, setPushStatus] = useState(''),
-    [push, setPush] = useState(localStorage.getItem('love.push.enabled') === 'true'),
+    [push, setPush] = useState(false),
     [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const [aiUrl, setAiUrl] = useState(''),
     [model, setModel] = useState(''),
@@ -49,6 +54,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
   const config = useQuery({
     queryKey: ['ai-settings'],
     queryFn: () => api.request<AISettings>('/api/ai/settings'),
+    enabled: Boolean(profile.couple && profile.partner),
   });
   useEffect(() => {
     if (config.data) {
@@ -59,12 +65,21 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     }
   }, [config.data]);
   useEffect(() => {
-    if (!push || !Capacitor.isNativePlatform()) return;
+    if (!profile.couple || !Capacitor.isNativePlatform()) return;
     let active = true;
     const update = () => {
-      void pushDescription()
+      void notificationStatus()
         .then((description) => {
-          if (active) setPushStatus(description);
+          if (active) {
+            setPush(description.enabled);
+            setPushStatus(
+              description.connected
+                ? '已连接你的服务器'
+                : description.enabled
+                  ? '断线重连中'
+                  : '已关闭',
+            );
+          }
         })
         .catch(() => {});
     };
@@ -74,7 +89,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
       active = false;
       window.clearInterval(timer);
     };
-  }, [push]);
+  }, [profile.couple?.id]);
   useEffect(() => setName(profile.user.name), [profile.user.name]);
   async function action(fn: () => Promise<unknown>, message?: string) {
     setBusy(true);
@@ -119,8 +134,8 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             const file = e.target.files?.[0];
             if (file)
               void action(async () => {
-                const media = await api.upload(file, () => {});
-                await api.patch('/api/me', { avatarMediaId: media.id });
+                const media = await api.upload(file, () => {}, '/api/me/avatar');
+                void media;
               }, '头像已更新');
             e.target.value = '';
           }}
@@ -175,7 +190,8 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
         ) : (
           <>
             <p className="text-xs leading-6 text-muted-foreground">
-              生成邀请码发给另一半，或输入对方的邀请码。有效期 10 分钟。
+              配对后才能使用聊天、相册、纪念日、待办和
+              AI。生成邀请码发给另一半，或输入对方的邀请码，有效期 10 分钟。
             </p>
             {invite && (
               <div className="flex items-center justify-between rounded-xl bg-secondary px-3 py-3">
@@ -245,6 +261,18 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           </>
         )}
       </Card>
+      {profile.couple && (
+        <Card className="gap-3 p-5">
+          <h3 className="font-medium">两人空间</h3>
+          <p className="text-sm">
+            已用 {(profile.couple.storageBytes / 1048576).toFixed(1)} MiB /{' '}
+            {(profile.couple.quotaBytes / 1048576).toFixed(0)} MiB
+          </p>
+          <p className="text-xs text-muted-foreground">
+            额度由管理员分配，两人共用；图片和视频的原文件、预览及缩略图均计入。
+          </p>
+        </Card>
+      )}
       <Card className="gap-4 p-5">
         <h3 className="font-medium">个人资料</h3>
         <form
@@ -283,195 +311,199 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             }}
           />
         </div>
-        <div className="flex items-center justify-between">
-          <div>
-            <Label htmlFor="push">
-              <Bell size={16} />
-              聊天通知
-            </Label>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {Capacitor.isNativePlatform()
-                ? pushStatus || '国内厂商通道 / FCM 后台通知'
-                : '后台推送请使用安卓 APK'}
-            </p>
-          </div>
-          <Switch
-            id="push"
-            checked={push}
-            disabled={!Capacitor.isNativePlatform() || busy}
-            onCheckedChange={(value) =>
-              void action(async () => {
-                if (value)
-                  await enablePush(api, onChat, (message) => {
-                    toast.error(message);
-                    setPush(false);
-                  });
-                else {
-                  await disablePush(api);
-                  localStorage.removeItem('love.push.enabled');
+        {profile.couple && profile.partner && (
+          <>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label htmlFor="push">
+                  <Bell size={16} />
+                  聊天通知
+                </Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {Capacitor.isNativePlatform()
+                    ? pushStatus || '直连服务器，手机生成本地通知'
+                    : '本地通知请使用安卓 APK'}
+                </p>
+              </div>
+              <Switch
+                id="push"
+                checked={push}
+                disabled={!Capacitor.isNativePlatform() || busy}
+                onCheckedChange={(value) =>
+                  void action(async () => {
+                    if (value) await enableNotifications(api, profile, onChat);
+                    else await disableNotifications();
+                    setPush(value);
+                    setPushStatus(value ? '正在连接你的服务器' : '已关闭');
+                  })
                 }
-                setPush(value);
-                setPushStatus(value ? await pushDescription() : '');
-              })
-            }
-          />
-        </div>
-        <p className="text-[11px] leading-5 text-muted-foreground">
-          开启通知后，推送服务会处理设备标识和通知令牌，用于把新消息送到这台手机。国内通道由极光及对应手机厂商提供，通知不包含聊天正文。
-        </p>
-      </Card>
-      <Card className="gap-4 p-5">
-        <div className="flex items-center gap-2 font-medium">
-          <Sparkles size={18} className="text-primary" />
-          AI 助手
-        </div>
-        <p className="text-xs leading-6 text-muted-foreground">
-          在聊天中 @{profile.ai.name}，管理日期、待办和相册。消息及附件 ID 会发送给你配置的 AI
-          服务。
-        </p>
-        <div className="flex items-center gap-3 rounded-xl bg-secondary p-3">
-          <button
-            type="button"
-            disabled={busy}
-            aria-label="更换 AI 头像"
-            className="shrink-0 rounded-full"
-            onClick={() => aiAvatarFile.current?.click()}
-          >
-            {profile.ai.avatar ? (
-              <img
-                alt="AI 头像"
-                src={api.url(profile.ai.avatar.thumbnailUrl)}
-                className="size-14 rounded-full object-cover"
               />
-            ) : (
-              <span className="grid size-14 place-items-center rounded-full border border-primary/20 bg-card text-primary">
-                <Sparkles size={23} />
-              </span>
+            </div>
+            <p className="text-[11px] leading-5 text-muted-foreground">
+              直接连接你的服务器，不使用第三方推送。开启期间有常驻通知；请允许后台运行并将电池设为“不受限制”。通知只提示新消息，系统休眠可能造成延迟。
+            </p>
+            {Capacitor.isNativePlatform() && (
+              <Button variant="outline" onClick={() => void openBatterySettings()}>
+                打开后台运行设置
+              </Button>
             )}
-          </button>
-          <div>
-            <p className="text-sm font-medium">{profile.ai.name}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              点击头像更换 · 在聊天里 @{profile.ai.name}
-            </p>
-          </div>
-        </div>
-        <input
-          ref={aiAvatarFile}
-          type="file"
-          accept="image/jpeg,image/png,image/webp,image/avif"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file)
-              void action(async () => {
-                const media = await api.upload(file, () => {});
-                await api.patch('/api/ai/profile', {
-                  name: profile.ai.name,
-                  avatarMediaId: media.id,
-                });
-                await cache.invalidateQueries({ queryKey: ['ai-settings'] });
-              }, 'AI 头像已更新');
-            e.target.value = '';
-          }}
-        />
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void action(async () => {
-              await api.patch('/api/ai/profile', { name: aiName });
-              await cache.invalidateQueries({ queryKey: ['ai-settings'] });
-            }, 'AI 名称已更新');
-          }}
-        >
-          <div className="flex-1 space-y-2">
-            <Label htmlFor="ai-name">AI 名称</Label>
-            <Input
-              id="ai-name"
-              value={aiName}
-              onChange={(e) => setAiName(e.target.value)}
-              maxLength={24}
-              required
-              pattern="[^\s@]+"
-            />
-            <p className="text-[11px] text-muted-foreground">不含空格或 @，最多 24 个字符。</p>
-          </div>
-          <Button type="submit" variant="outline" disabled={busy}>
-            保存 AI 名称
-          </Button>
-        </form>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void action(async () => {
-              await api.post('/api/ai/settings', {
-                baseUrl: aiUrl,
-                model,
-                enabled: aiEnabled,
-                ...(apiKey ? { apiKey } : {}),
-              });
-              setApiKey('');
-              await cache.invalidateQueries({ queryKey: ['ai-settings'] });
-            }, 'AI 配置已保存');
-          }}
-          className="space-y-4"
-        >
-          <div className="space-y-2">
-            <Label htmlFor="ai-url">AI 服务 URL</Label>
-            <Input
-              id="ai-url"
-              type="url"
-              value={aiUrl}
-              onChange={(e) => setAiUrl(e.target.value)}
-              placeholder="https://api.example.com/v1"
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="ai-model">模型名称</Label>
-            <Input
-              id="ai-model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="服务支持的模型 ID"
-              required
-              maxLength={100}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="ai-key">API Key</Label>
-            <Input
-              id="ai-key"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              autoComplete="off"
-              placeholder={config.data?.hasKey ? '已保存；留空保持现有密钥' : '无鉴权服务可留空'}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              密钥加密保存在你的服务器，不会返回到客户端。
-            </p>
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="ai-enabled">开启 @{profile.ai.name}</Label>
-            <Switch id="ai-enabled" checked={aiEnabled} onCheckedChange={setAiEnabled} />
-          </div>
-          <Button
-            variant="outline"
-            className="w-full"
-            type="submit"
-            disabled={busy || config.isPending}
-          >
-            保存 AI 配置
-          </Button>
-        </form>
-        {config.isError && (
-          <p role="alert" className="text-xs text-destructive">
-            AI 配置加载失败，请刷新后重试
-          </p>
+          </>
         )}
       </Card>
+      {profile.couple && profile.partner && (
+        <Card className="gap-4 p-5">
+          <div className="flex items-center gap-2 font-medium">
+            <Sparkles size={18} className="text-primary" />
+            AI 助手
+          </div>
+          <p className="text-xs leading-6 text-muted-foreground">
+            在聊天中 @{profile.ai.name}，管理日期、待办和相册。消息及附件 ID 会发送给你配置的 AI
+            服务。
+          </p>
+          <div className="flex items-center gap-3 rounded-xl bg-secondary p-3">
+            <button
+              type="button"
+              disabled={busy}
+              aria-label="更换 AI 头像"
+              className="shrink-0 rounded-full"
+              onClick={() => aiAvatarFile.current?.click()}
+            >
+              {profile.ai.avatar ? (
+                <img
+                  alt="AI 头像"
+                  src={api.url(profile.ai.avatar.thumbnailUrl)}
+                  className="size-14 rounded-full object-cover"
+                />
+              ) : (
+                <span className="grid size-14 place-items-center rounded-full border border-primary/20 bg-card text-primary">
+                  <Sparkles size={23} />
+                </span>
+              )}
+            </button>
+            <div>
+              <p className="text-sm font-medium">{profile.ai.name}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                点击头像更换 · 在聊天里 @{profile.ai.name}
+              </p>
+            </div>
+          </div>
+          <input
+            ref={aiAvatarFile}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file)
+                void action(async () => {
+                  const media = await api.upload(file, () => {});
+                  await api.patch('/api/ai/profile', {
+                    name: profile.ai.name,
+                    avatarMediaId: media.id,
+                  });
+                  await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+                }, 'AI 头像已更新');
+              e.target.value = '';
+            }}
+          />
+          <form
+            className="flex items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action(async () => {
+                await api.patch('/api/ai/profile', { name: aiName });
+                await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+              }, 'AI 名称已更新');
+            }}
+          >
+            <div className="flex-1 space-y-2">
+              <Label htmlFor="ai-name">AI 名称</Label>
+              <Input
+                id="ai-name"
+                value={aiName}
+                onChange={(e) => setAiName(e.target.value)}
+                maxLength={24}
+                required
+                pattern="[^\s@]+"
+              />
+              <p className="text-[11px] text-muted-foreground">不含空格或 @，最多 24 个字符。</p>
+            </div>
+            <Button type="submit" variant="outline" disabled={busy}>
+              保存 AI 名称
+            </Button>
+          </form>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action(async () => {
+                await api.post('/api/ai/settings', {
+                  baseUrl: aiUrl,
+                  model,
+                  enabled: aiEnabled,
+                  ...(apiKey ? { apiKey } : {}),
+                });
+                setApiKey('');
+                await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+              }, 'AI 配置已保存');
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="ai-url">AI 服务 URL</Label>
+              <Input
+                id="ai-url"
+                type="url"
+                value={aiUrl}
+                onChange={(e) => setAiUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ai-model">模型名称</Label>
+              <Input
+                id="ai-model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="服务支持的模型 ID"
+                required
+                maxLength={100}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ai-key">API Key</Label>
+              <Input
+                id="ai-key"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                autoComplete="off"
+                placeholder={config.data?.hasKey ? '已保存；留空保持现有密钥' : '无鉴权服务可留空'}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                密钥加密保存在你的服务器，不会返回到客户端。
+              </p>
+            </div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="ai-enabled">开启 @{profile.ai.name}</Label>
+              <Switch id="ai-enabled" checked={aiEnabled} onCheckedChange={setAiEnabled} />
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              type="submit"
+              disabled={busy || config.isPending}
+            >
+              保存 AI 配置
+            </Button>
+          </form>
+          {config.isError && (
+            <p role="alert" className="text-xs text-destructive">
+              AI 配置加载失败，请刷新后重试
+            </p>
+          )}
+        </Card>
+      )}
       <div className="px-1">
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Server size={14} />

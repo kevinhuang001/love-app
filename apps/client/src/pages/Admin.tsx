@@ -93,10 +93,7 @@ type Overview = {
   errors24h: number;
   aiPending: number;
   aiFailed: number;
-  pushPending: number;
-  pushFailed: number;
-  pushProviders: string[];
-  pushDevices: { provider: string; count: number }[];
+  notificationConnections: number;
   uptime: number;
   node: string;
   registration: Config['registration'];
@@ -650,7 +647,7 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
                     <p className="mt-4 text-xl font-medium">
                       {bytes(p.storageBytes)}
                       <span className="ml-2 text-xs font-normal text-muted-foreground">
-                        / {p.effectiveQuotaMiB ? `${p.effectiveQuotaMiB} MB` : '不限'}
+                        / {`${p.effectiveQuotaMiB} MiB`}
                       </span>
                     </p>
                     {p.effectiveQuotaMiB > 0 && (
@@ -897,7 +894,7 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
                 setPair(null);
             }}
           >
-            <Field label="空间上限（MB）" id="pair-quota">
+            <Field label="空间上限（MiB）" id="pair-quota">
               <Input
                 id="pair-quota"
                 type="number"
@@ -905,10 +902,10 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
                 max={1000000}
                 value={quota}
                 onChange={(e) => setQuota(e.target.value)}
-                placeholder="继承默认配额"
+                placeholder="使用当前默认额度"
               />
             </Field>
-            <p className="text-xs text-muted-foreground">留空继承默认配额，0 表示不限。</p>
+            <p className="text-xs text-muted-foreground">留空使用默认额度，0 禁止新增上传。</p>
             <DialogFooter>
               <Button disabled={busy}>保存存储配额</Button>
             </DialogFooter>
@@ -967,11 +964,7 @@ function Dashboard({ data: d }: { data: Overview }) {
     ['媒体存储', bytes(d.storageBytes), `${d.images} 张照片 · ${d.videos} 个视频`],
     ['24 小时访问', d.requests24h, `${d.errors24h} 次服务错误`],
     ['回忆与聊天', d.moments, `${d.messages} 条聊天消息`],
-    [
-      '后台任务',
-      d.aiPending + d.pushPending,
-      `${d.aiPending} 个 AI · ${d.pushPending} 个推送待处理`,
-    ],
+    ['后台任务', d.aiPending, `${d.aiPending} 个 AI 待处理`],
   ];
   return (
     <>
@@ -1002,19 +995,8 @@ function Dashboard({ data: d }: { data: Overview }) {
             </dd>
           </div>
           <div>
-            <dt className="text-muted-foreground">推送渠道</dt>
-            <dd className="mt-1.5">
-              {d.pushProviders.length
-                ? d.pushProviders
-                    .map((p) => (p === 'jpush' ? '国内厂商（极光）' : 'FCM'))
-                    .join(' / ')
-                : '尚未配置'}
-            </dd>
-            <dd className="mt-1.5 text-muted-foreground">
-              {d.pushDevices.map((p) => `${p.provider}: ${p.count} 台`).join(' · ') ||
-                '暂无注册设备'}{' '}
-              · {d.pushFailed} 个推送任务失败
-            </dd>
+            <dt className="text-muted-foreground">安卓本地通知</dt>
+            <dd className="mt-1.5">直连服务器 · {d.notificationConnections} 个在线连接</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">日志保留</dt>
@@ -1098,7 +1080,7 @@ function AdminSettings({ api }: { api: Api }) {
                 ))}
               </select>
             </Field>
-            <Field label="默认每对存储上限（MB）" id="default-quota">
+            <Field label="新配对默认存储上限（MiB）" id="default-quota">
               <Input
                 id="default-quota"
                 type="number"
@@ -1129,7 +1111,7 @@ function AdminSettings({ api }: { api: Api }) {
                 onChange={(e) => setDraft({ ...draft, retentionDays: Number(e.target.value) })}
               />
               <p className="text-[10px] text-muted-foreground">
-                7–90 天，每类日志最多保留 100000 条。存储上限 0 表示不限。
+                7–90 天，每类日志最多保留 100000 条。默认额度用于新配对，0 禁止新增上传。
               </p>
             </Field>
           </div>

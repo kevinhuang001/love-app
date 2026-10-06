@@ -1,65 +1,51 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { configureChinaPush } from './android-push.mjs';
+import { mkdirSync, copyFileSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 const client = resolve('apps/client');
 function cap(...args) {
-  const r = spawnSync(
+  const result = spawnSync(
     process.execPath,
     [resolve('node_modules/@capacitor/cli/bin/capacitor'), ...args],
     { cwd: client, stdio: 'inherit' },
   );
-  if (r.status !== 0) process.exit(r.status || 1);
+  if (result.status !== 0) process.exit(result.status || 1);
 }
 if (!existsSync(resolve(client, 'android'))) cap('add', 'android');
-const app = resolve(client, 'android/app');
-// Firebase client configuration is optional for the debug artifact, required for real push.
-if (process.env.GOOGLE_SERVICES_JSON)
-  writeFileSync(resolve(app, 'google-services.json'), process.env.GOOGLE_SERVICES_JSON);
-else if (existsSync(resolve('config/google-services.json')))
-  copyFileSync(resolve('config/google-services.json'), resolve(app, 'google-services.json'));
-else rmSync(resolve(app, 'google-services.json'), { force: true });
-const firebaseConfigured = existsSync(resolve(app, 'google-services.json'));
-const china = configureChinaPush(client, app);
-const pushConfig = { firebaseConfigured, ...china };
-writeFileSync(resolve(client, 'src/push-build.json'), JSON.stringify(pushConfig));
-const builtConfig = resolve(client, 'dist/push-build.json');
-writeFileSync(builtConfig, JSON.stringify(pushConfig));
-const manifestPath = resolve(app, 'src/main/AndroidManifest.xml');
-let manifest = readFileSync(manifestPath, 'utf8');
-if (!manifest.includes('POST_NOTIFICATIONS'))
-  manifest = manifest.replace(
-    '</manifest>',
-    '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/></manifest>',
-  );
-if (!manifest.includes('firebase_messaging_auto_init_enabled'))
-  manifest = manifest.replace(
-    '</application>',
-    '<meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" tools:replace="android:value"/><meta-data android:name="firebase_analytics_collection_enabled" android:value="false" tools:replace="android:value"/></application>',
-  );
-if (!manifest.includes('default_notification_icon'))
-  manifest = manifest.replace(
-    '</application>',
-    '<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_heart"/><meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="messages"/></application>',
-  );
-manifest = manifest.replace('android:allowBackup="true"', 'android:allowBackup="false"');
-writeFileSync(manifestPath, manifest);
-const heart = resolve(app, 'src/main/res/drawable/ic_stat_heart.xml');
-mkdirSync(dirname(heart), { recursive: true });
+const app = resolve(client, 'android/app'),
+  native = resolve(app, 'src/main/java/com/kevinhuang/love');
+mkdirSync(native, { recursive: true });
+for (const file of [
+  'MainActivity.java',
+  'LocalNotificationsPlugin.java',
+  'LocalNotificationService.java',
+])
+  copyFileSync(resolve(client, 'native', file), resolve(native, file));
 writeFileSync(
-  heart,
-  '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#FFFFFFFF" android:pathData="M12,21L3.2,12.2C-2,6.8 5.2,-0.3 12,6.4C18.8,-0.3 26,6.8 20.8,12.2Z"/></vector>',
+  resolve(app, 'src/main/AndroidManifest.xml'),
+  `<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+ <application android:allowBackup="false" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true" android:theme="@style/AppTheme" android:usesCleartextTraffic="false">
+  <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:theme="@style/AppTheme.NoActionBarLaunch" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+  <service android:name=".LocalNotificationService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled continuous reception of private chat messages from a self-hosted server, with a visible stop action"/></service>
+  <provider android:name="androidx.core.content.FileProvider" android:authorities="\${applicationId}.fileprovider" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/></provider>
+ </application>
+</manifest>`,
+);
+mkdirSync(resolve(app, 'src/main/res/drawable'), { recursive: true });
+writeFileSync(
+  resolve(app, 'src/main/res/drawable/ic_stat_message.xml'),
+  '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#FFFFFFFF" android:pathData="M4,3h16v14H8l-4,4zM7,7v2h10V7zM7,11v2h7v-2z"/></vector>',
 );
 const gradle = resolve(app, 'build.gradle');
-let build = readFileSync(gradle, 'utf8');
-build = build
+let build = readFileSync(gradle, 'utf8')
   .replace(
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "[^\"]*"/, 'versionName "2.0.1"');
+  .replace(/versionName "[^\"]*"/, 'versionName "2.1.0"');
 writeFileSync(gradle, build);
 cap('sync', 'android');
-console.log(
-  `Android ready. FCM configured: ${firebaseConfigured}; domestic push configured: ${china.jpushConfigured}; vendor count: ${china.vendors.length}`,
-);

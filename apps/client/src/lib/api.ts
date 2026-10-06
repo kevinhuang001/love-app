@@ -55,11 +55,11 @@ export class Api {
   url(path: string) {
     return `${this.session.server}${path}`;
   }
-  async upload(file: File, onProgress: (progress: number) => void): Promise<UploadedMedia> {
+  async upload(file: File, onProgress: (progress: number) => void, path = '/api/media'): Promise<UploadedMedia> {
     if (file.size > 100 * 1024 * 1024) throw new Error('文件不能超过 100 MB');
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', this.url('/api/media'));
+      xhr.open('POST', this.url(path));
       xhr.timeout = 240_000;
       xhr.setRequestHeader('Authorization', `Bearer ${this.session.token}`);
       xhr.upload.onprogress = (event) => {

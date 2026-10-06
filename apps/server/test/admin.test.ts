@@ -281,11 +281,11 @@ test('SMTP secrets and credentials do not leak into responses or logs; logs are 
     s.db.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value,
   );
   assert.ok(!raw.includes('smtp-private-test-value'));
-  await s.api(u.token).get('/api/missing?token=private-query-token').expect(404);
+  await s.api(u.token).get('/api/missing?token=private-query-token').expect(409);
   const access = (await admin.get('/api/admin/logs/access?search=/api/missing&status=4')).body;
   assert.equal(access.total, 1);
   assert.equal(access.items[0].path, '/api/missing');
-  assert.equal(access.items[0].status, 404);
+  assert.equal(access.items[0].status, 409);
   assert.equal(access.items[0].actorId, u.user.id);
   const responses = await Promise.all(
     ['access', 'server', 'audit'].map((kind) => admin.get(`/api/admin/logs/${kind}`).expect(200)),

@@ -249,8 +249,7 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as User | undefined;
   if (!user || user.disabled) throw new Error('用户不存在');
   const coupleId = user.coupleId;
-  if (!coupleId && !['update_profile', 'update_ai_profile'].includes(name))
-    throw new Error('请先配对');
+  if (!coupleId && name !== 'update_profile') throw new Error('请先配对');
   switch (name) {
     case 'list_anniversaries':
       return db.prepare('SELECT * FROM anniversaries WHERE coupleId=?').all(coupleId!);
@@ -292,8 +291,10 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
       if (
         v.avatarMediaId &&
         !db
-          .prepare("SELECT id FROM media WHERE id=? AND ownerId=? AND kind='image'")
-          .get(v.avatarMediaId, userId)
+          .prepare(
+            "SELECT id FROM media WHERE id=? AND ownerId=? AND kind='image' AND (coupleId IS NULL OR coupleId=?)",
+          )
+          .get(v.avatarMediaId, userId, coupleId)
       )
         throw new Error('头像必须是你自己上传的图片');
       db.prepare(

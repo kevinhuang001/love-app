@@ -1,0 +1,41 @@
+services:
+  love:
+    image: love-app:local
+    build: .
+    ports:
+      - '127.0.0.1:${LOVE_PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      TZ: Asia/Shanghai
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Configure MEDIA_SIGNING_SECRET}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${LOVE_DOMAIN:-localhost},https://localhost,capacitor://localhost}
+      FIREBASE_SERVICE_ACCOUNT: ${FIREBASE_SERVICE_ACCOUNT:-}
+      AI_ALLOWED_HOSTS: ${AI_ALLOWED_HOSTS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+    volumes:
+      - love-data:/app/data
+    restart: unless-stopped
+    init: true
+  proxy:
+    image: caddy:2-alpine
+    profiles: [https]
+    depends_on:
+      love:
+        condition: service_healthy
+    environment:
+      LOVE_DOMAIN: ${LOVE_DOMAIN:-localhost}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+volumes:
+  caddy-data:
+  caddy-config:
+  love-data:

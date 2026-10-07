@@ -41,11 +41,7 @@ const server = await createApp({
 });
 await server.control.bootstrap;
 const port = Number(process.env.PORT || 3000);
-server.http.listen(
-  port,
-  '0.0.0.0',
-  async () => await console.log(`Love API listening on :${port}`),
-);
+server.http.listen(port, '0.0.0.0', () => console.log(`Love API listening on :${port}`));
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, async () => {
     await server.close();

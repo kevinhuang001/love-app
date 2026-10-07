@@ -75,8 +75,8 @@ jobs:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           LOVE_DOMAIN: love.example.com
       - run: npm ci
-      - run: node scripts/setup-compose.test.mjs
       - run: docker build -t love-ci .
+      - run: node scripts/setup-compose.test.mjs
       - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke -v love-smoke-data:/app/data love-ci
       - run: node scripts/docker-smoke.mjs
       - run: docker restart love-smoke && node scripts/docker-smoke.mjs --verify-persistence
@@ -94,7 +94,7 @@ jobs:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           ADMIN_USERNAME: ci_admin
           ADMIN_PASSWORD: ci-admin-password-for-smoke
-          POSTGRES_PASSWORD: ci-postgres-smoke-password
+          POSTGRES_PASSWORD: 'ci-postgres''pa"ss$word#\literal'
       - run: docker logs love-smoke || true
         if: failure()
       - run: |
@@ -105,12 +105,12 @@ jobs:
         if: failure()
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
-          POSTGRES_PASSWORD: ci-postgres-smoke-password
+          POSTGRES_PASSWORD: 'ci-postgres''pa"ss$word#\literal'
       - run: docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml down --volumes
         if: always()
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
-          POSTGRES_PASSWORD: ci-postgres-smoke-password
+          POSTGRES_PASSWORD: 'ci-postgres''pa"ss$word#\literal'
   android:
     needs: [test, postgres, docker]
     runs-on: ubuntu-latest

@@ -9,6 +9,7 @@ const dir = await mkdtemp(join(tmpdir(), 'love-compose-'));
 try {
   const special = `postgres'pa"ss$word#\\literal`;
   const env = {
+    LOVE_IMAGE: 'love-ci',
     MEDIA_SIGNING_SECRET: 'ci-compose-fixture-secret-at-least-32-characters',
     POSTGRES_PASSWORD: special,
     POSTGRES_USER: 'love',
@@ -23,6 +24,8 @@ try {
       .map(([k, v]) => k + '=' + quoteEnv(v))
       .join('\n'),
   );
+  // Compose config escapes dollars for its re-loadable serialization.
+  const literal = (value) => value.replaceAll('$$', '$');
   const config = JSON.parse(
     execFileSync(
       'docker',
@@ -41,12 +44,35 @@ try {
       { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } },
     ),
   );
-  assert.equal(config.services.postgres.environment.POSTGRES_PASSWORD, special);
-  assert.equal(config.services.love.environment.PGPASSWORD, special);
-  assert.equal(config.services.love.environment.ADMIN_PASSWORD, special);
+  assert.equal(literal(config.services.postgres.environment.POSTGRES_PASSWORD), special);
+  assert.equal(literal(config.services.love.environment.PGPASSWORD), special);
+  assert.equal(literal(config.services.love.environment.ADMIN_PASSWORD), special);
   assert.equal(config.services.love.environment.DATABASE_PROVIDER, 'postgres');
   assert.equal(config.services.postgres.ports, undefined);
-  console.log('Compose accepted PostgreSQL deployment and preserved literal credentials.');
+  execFileSync(
+    'docker',
+    [
+      'compose',
+      '--env-file',
+      file,
+      '-f',
+      'compose.yml',
+      '-f',
+      'compose.postgres.yml',
+      'run',
+      '--rm',
+      '--no-deps',
+      '--entrypoint',
+      'node',
+      'love',
+      '--input-type=module',
+      '-e',
+      "import assert from 'node:assert/strict'; assert.equal(process.env.PGPASSWORD, process.argv[1]); assert.equal(process.env.ADMIN_PASSWORD, process.argv[1]); console.log('Container credentials preserved.');",
+      special,
+    ],
+    { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+  );
+  console.log('Compose and the running container preserved literal credentials.');
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

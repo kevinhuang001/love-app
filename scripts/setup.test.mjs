@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseEnv } from 'node:util';
 import { setup, quoteEnv, parseDeploymentEnv } from './setup.mjs';
 const fakeUI = (options = {}) => ({
   intro() {},

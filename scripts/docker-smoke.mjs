@@ -78,10 +78,14 @@ if (process.argv.includes('--verify-persistence')) {
   const couples = await api('/api/admin/couples', null, admin.token);
   assert.equal(couples.items[0].quotaMiB, 128);
   assert.equal((await api('/api/admin/overview', null, admin.token)).users, 2);
+  assert.equal((await api('/api/admin/settings', null, admin.token)).defaultQuotaMiB, 4096);
   console.log(
     'Docker restart preserved administrator, verified users, quotas, dates, lunar To Do and AI identity',
   );
 } else {
+  const settings = await api('/api/admin/settings', null, admin.token);
+  assert.equal(settings.defaultQuotaMiB, Number(process.env.SMOKE_INITIAL_QUOTA || 1024));
+  await api('/api/admin/settings', { ...settings, defaultQuotaMiB: 4096 }, admin.token, 'PATCH');
   for (const [username, name] of [
     ['docker_alice', '小爱'],
     ['docker_bob', '小许'],

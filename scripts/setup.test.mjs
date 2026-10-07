@@ -9,7 +9,10 @@ const fakeUI = (options = {}) => ({
   note() {},
   outro() {},
   isCancel: (value) => typeof value === 'symbol',
-  text: async (p) => p.defaultValue,
+  text: async (p) => {
+    assert.equal(p.validate?.(''), undefined, 'Enter accepts the displayed default');
+    return p.defaultValue;
+  },
   password: async () => '',
   select: async (p) => (p.message === '选择数据库' ? options.database || 'sqlite' : p.initialValue),
   confirm: async (p) =>

@@ -91,6 +91,8 @@ jobs:
         env:
           LOVE_IMAGE: love-ci
           SMOKE_DATABASE: postgres
+          SMOKE_INITIAL_QUOTA: 2048
+          INITIAL_QUOTA_MIB: 2048
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           ADMIN_USERNAME: ci_admin
           ADMIN_PASSWORD: ci-admin-password-for-smoke

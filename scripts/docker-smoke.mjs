@@ -21,6 +21,7 @@ async function api(path, body, token, method = body ? 'POST' : 'GET') {
   assert.ok(r.ok, `${method} ${path}: ${r.status} ${await r.clone().text()}`);
   return r.status === 204 ? null : r.json();
 }
+assert.equal((await api('/api/health')).database, process.env.SMOKE_DATABASE || 'sqlite');
 const html = await (await fetch(base)).text();
 assert.match(html, /<meta charset="UTF-8"/);
 assert.match(html, /Love/);
@@ -40,16 +41,16 @@ async function captcha(purpose) {
     'docker',
     [
       'exec',
-      'love-smoke',
+      process.env.SMOKE_CONTAINER || 'love-smoke',
       'node',
       '--input-type=module',
       '-e',
-      `import { DatabaseSync } from 'node:sqlite';
+      `import { openDatabase } from './apps/server/dist/db.js';
      import { createHmac } from 'node:crypto';
-     const db = new DatabaseSync('/app/data/love.sqlite');
+     const db = await openDatabase({path:process.env.DATABASE_URL || process.env.DATABASE_PATH || '/app/data/love.sqlite',provider:process.env.DATABASE_PROVIDER || undefined});
      const id = process.argv[1], answer = process.argv[2];
      const hash = createHmac('sha256', process.env.MEDIA_SIGNING_SECRET).update('captcha:' + id + ':' + answer).digest('hex');
-     db.prepare('UPDATE captchas SET hash=? WHERE id=?').run(hash, id); db.close();`,
+     await db.prepare('UPDATE captchas SET hash=? WHERE id=?').run(hash, id); await db.close();`,
       challenge.id,
       answer,
     ],
@@ -77,10 +78,14 @@ if (process.argv.includes('--verify-persistence')) {
   const couples = await api('/api/admin/couples', null, admin.token);
   assert.equal(couples.items[0].quotaMiB, 128);
   assert.equal((await api('/api/admin/overview', null, admin.token)).users, 2);
+  assert.equal((await api('/api/admin/settings', null, admin.token)).defaultQuotaMiB, 4096);
   console.log(
     'Docker restart preserved administrator, verified users, quotas, dates, lunar To Do and AI identity',
   );
 } else {
+  const settings = await api('/api/admin/settings', null, admin.token);
+  assert.equal(settings.defaultQuotaMiB, Number(process.env.SMOKE_INITIAL_QUOTA || 1024));
+  await api('/api/admin/settings', { ...settings, defaultQuotaMiB: 4096 }, admin.token, 'PATCH');
   for (const [username, name] of [
     ['docker_alice', '小爱'],
     ['docker_bob', '小许'],

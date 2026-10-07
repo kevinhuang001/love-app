@@ -245,26 +245,33 @@ export const tools = toolDefinitions.map(([name, description, properties]) => ({
     },
   },
 }));
-export function executeTool(db: DB, userId: string, name: string, input: unknown) {
-  const user = db.prepare('SELECT * FROM users WHERE id=?').get(userId) as User | undefined;
+export async function executeTool(db: DB, userId: string, name: string, input: unknown) {
+  return transaction(db, () => executeWithinTransaction(db, userId, name, input));
+}
+async function executeWithinTransaction(db: DB, userId: string, name: string, input: unknown) {
+  const user = (await db.prepare('SELECT * FROM users WHERE id=?').get(userId)) as User | undefined;
   if (!user || user.disabled) throw new Error('用户不存在');
   const coupleId = user.coupleId;
   if (!coupleId && name !== 'update_profile') throw new Error('请先配对');
   switch (name) {
     case 'list_anniversaries':
-      return db.prepare('SELECT * FROM anniversaries WHERE coupleId=?').all(coupleId!);
+      return await db.prepare('SELECT * FROM anniversaries WHERE coupleId=?').all(coupleId!);
     case 'create_anniversary': {
       const v = anniversarySchema.parse(input),
         id = randomUUID();
-      db.prepare('INSERT INTO anniversaries VALUES(?,?,?,?)').run(id, coupleId!, v.title, v.date);
+      await db
+        .prepare('INSERT INTO anniversaries VALUES(?,?,?,?)')
+        .run(id, coupleId!, v.title, v.date);
       return { id, ...v };
     }
     case 'update_anniversary': {
       const v = anniversarySchema.extend({ id: z.string().uuid() }).parse(input);
       if (
-        !db
-          .prepare('UPDATE anniversaries SET title=?,date=? WHERE id=? AND coupleId=?')
-          .run(v.title, v.date, v.id, coupleId!).changes
+        !(
+          await db
+            .prepare('UPDATE anniversaries SET title=?,date=? WHERE id=? AND coupleId=?')
+            .run(v.title, v.date, v.id, coupleId!)
+        ).changes
       )
         throw new Error('纪念日不存在');
       return { updated: true };
@@ -272,8 +279,9 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
     case 'delete_anniversary': {
       const { id } = z.object({ id: z.string().uuid() }).parse(input);
       if (
-        !db.prepare('DELETE FROM anniversaries WHERE id=? AND coupleId=?').run(id, coupleId!)
-          .changes
+        !(
+          await db.prepare('DELETE FROM anniversaries WHERE id=? AND coupleId=?').run(id, coupleId!)
+        ).changes
       )
         throw new Error('纪念日不存在');
       return { deleted: true };
@@ -290,73 +298,78 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
         .parse(input);
       if (
         v.avatarMediaId &&
-        !db
+        !(await db
           .prepare(
             "SELECT id FROM media WHERE id=? AND ownerId=? AND kind='image' AND (coupleId IS NULL OR coupleId=?)",
           )
-          .get(v.avatarMediaId, userId, coupleId)
+          .get(v.avatarMediaId, userId, coupleId))
       )
         throw new Error('头像必须是你自己上传的图片');
-      db.prepare(
-        'UPDATE users SET name=COALESCE(?,name),avatarMediaId=COALESCE(?,avatarMediaId) WHERE id=?',
-      ).run(v.name ?? null, v.avatarMediaId || null, userId);
+      await db
+        .prepare(
+          'UPDATE users SET name=COALESCE(?,name),avatarMediaId=COALESCE(?,avatarMediaId) WHERE id=?',
+        )
+        .run(v.name ?? null, v.avatarMediaId || null, userId);
       return { name: v.name ?? user.name, avatarUpdated: Boolean(v.avatarMediaId) };
     }
     case 'update_ai_profile': {
       const v = aiProfileSchema.parse(input);
       if (
         v.avatarMediaId &&
-        !db
+        !(await db
           .prepare("SELECT id FROM media WHERE id=? AND ownerId=? AND coupleId=? AND kind='image'")
-          .get(v.avatarMediaId, userId, coupleId!)
+          .get(v.avatarMediaId, userId, coupleId!))
       )
         throw new Error('AI 头像必须是你在当前空间上传的图片');
-      db.prepare(
-        "INSERT OR IGNORE INTO ai_settings(userId,baseUrl,model,secret,enabled) VALUES(?,'','','',0)",
-      ).run(userId);
-      db.prepare('UPDATE ai_settings SET name=? WHERE userId=?').run(v.name, userId);
+      await db
+        .prepare(
+          "INSERT INTO ai_settings(userId,baseUrl,model,secret,enabled) VALUES(?,'','','',0) ON CONFLICT DO NOTHING",
+        )
+        .run(userId);
+      await db.prepare('UPDATE ai_settings SET name=? WHERE userId=?').run(v.name, userId);
       if (v.avatarMediaId !== undefined)
-        db.prepare('UPDATE ai_settings SET avatarMediaId=? WHERE userId=?').run(
-          v.avatarMediaId,
-          userId,
-        );
+        await db
+          .prepare('UPDATE ai_settings SET avatarMediaId=? WHERE userId=?')
+          .run(v.avatarMediaId, userId);
       return { name: v.name, avatarUpdated: v.avatarMediaId !== undefined };
     }
     case 'list_todos':
-      return db.prepare('SELECT * FROM todos WHERE coupleId=?').all(coupleId!);
+      return await db.prepare('SELECT * FROM todos WHERE coupleId=?').all(coupleId!);
     case 'create_todo': {
       const v = todoSchema.parse(input),
         id = randomUUID();
-      db.prepare(
-        'INSERT INTO todos(id,coupleId,title,date,calendar,leapMonth,repeat) VALUES(?,?,?,?,?,?,?)',
-      ).run(id, coupleId!, v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat);
+      await db
+        .prepare(
+          'INSERT INTO todos(id,coupleId,title,date,calendar,leapMonth,repeat) VALUES(?,?,?,?,?,?,?)',
+        )
+        .run(id, coupleId!, v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat);
       return { id, ...v };
     }
     case 'update_todo': {
       const v = todoSchema.safeExtend({ id: z.string().uuid() }).parse(input);
       if (
-        !db
-          .prepare(
-            'UPDATE todos SET title=?,date=?,calendar=?,leapMonth=?,repeat=?,completed=0,completedDate=NULL WHERE id=? AND coupleId=?',
-          )
-          .run(v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat, v.id, coupleId!).changes
+        !(
+          await db
+            .prepare(
+              'UPDATE todos SET title=?,date=?,calendar=?,leapMonth=?,repeat=?,completed=0,completedDate=NULL WHERE id=? AND coupleId=?',
+            )
+            .run(v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat, v.id, coupleId!)
+        ).changes
       )
         throw new Error('待办不存在');
       return { updated: true };
     }
     case 'complete_todo': {
       const v = z.object({ id: z.string().uuid(), completed: z.boolean() }).parse(input);
-      const row = db
+      const row = (await db
         .prepare('SELECT * FROM todos WHERE id=? AND coupleId=?')
-        .get(v.id, coupleId!) as unknown as Parameters<typeof nextTodo>[0] | undefined;
+        .get(v.id, coupleId!)) as unknown as Parameters<typeof nextTodo>[0] | undefined;
       if (!row) throw new Error('待办不存在');
       const next = nextTodo(row);
       if (v.completed && !next) throw new Error('已超过支持的日期范围');
-      db.prepare('UPDATE todos SET completed=?,completedDate=? WHERE id=?').run(
-        v.completed && row.repeat === 'none' ? 1 : 0,
-        v.completed ? next!.date : null,
-        v.id,
-      );
+      await db
+        .prepare('UPDATE todos SET completed=?,completedDate=? WHERE id=?')
+        .run(v.completed && row.repeat === 'none' ? 1 : 0, v.completed ? next!.date : null, v.id);
       return {
         completed: v.completed,
         next:
@@ -367,12 +380,15 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
     }
     case 'delete_todo': {
       const { id } = z.object({ id: z.string().uuid() }).parse(input);
-      if (!db.prepare('DELETE FROM todos WHERE id=? AND coupleId=?').run(id, coupleId!).changes)
+      if (
+        !(await db.prepare('DELETE FROM todos WHERE id=? AND coupleId=?').run(id, coupleId!))
+          .changes
+      )
         throw new Error('待办不存在');
       return { deleted: true };
     }
     case 'list_recent_media':
-      return db
+      return await db
         .prepare(
           'SELECT id,kind,createdAt FROM media WHERE ownerId=? AND coupleId=? ORDER BY createdAt DESC LIMIT 20',
         )
@@ -382,22 +398,22 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
         .object({ mediaId: z.string().uuid(), title: z.string().trim().max(300), date })
         .parse(input);
       if (
-        !db
+        !(await db
           .prepare('SELECT id FROM media WHERE id=? AND ownerId=? AND coupleId=?')
-          .get(v.mediaId, userId, coupleId!)
+          .get(v.mediaId, userId, coupleId!))
       )
         throw new Error('只能保存你自己上传的媒体');
       const id = randomUUID();
-      db.prepare(
-        'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
-      ).run(id, coupleId!, userId, v.title, v.mediaId, v.date);
+      await db
+        .prepare('INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)')
+        .run(id, coupleId!, userId, v.title, v.mediaId, v.date);
       return { id, published: true };
     }
     case 'set_relationship_date': {
       const v = z
         .object({ startDate: date.refine((v) => v <= today(), '开始日期不能晚于今天') })
         .parse(input);
-      db.prepare('UPDATE couples SET startDate=? WHERE id=?').run(v.startDate, coupleId!);
+      await db.prepare('UPDATE couples SET startDate=? WHERE id=?').run(v.startDate, coupleId!);
       return { startDate: v.startDate };
     }
     default:
@@ -407,7 +423,7 @@ export function executeTool(db: DB, userId: string, name: string, input: unknown
 export type AIOptions = {
   db: DB;
   secret: string;
-  notify: (coupleId: string, message: Record<string, unknown>) => void;
+  notify: (coupleId: string, message: Record<string, unknown>) => Promise<void>;
   changed: (coupleId: string, userId: string) => void;
   completion?: typeof complete;
 };
@@ -417,11 +433,11 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
     if (busy) return;
     busy = true;
     try {
-      const job = db
+      const job = (await db
         .prepare(
           "SELECT j.*,m.content,m.mediaId,m.coupleId FROM ai_jobs j JOIN messages m ON m.id=j.messageId WHERE j.status='pending' ORDER BY j.messageId LIMIT 1",
         )
-        .get() as
+        .get()) as
         | {
             messageId: number;
             userId: string;
@@ -432,50 +448,54 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
           }
         | undefined;
       if (!job) return;
-      const config = db
+      const config = (await db
         .prepare('SELECT * FROM ai_settings WHERE userId=? AND enabled=1')
-        .get(job.userId) as
+        .get(job.userId)) as
         { baseUrl: string; model: string; secret: string; name: string } | undefined;
-      const user = db.prepare('SELECT * FROM users WHERE id=?').get(job.userId) as User;
-      const persistReply = (content: string) => {
-        const identity = db
+      const user = (await db.prepare('SELECT * FROM users WHERE id=?').get(job.userId)) as User;
+      const persistReply = async (content: string) => {
+        const identity = await db
           .prepare('SELECT name,avatarMediaId FROM ai_settings WHERE userId=?')
           .get(job.userId);
         const validAvatar =
           identity?.avatarMediaId &&
-          db
+          (await db
             .prepare('SELECT id FROM media WHERE id=? AND coupleId=?')
-            .get(identity.avatarMediaId, job.coupleId)
+            .get(identity.avatarMediaId, job.coupleId))
             ? identity.avatarMediaId
             : null;
-        transaction(db, () => {
+        await transaction(db, async () => {
           const clientId = `ai:${job.messageId}`;
-          db.prepare(
-            "INSERT OR IGNORE INTO messages(coupleId,senderId,clientId,content,createdAt,role,assistantName,assistantAvatarMediaId) VALUES(?,?,?,?,?,'assistant',?,?)",
-          ).run(
-            job.coupleId,
-            job.userId,
-            clientId,
-            content.slice(0, 8000),
-            new Date().toISOString(),
-            String(identity?.name || '小爱'),
-            validAvatar,
-          );
-          db.prepare("UPDATE ai_jobs SET status='done' WHERE messageId=?").run(job.messageId);
+          await db
+            .prepare(
+              "INSERT INTO messages(coupleId,senderId,clientId,content,createdAt,role,assistantName,assistantAvatarMediaId) VALUES(?,?,?,?,?,'assistant',?,?) ON CONFLICT(senderId,clientId) DO NOTHING",
+            )
+            .run(
+              job.coupleId,
+              job.userId,
+              clientId,
+              content.slice(0, 8000),
+              new Date().toISOString(),
+              String(identity?.name || '小爱'),
+              validAvatar,
+            );
+          await db.prepare("UPDATE ai_jobs SET status='done' WHERE messageId=?").run(job.messageId);
         });
-        notify(
+        await notify(
           job.coupleId,
-          db
+          (await db
             .prepare('SELECT * FROM messages WHERE senderId=? AND clientId=?')
-            .get(job.userId, `ai:${job.messageId}`)!,
+            .get(job.userId, `ai:${job.messageId}`))!,
         );
       };
       if (!config) {
-        persistReply('请先在“我们”中配置并开启 AI 助手。');
+        await persistReply('请先在“我们”中配置并开启 AI 助手。');
         return;
       }
       if (user.disabled || user.coupleId !== job.coupleId) {
-        db.prepare("UPDATE ai_jobs SET status='cancelled' WHERE messageId=?").run(job.messageId);
+        await db
+          .prepare("UPDATE ai_jobs SET status='cancelled' WHERE messageId=?")
+          .run(job.messageId);
         return;
       }
       const transcript: AIMessage[] = job.transcript
@@ -493,7 +513,7 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
       try {
         for (let round = 0; round < 5; round++) {
           if (
-            (db.prepare('SELECT coupleId FROM users WHERE id=?').get(job.userId) as User)
+            ((await db.prepare('SELECT coupleId FROM users WHERE id=?').get(job.userId)) as User)
               .coupleId !== job.coupleId
           )
             throw new Error('配对关系已改变');
@@ -506,21 +526,21 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
           });
           const message = result.choices[0].message;
           if (!message.tool_calls?.length) {
-            persistReply(message.content || '没有生成回复，请换一种方式描述。');
+            await persistReply(message.content || '没有生成回复，请换一种方式描述。');
             return;
           }
           if (message.tool_calls.length > 8) throw new Error('AI 一次调用的工具过多');
           transcript.push(message);
           for (const call of message.tool_calls) {
-            transaction(db, () => {
-              const prior = db
+            await transaction(db, async () => {
+              const prior = (await db
                 .prepare('SELECT result FROM ai_actions WHERE messageId=? AND callId=?')
-                .get(job.messageId, call.id) as { result: string } | undefined;
+                .get(job.messageId, call.id)) as { result: string } | undefined;
               let output = prior?.result;
               if (!output) {
                 try {
                   output = JSON.stringify(
-                    executeTool(
+                    await executeTool(
                       db,
                       job.userId,
                       call.function.name,
@@ -530,28 +550,24 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
                 } catch (error) {
                   output = JSON.stringify({ error: (error as Error).message });
                 }
-                db.prepare('INSERT INTO ai_actions VALUES(?,?,?)').run(
-                  job.messageId,
-                  call.id,
-                  output,
-                );
+                await db
+                  .prepare('INSERT INTO ai_actions VALUES(?,?,?)')
+                  .run(job.messageId, call.id, output);
               }
               transcript.push({ role: 'tool', tool_call_id: call.id, content: output });
-              db.prepare('UPDATE ai_jobs SET transcript=? WHERE messageId=?').run(
-                JSON.stringify(transcript),
-                job.messageId,
-              );
+              await db
+                .prepare('UPDATE ai_jobs SET transcript=? WHERE messageId=?')
+                .run(JSON.stringify(transcript), job.messageId);
             });
             changed(job.coupleId, job.userId);
           }
         }
-        persistReply('操作已处理。请在相册、纪念日或个人资料中查看结果。');
+        await persistReply('操作已处理。请在相册、纪念日或个人资料中查看结果。');
       } catch (error) {
-        db.prepare('UPDATE ai_jobs SET error=? WHERE messageId=?').run(
-          (error as Error).message.slice(0, 300),
-          job.messageId,
-        );
-        persistReply(
+        await db
+          .prepare('UPDATE ai_jobs SET error=? WHERE messageId=?')
+          .run((error as Error).message.slice(0, 300), job.messageId);
+        await persistReply(
           `AI 暂时不可用：${(error as Error).message.slice(0, 200)}。请检查服务配置后重试。`,
         );
       }

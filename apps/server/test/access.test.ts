@@ -31,8 +31,8 @@ test('unpaired users only edit their own bounded profile and pair; feature APIs 
   ])
     await s.api(a.token).post(path, {}).expect(409);
   await s.api(a.token).patch('/api/ai/profile', { name: 'blocked' }).expect(409);
-  assert.throws(
-    () => executeTool(s.db, a.user.id, 'update_ai_profile', { name: 'blocked' }),
+  await assert.rejects(
+    async () => await executeTool(s.db, a.user.id, 'update_ai_profile', { name: 'blocked' }),
     /配对/,
   );
   await s.api(a.token).patch('/api/me', { name: 'My name' }).expect(200);
@@ -50,7 +50,7 @@ test('unpaired users only edit their own bounded profile and pair; feature APIs 
     second = await upload().expect(201);
   assert.notEqual(first.body.id, second.body.id);
   assert.equal(
-    Number(s.db.prepare('SELECT COUNT(*) n FROM media WHERE ownerId=?').get(a.user.id)!.n),
+    Number((await s.db.prepare('SELECT COUNT(*) n FROM media WHERE ownerId=?').get(a.user.id))!.n),
     1,
   );
   assert.equal((await s.api(a.token).get('/api/me')).body.user.avatar.id, second.body.id);
@@ -80,13 +80,13 @@ test('each pairing receives its own capacity; zero blocks upload, default change
     d = await s.register('quota_d'),
     admin = s.api(s.adminToken);
   await admin
-    .patch('/api/admin/settings', { ...s.control.readSettings(), defaultQuotaMiB: 0 })
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), defaultQuotaMiB: 0 })
     .expect(200);
   await s.pair(a.token, b.token);
   let p = (await s.api(a.token).get('/api/me')).body.couple;
   await s.api(a.token).post('/api/media', {}).expect(413);
   await admin
-    .patch('/api/admin/settings', { ...s.control.readSettings(), defaultQuotaMiB: 5 })
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), defaultQuotaMiB: 5 })
     .expect(200);
   await s.pair(c.token, d.token);
   assert.equal((await s.api(c.token).get('/api/me')).body.couple.quotaBytes, 5 * 1048576);
@@ -107,7 +107,7 @@ test('each pairing receives its own capacity; zero blocks upload, default change
   assert.equal(updated.quotaBytes, 1048576);
   await admin.patch(`/api/admin/couples/${p.id}/quota`, { quotaMiB: 0 }).expect(204);
   await s.api(b.token).post('/api/media', {}).expect(413);
-  assert.ok(s.db.prepare('SELECT id FROM media WHERE id=?').get(media.body.id));
+  assert.ok(await s.db.prepare('SELECT id FROM media WHERE id=?').get(media.body.id));
 });
 
 test('concurrent uploads cannot overrun a pair quota and rejected files are removed', async (t) => {
@@ -133,9 +133,9 @@ test('concurrent uploads cannot overrun a pair quota and rejected files are remo
       .attach('file', image, { filename: 'photo.png', contentType: 'image/png' });
   const responses = await Promise.all([send(a.token), send(b.token)]);
   assert.deepEqual(responses.map((r) => r.status).sort(), [201, 413]);
-  assert.ok(s.control.usage(pair.id) <= 1048576);
+  assert.ok((await s.control.usage(pair.id)) <= 1048576);
   assert.equal(
-    Number(s.db.prepare('SELECT COUNT(*) n FROM media WHERE coupleId=?').get(pair.id)!.n),
+    Number((await s.db.prepare('SELECT COUNT(*) n FROM media WHERE coupleId=?').get(pair.id))!.n),
     1,
   );
   assert.equal((await readdir(join(s.dir, 'media'))).filter((n) => n !== 'tmp').length, 3);

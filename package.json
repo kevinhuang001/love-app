@@ -1,6 +1,6 @@
 {
   "name": "love-app",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,11 +15,12 @@
     "dev": "concurrently -k \"npm run dev -w apps/server\" \"npm run dev -w apps/client\"",
     "build": "npm run build -w apps/server && npm run build -w apps/client",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test -w apps/server && npm run test -w apps/client",
+    "test": "node --test scripts/setup.test.mjs && npm run test -w apps/server && npm run test -w apps/client",
     "test:e2e": "playwright test",
     "start": "npm run start -w apps/server",
     "android:prepare": "npm run build -w apps/client && node scripts/android.mjs",
-    "android:sync": "npm run android:prepare"
+    "android:sync": "npm run android:prepare",
+    "setup": "node scripts/setup.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -28,5 +29,8 @@
     "prettier": "3.9.9",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@clack/prompts": "1.8.1"
   }
 }

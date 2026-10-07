@@ -1,15 +1,26 @@
 services:
   love:
-    image: love-app:local
+    image: ${LOVE_IMAGE:-love-app:local}
     build: .
     ports:
       - '127.0.0.1:${LOVE_PORT:-3000}:3000'
     environment:
       NODE_ENV: production
+      DATABASE_PROVIDER: ${DATABASE_PROVIDER:-}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DATABASE_PATH: /app/data/love.sqlite
+      INITIAL_QUOTA_MIB: ${INITIAL_QUOTA_MIB:-1024}
+      INITIAL_REGISTRATION: ${INITIAL_REGISTRATION:-closed}
+      INITIAL_SMTP_HOST: ${INITIAL_SMTP_HOST:-}
+      INITIAL_SMTP_PORT: ${INITIAL_SMTP_PORT:-587}
+      INITIAL_SMTP_SECURITY: ${INITIAL_SMTP_SECURITY:-starttls}
+      INITIAL_SMTP_USER: ${INITIAL_SMTP_USER:-}
+      INITIAL_SMTP_PASSWORD: ${INITIAL_SMTP_PASSWORD:-}
+      INITIAL_SMTP_FROM: ${INITIAL_SMTP_FROM:-}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TZ: Asia/Shanghai
-      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Configure MEDIA_SIGNING_SECRET}
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Run ./love up to configure first deployment}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${LOVE_DOMAIN:-localhost},https://localhost,capacitor://localhost}
       AI_ALLOWED_HOSTS: ${AI_ALLOWED_HOSTS:-}
       TRUST_PROXY: ${TRUST_PROXY:-0}

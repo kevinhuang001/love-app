@@ -1,5 +1,8 @@
 # Love · 我们的日常
 
+首次部署运行 `./love up`，终端向导会配置 SQLite 或 PostgreSQL、HTTPS、管理员、容量和可选 SMTP。只需 Docker，无需宿主机 Node.js。再次运行复用配置；详细步骤见 [数据库与部署向导](docs/database.md)。
+
+
 以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite + Socket.IO。
 
 - **聊天**：实时文字、图片和视频，已读、输入提示、重连补取、持久化待发送消息和幂等重试。
@@ -70,7 +73,7 @@ CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、
 - [API、Socket.IO 与 AI 工具](docs/api.md)
 - [架构、目录和测试](docs/architecture.md)
 
-当前仅支持最新 API 与数据库结构（schema 4），不包含旧版本别名、迁移或导入逻辑。部署使用新的数据目录；登录页底部展开“服务器设置”配置 URL。
+后端支持 SQLite 与 PostgreSQL，当前仅支持最新 API 与数据库结构（schema 4），不包含旧版本别名、迁移或导入逻辑。部署使用新的数据目录；登录页底部展开“服务器设置”配置 URL。
 
 ## License
 

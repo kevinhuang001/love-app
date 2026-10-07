@@ -40,13 +40,13 @@ test('administrator and user sessions are separate; captchas are bound, one-use 
     .send({ username: 'auth_user', password: 'password123', ...wrongPurpose })
     .expect(400);
   const expired = await s.captcha('login');
-  s.db.prepare('UPDATE captchas SET expires=0 WHERE id=?').run(expired.captchaId);
+  await s.db.prepare('UPDATE captchas SET expires=0 WHERE id=?').run(expired.captchaId);
   await request(s.app)
     .post('/api/auth/login')
     .send({ username: 'auth_user', password: 'password123', ...expired })
     .expect(400);
   const bound = await s.captcha('login');
-  s.db.prepare("UPDATE captchas SET ipHash='different-ip' WHERE id=?").run(bound.captchaId);
+  await s.db.prepare("UPDATE captchas SET ipHash='different-ip' WHERE id=?").run(bound.captchaId);
   await request(s.app)
     .post('/api/auth/login')
     .send({ username: 'auth_user', password: 'password123', ...bound })
@@ -82,7 +82,7 @@ test('email signup checks current policy, whitelist, mailbox proof, expiry, atte
     admin = s.api(s.adminToken);
   await admin
     .patch('/api/admin/settings', {
-      ...s.control.readSettings(),
+      ...(await s.control.readSettings()),
       registration: 'whitelist',
       domains: ['example.test'],
     })
@@ -123,7 +123,7 @@ test('email signup checks current policy, whitelist, mailbox proof, expiry, atte
     .expect(400);
   const pending = await s.emailCode('second@example.test');
   await admin
-    .patch('/api/admin/settings', { ...s.control.readSettings(), registration: 'closed' })
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), registration: 'closed' })
     .expect(200);
   await request(s.app)
     .post('/api/auth/register')
@@ -142,7 +142,7 @@ test('email signup checks current policy, whitelist, mailbox proof, expiry, atte
     .expect(201);
   assert.equal((await s.login('manual_user', 'manual-password')).status, 200);
   await admin
-    .patch('/api/admin/settings', { ...s.control.readSettings(), registration: 'email' })
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), registration: 'email' })
     .expect(200);
   for (const address of ['expired@example.test', 'attempts@example.test']) {
     const value = await s.emailCode(address);
@@ -154,7 +154,7 @@ test('email signup checks current policy, whitelist, mailbox proof, expiry, atte
       ...value,
     };
     if (address.startsWith('expired'))
-      s.db.prepare('UPDATE email_codes SET expires=0 WHERE id=?').run(value.verificationId);
+      await s.db.prepare('UPDATE email_codes SET expires=0 WHERE id=?').run(value.verificationId);
     else
       for (let i = 0; i < 5; i++)
         await request(s.app)
@@ -210,7 +210,7 @@ test('pair storage uses real byte counts and enforces quotas without leaving fil
     .toBuffer();
   const media = await upload(image);
   assert.equal(media.status, 201);
-  const row = s.db.prepare('SELECT * FROM media WHERE id=?').get(media.body.id)!;
+  const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(media.body.id))!;
   const measured = (
     await Promise.all(
       ['original', 'preview', 'thumbnail'].map((k) =>
@@ -232,9 +232,9 @@ test('pair storage uses real byte counts and enforces quotas without leaving fil
   const rejected = await upload(large);
   assert.equal(rejected.status, 413);
   assert.deepEqual((await readdir(join(s.dir, 'media'))).sort(), before);
-  assert.equal(s.control.usage(id), measured);
+  assert.equal(await s.control.usage(id), measured);
   await admin
-    .patch('/api/admin/settings', { ...s.control.readSettings(), defaultQuotaMiB: 2 })
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), defaultQuotaMiB: 2 })
     .expect(200);
   await admin.patch(`/api/admin/couples/${id}/quota`, { quotaMiB: null }).expect(204);
   assert.equal((await admin.get('/api/admin/couples')).body.items[0].effectiveQuotaMiB, 2);
@@ -278,7 +278,7 @@ test('SMTP secrets and credentials do not leak into responses or logs; logs are 
   assert.equal(settings.smtp.passwordConfigured, true);
   assert.ok(!JSON.stringify(settings).includes('smtp-private-test-value'));
   const raw = String(
-    s.db.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value,
+    (await s.db.prepare("SELECT value FROM server_config WHERE key='control'").get())!.value,
   );
   assert.ok(!raw.includes('smtp-private-test-value'));
   await s.api(u.token).get('/api/missing?token=private-query-token').expect(409);
@@ -305,12 +305,12 @@ test('SMTP secrets and credentials do not leak into responses or logs; logs are 
     .get('/api/admin/logs/access?from=2026-01-02T00:00:00Z&to=2026-01-01T00:00:00Z')
     .expect(400);
   const old = new Date(Date.now() - 91 * 86400_000).toISOString();
-  s.db
+  await s.db
     .prepare('INSERT INTO server_logs(createdAt,level,event,details) VALUES(?,?,?,?)')
     .run(old, 'info', 'expired.log', '{}');
-  s.control.prune();
+  await s.control.prune();
   assert.equal(
-    s.db.prepare("SELECT id FROM server_logs WHERE event='expired.log'").get(),
+    await s.db.prepare("SELECT id FROM server_logs WHERE event='expired.log'").get(),
     undefined,
   );
 });
@@ -330,13 +330,13 @@ test('SMTP delivery is real UTF-8 mail and failed sends do not leave valid verif
     },
   });
   await new Promise<void>((resolve) => smtpServer.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise<void>((resolve) => smtpServer.close(resolve)));
+  t.after(() => new Promise<void>(async (resolve) => await smtpServer.close(resolve)));
   const s = await setup(t, { mailSender: sendMail });
   const port = (smtpServer.server.address() as { port: number }).port;
   await s
     .api(s.adminToken)
     .patch('/api/admin/settings', {
-      ...s.control.readSettings(),
+      ...(await s.control.readSettings()),
       smtp: {
         host: '127.0.0.1',
         port,
@@ -368,11 +368,11 @@ test('SMTP delivery is real UTF-8 mail and failed sends do not leave valid verif
     .send({ email: 'failed@example.test', purpose: 'register', ...(await bad.captcha('register')) })
     .expect(503);
   assert.equal(
-    bad.db.prepare("SELECT COUNT(*) n FROM email_codes WHERE status='ready'").get()!.n,
+    (await bad.db.prepare("SELECT COUNT(*) n FROM email_codes WHERE status='ready'").get())!.n,
     0,
   );
   assert.equal(
-    bad.db.prepare("SELECT id FROM users WHERE email='failed@example.test'").get(),
+    await bad.db.prepare("SELECT id FROM users WHERE email='failed@example.test'").get(),
     undefined,
   );
   const log = (await bad.api(bad.adminToken).get('/api/admin/logs/server?search=smtp.send.failed'))

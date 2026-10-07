@@ -39,3 +39,10 @@ AI 使用仅发起者可配置的凭据。队列先保存 @配置名称请求，
 测试失败时上传 trace、截图和视频（7 天）；Web 与 APK 也作为构建产物交付。API 测试使用隔离数据库和可控 AI 服务，通知采用自建认证 SSE 流；测试覆盖事件隔离、重连及权限撤销。原生 APK 不包含第三方推送 SDK；锁屏和电池策略仍需真实设备验证。
 
 `packages/calendar` 为前后端共享的公历／农历计算模块，确保 UI、HTTP 与 AI 工具使用同一日期语义。底部导航为聊天、回忆、纪念日、To Do、我们。CI docker job 验证生产镜像启动与重启持久化，android 依赖 test 与 docker 两个 job 成功。
+
+
+## 数据库驱动
+
+`db.ts` 提供统一异步参数化接口。SQLite 使用 WAL 与单写事务队列；PostgreSQL 使用连接池，同一事务的查询通过 AsyncLocalStorage 固定在同一 client。短写事务使用数据库 advisory lock，保持配对、一次性验证码及容量核算的原子性。共享 schema 在驱动层生成各自的 identity、整数和时间默认值，PostgreSQL 使用 schema 版本表。池关闭、日志写入与后台任务在关停时排空。
+
+Docker 启动器 `./love` 首次通过镜像中的 Clack 终端向导生成 `.env`，选择 Compose 覆盖文件。`compose.postgres.yml` 提供带健康检查与独立持久化卷的 PostgreSQL；外部 PostgreSQL 使用 `DATABASE_URL`。

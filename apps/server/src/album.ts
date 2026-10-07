@@ -27,7 +27,7 @@ const cursorSchema = z.object({
 function invalidCursor(message: string): never {
   throw new z.ZodError([{ code: 'custom', path: ['cursor'], message }]);
 }
-export function readAlbum(db: DB, user: User, input: unknown) {
+export async function readAlbum(db: DB, user: User, input: unknown) {
   const q = querySchema.parse(input);
   const clauses = ['m.coupleId=?'];
   const values: (string | number)[] = [user.coupleId!];
@@ -52,7 +52,7 @@ export function readAlbum(db: DB, user: User, input: unknown) {
     values.push(q.to);
   }
   const base = 'FROM moments m JOIN media ON media.id=m.mediaId WHERE ' + clauses.join(' AND ');
-  const total = Number(db.prepare(`SELECT count(*) AS n ${base}`).get(...values)!.n);
+  const total = Number((await db.prepare(`SELECT count(*) AS n ${base}`).get(...values))!.n);
   const column = q.sort === 'uploaded_desc' ? 'createdAt' : 'date';
   const direction = q.sort === 'date_asc' ? 'ASC' : 'DESC';
   let seek = '';
@@ -75,7 +75,7 @@ export function readAlbum(db: DB, user: User, input: unknown) {
     seek = ` AND (m.${column}${op}? OR (m.${column}=? AND m.id${op}?))`;
     values.push(cursor.value, cursor.value, cursor.id);
   }
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT m.* ${base}${seek} ORDER BY m.${column} ${direction},m.id ${direction} LIMIT ?`,
     )

@@ -37,6 +37,31 @@ jobs:
         with:
           name: love-web
           path: apps/client/dist/
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: love
+          POSTGRES_PASSWORD: ci-postgres-test-password
+          POSTGRES_DB: love_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U love -d love_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - run: npm ci
+      - run: npm test -w apps/server
+        env:
+          TEST_DATABASE_URL: postgres://love:ci-postgres-test-password@localhost:5432/love_test
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -49,16 +74,45 @@ jobs:
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           LOVE_DOMAIN: love.example.com
+      - run: npm ci
+      - run: node scripts/setup-compose.test.mjs
       - run: docker build -t love-ci .
       - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke -v love-smoke-data:/app/data love-ci
       - run: node scripts/docker-smoke.mjs
       - run: docker restart love-smoke && node scripts/docker-smoke.mjs --verify-persistence
-      - run: docker logs love-smoke
+      - name: Start PostgreSQL Compose stack and verify persistence
+        run: |
+          set -euo pipefail
+          docker rm -f love-smoke
+          docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml up -d --no-build --wait
+          SMOKE_CONTAINER=$(docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml ps -q love) node scripts/docker-smoke.mjs
+          docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml up -d --no-build --force-recreate --wait
+          SMOKE_CONTAINER=$(docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml ps -q love) node scripts/docker-smoke.mjs --verify-persistence
+        env:
+          LOVE_IMAGE: love-ci
+          SMOKE_DATABASE: postgres
+          MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
+          ADMIN_USERNAME: ci_admin
+          ADMIN_PASSWORD: ci-admin-password-for-smoke
+          POSTGRES_PASSWORD: ci-postgres-smoke-password
+      - run: docker logs love-smoke || true
         if: failure()
-      - run: docker rm -f love-smoke; docker volume rm love-smoke-data
+      - run: |
+          docker rm -f love-smoke || true
+          docker volume rm love-smoke-data || true
         if: always()
+      - run: docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml logs --tail 100
+        if: failure()
+        env:
+          MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
+          POSTGRES_PASSWORD: ci-postgres-smoke-password
+      - run: docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml down --volumes
+        if: always()
+        env:
+          MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
+          POSTGRES_PASSWORD: ci-postgres-smoke-password
   android:
-    needs: [test, docker]
+    needs: [test, postgres, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:

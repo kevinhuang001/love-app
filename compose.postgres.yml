@@ -1,0 +1,30 @@
+# Add with: docker compose -f compose.yml -f compose.postgres.yml up -d --build
+services:
+  love:
+    environment:
+      DATABASE_PROVIDER: postgres
+      DATABASE_URL: ''
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: ${POSTGRES_DB:-love}
+      PGUSER: ${POSTGRES_USER:-love}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love setup to configure PostgreSQL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-love}
+      POSTGRES_USER: ${POSTGRES_USER:-love}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./love setup to configure PostgreSQL}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+volumes:
+  postgres-data:

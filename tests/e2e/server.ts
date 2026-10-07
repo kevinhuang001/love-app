@@ -10,7 +10,7 @@ const evidence: {
 } = { captcha: {}, mail: [] };
 const save = () => writeFileSync(resolve(temp, 'e2e-auth.json'), JSON.stringify(evidence));
 save();
-const server = createApp({
+const server = await createApp({
   database: 'data/e2e-admin.sqlite',
   uploads: 'data/e2e-admin-media',
   mediaSecret: 'test-key-for-ci-not-for-production-use',
@@ -26,23 +26,21 @@ const server = createApp({
   },
 });
 await server.control.bootstrap;
-if (!server.db.prepare("SELECT value FROM server_config WHERE key='control'").get())
-  server.db
-    .prepare("INSERT INTO server_config VALUES('control',?)")
-    .run(
-      JSON.stringify({
-        ...server.control.readSettings(),
-        registration: 'email',
-        smtp: {
-          host: 'smtp.example.test',
-          port: 587,
-          security: 'starttls',
-          user: '',
-          from: 'noreply@example.test',
-          senderName: 'Love',
-        },
-      }),
-    );
+if (!(await server.db.prepare("SELECT value FROM server_config WHERE key='control'").get()))
+  await server.db.prepare("INSERT INTO server_config VALUES('control',?)").run(
+    JSON.stringify({
+      ...(await server.control.readSettings()),
+      registration: 'email',
+      smtp: {
+        host: 'smtp.example.test',
+        port: 587,
+        security: 'starttls',
+        user: '',
+        from: 'noreply@example.test',
+        senderName: 'Love',
+      },
+    }),
+  );
 server.http.listen(3000, '127.0.0.1');
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, async () => {

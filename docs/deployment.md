@@ -1,5 +1,8 @@
 # 部署与数据
 
+推荐首次部署运行 `./love up`，通过现代终端向导配置必需选项并自动启动。SQLite 为默认值，也可选择内置或外部 PostgreSQL。见 [数据库与部署向导](database.md)。以下直接 Compose 步骤适用于手动管理 `.env` 的部署。
+
+
 ## Docker
 
 需要可访问的 HTTPS 域名。先 `cp .env.docker.example .env`，再设置 `.env`：

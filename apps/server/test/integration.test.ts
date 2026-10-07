@@ -240,7 +240,9 @@ test('each uploaded photo detects its own capture date without using upload or m
       .attach('file', fixture.bytes, { filename: fixture.name })
       .expect(201);
     assert.equal(media.body.capturedDate, fixture.expected, fixture.name);
-    const original = s.db.prepare('SELECT original FROM media WHERE id=?').get(media.body.id)!;
+    const original = (await s.db
+      .prepare('SELECT original FROM media WHERE id=?')
+      .get(media.body.id))!;
     assert.deepEqual(
       await readFile(join(s.dir, 'media', String(original.original))),
       fixture.bytes,
@@ -289,20 +291,25 @@ test('named assistant encrypted config, tool execution and per-user permissions'
   assert.equal(config.hasKey, true);
   assert.equal(config.apiKey, undefined);
   assert.ok(
-    !JSON.stringify(s.db.prepare('SELECT * FROM ai_settings').all()).includes('private-secret'),
+    !JSON.stringify(await s.db.prepare('SELECT * FROM ai_settings').all()).includes(
+      'private-secret',
+    ),
   );
-  const other = executeTool(s.db, c.user.id, 'create_anniversary', {
+  const other = (await executeTool(s.db, c.user.id, 'create_anniversary', {
     title: '另一个空间',
     date: '2025-12-01',
-  }) as { id: string };
-  assert.throws(() =>
-    executeTool(s.db, a.user.id, 'update_anniversary', {
-      id: other.id,
-      title: '攻击',
-      date: '2026-01-01',
-    }),
+  })) as { id: string };
+  await assert.rejects(
+    async () =>
+      await executeTool(s.db, a.user.id, 'update_anniversary', {
+        id: other.id,
+        title: '攻击',
+        date: '2026-01-01',
+      }),
   );
-  assert.throws(() => executeTool(s.db, a.user.id, 'shell', { command: 'whoami' }));
+  await assert.rejects(
+    async () => await executeTool(s.db, a.user.id, 'shell', { command: 'whoami' }),
+  );
   const message = await s
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '@小爱 把我的昵称改为小爱' })
@@ -346,15 +353,16 @@ test('named assistant encrypted config, tool execution and per-user permissions'
   assert.equal((await s.api(a.token).get('/api/me')).body.user.name, '小爱');
   assert.equal((await s.api(b.token).get('/api/me')).body.user.name, 'bob');
   assert.equal(
-    s.db.prepare('SELECT status FROM ai_jobs WHERE messageId=?').get(message.body.id)!.status,
+    (await s.db.prepare('SELECT status FROM ai_jobs WHERE messageId=?').get(message.body.id))!
+      .status,
     'done',
   );
   const messages = (await s.api(a.token).get('/api/messages')).body.items;
   assert.equal(messages.at(-1).role, 'assistant');
-  assert.equal(publicAddress('127.0.0.1'), false);
-  assert.equal(publicAddress('169.254.169.254'), false);
-  assert.equal(publicAddress('::1'), false);
-  assert.equal(publicAddress('8.8.8.8'), true);
+  assert.equal(await publicAddress('127.0.0.1'), false);
+  assert.equal(await publicAddress('169.254.169.254'), false);
+  assert.equal(await publicAddress('::1'), false);
+  assert.equal(await publicAddress('8.8.8.8'), true);
   assert.throws(() => validateAIUrl('http://127.0.0.1:11434/v1'));
   assert.notEqual(encryptKey('same', 'key'), encryptKey('same', 'key'));
 });
@@ -369,8 +377,8 @@ test('OpenAI-compatible HTTP transport supports approved self-hosted providers',
     res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '连接正常' } }] }));
   });
   await new Promise<void>((resolve) => provider.listen(0, '127.0.0.1', resolve));
-  t.after(() => {
-    provider.close();
+  t.after(async () => {
+    await provider.close();
     if (old === undefined) delete process.env.AI_ALLOWED_HOSTS;
     else process.env.AI_ALLOWED_HOSTS = old;
   });
@@ -398,8 +406,8 @@ test('UTF-8 response decoding preserves Chinese across byte boundaries', async (
     res.end();
   });
   await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
-  t.after(() => {
-    provider.close();
+  t.after(async () => {
+    await provider.close();
     if (old === undefined) delete process.env.AI_ALLOWED_HOSTS;
     else process.env.AI_ALLOWED_HOSTS = old;
   });
@@ -439,7 +447,9 @@ test('upward anniversaries, lunar todo lifecycle, couple isolation and AI tools'
     .expect(400);
   assert.equal((await s.api(b.token).get('/api/todos')).body[0].calendar, 'lunar');
   await s.api(c.token).get('/api/todos').expect(409);
-  assert.throws(() => executeTool(s.db, c.user.id, 'delete_todo', { id: todo.body.id }));
+  await assert.rejects(
+    async () => await executeTool(s.db, c.user.id, 'delete_todo', { id: todo.body.id }),
+  );
   await s
     .api(a.token)
     .post(`/api/todos/${todo.body.id}/completion`, { completed: true })
@@ -457,15 +467,18 @@ test('upward anniversaries, lunar todo lifecycle, couple isolation and AI tools'
     .api(a.token)
     .patch(`/api/todos/${todo.body.id}`, { ...value, title: '一起过七夕' })
     .expect(204);
-  const one = executeTool(s.db, a.user.id, 'create_todo', {
+  const one = (await executeTool(s.db, a.user.id, 'create_todo', {
     ...value,
     title: '具体的一天',
     calendar: 'solar',
     repeat: 'none',
-  }) as { id: string };
-  executeTool(s.db, a.user.id, 'complete_todo', { id: one.id, completed: true });
-  assert.equal(s.db.prepare('SELECT completed FROM todos WHERE id=?').get(one.id)!.completed, 1);
-  executeTool(s.db, a.user.id, 'delete_todo', { id: one.id });
+  })) as { id: string };
+  await executeTool(s.db, a.user.id, 'complete_todo', { id: one.id, completed: true });
+  assert.equal(
+    (await s.db.prepare('SELECT completed FROM todos WHERE id=?').get(one.id))!.completed,
+    1,
+  );
+  await executeTool(s.db, a.user.id, 'delete_todo', { id: one.id });
   await s.api(a.token).delete(`/api/todos/${todo.body.id}`).expect(204);
 });
 
@@ -508,13 +521,13 @@ test('custom AI name and avatar are separate from user identity and visible to b
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '@小桃，帮我记住七夕' })
     .expect(201);
-  assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(msg.body.id));
+  assert.ok(await s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(msg.body.id));
   const removedAlias = await s
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '@ai 不应触发' })
     .expect(201);
   assert.equal(
-    s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(removedAlias.body.id),
+    await s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(removedAlias.body.id),
     undefined,
   );
   const notMention = await s
@@ -522,7 +535,7 @@ test('custom AI name and avatar are separate from user identity and visible to b
     .post('/api/messages', { clientId: randomUUID(), content: '@小桃子 不要误触发' })
     .expect(201);
   assert.equal(
-    s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(notMention.body.id),
+    await s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(notMention.body.id),
     undefined,
   );
   const worker = aiWorker({
@@ -540,7 +553,10 @@ test('custom AI name and avatar are separate from user identity and visible to b
   );
   assert.equal(reply.assistant.name, '小桃');
   assert.equal(reply.assistant.avatar.id, media.body.id);
-  executeTool(s.db, a.user.id, 'update_ai_profile', { name: '星星', avatarMediaId: media.body.id });
+  await executeTool(s.db, a.user.id, 'update_ai_profile', {
+    name: '星星',
+    avatarMediaId: media.body.id,
+  });
   assert.equal((await s.api(a.token).get('/api/me')).body.ai.name, '星星');
   assert.equal((await s.api(a.token).get('/api/me')).body.user.name, 'name_alice');
   assert.equal(
@@ -553,7 +569,7 @@ test('custom AI name and avatar are separate from user identity and visible to b
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: '@星星 在吗' })
     .expect(201);
-  assert.ok(s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(next.body.id));
+  assert.ok(await s.db.prepare('SELECT * FROM ai_jobs WHERE messageId=?').get(next.body.id));
 });
 
 test('album filters, ordering and cursor pagination preserve isolation beyond 200 memories', async (t) => {
@@ -565,10 +581,10 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
   await s.pair(a.token, b.token);
   await s.pair(c.token, d.token);
   const coupleId = String(
-    s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(a.user.id)!.coupleId,
+    (await s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(a.user.id))!.coupleId,
   );
   const otherCouple = String(
-    s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(c.user.id)!.coupleId,
+    (await s.db.prepare('SELECT coupleId FROM users WHERE id=?').get(c.user.id))!.coupleId,
   );
   const imageId = randomUUID(),
     videoId = randomUUID(),
@@ -610,7 +626,7 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
     'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date,createdAt) VALUES(?,?,?,?,?,?,?)',
   );
   for (let i = 0; i < 205; i++)
-    insert.run(
+    await insert.run(
       randomUUID(),
       coupleId,
       i % 2 ? a.user.id : b.user.id,
@@ -619,7 +635,7 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
       new Date(Date.UTC(2025, 0, i + 1)).toISOString().slice(0, 10),
       new Date(Date.UTC(2026, 0, 1, 0, 0, 205 - i)).toISOString(),
     );
-  insert.run(
+  await insert.run(
     randomUUID(),
     otherCouple,
     c.user.id,

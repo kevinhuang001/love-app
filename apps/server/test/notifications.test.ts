@@ -57,7 +57,7 @@ test('private local stream replays missed unread IDs, suppresses read/own messag
   assert.equal(event!.event, 'message');
   assert.equal(event!.data.messageId, message.body.id);
   assert.ok(!event!.raw.includes('private chat body'));
-  connection.close();
+  await connection.close();
   const skipped = await s
     .api(a.token)
     .post('/api/messages', { clientId: randomUUID(), content: 'read' })

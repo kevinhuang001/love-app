@@ -4,13 +4,19 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
 import type { MailMessage, MailSender } from '../src/mail.js';
 export async function setup(t: TestContext, options: { mailSender?: MailSender } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'love-test-')),
     answers = new Map<string, string>(),
     mailbox: MailMessage[] = [];
-  const server = createApp({
-    database: join(dir, 'test.sqlite'),
+  const schema = process.env.TEST_DATABASE_URL
+    ? 'test_' + randomUUID().replaceAll('-', '')
+    : undefined;
+  const server = await createApp({
+    database: process.env.TEST_DATABASE_URL || join(dir, 'test.sqlite'),
+    databaseSchema: schema,
     uploads: join(dir, 'media'),
     mediaSecret: 'test-secret-at-least-thirty-two-chars',
     adminBootstrap: { username: 'admin_master', password: 'admin-test-password-123' },
@@ -25,6 +31,15 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
   const base = `http://127.0.0.1:${(server.http.address() as { port: number }).port}`;
   t.after(async () => {
     await server.close();
+    if (schema) {
+      const client = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
+      await client.connect();
+      try {
+        await client.query(`DROP SCHEMA "${schema}" CASCADE`);
+      } finally {
+        await client.end();
+      }
+    }
     await rm(dir, { recursive: true, force: true });
   });
   const captcha = async (purpose: 'login' | 'register' | 'admin' | 'reset') => {
@@ -49,7 +64,7 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
   });
   await api(adminToken)
     .patch('/api/admin/settings', {
-      ...server.control.readSettings(),
+      ...(await server.control.readSettings()),
       registration: 'email',
       smtp: {
         host: 'smtp.example.test',

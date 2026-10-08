@@ -57,11 +57,12 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
     headers: { Authorization: `Bearer ${a.token}` },
     data: {},
   });
+  expect(invite.ok(), await invite.text()).toBeTruthy();
   const join = await request.post('http://127.0.0.1:3000/api/pairing/join', {
     headers: { Authorization: `Bearer ${b.token}` },
-    data: await invite.json(),
+    data: { code: (await invite.json()).code },
   });
-  expect(join.ok()).toBeTruthy();
+  expect(join.ok(), await join.text()).toBeTruthy();
   // Allocate this test's space through the real administrator API.
   const adminResponse = await request.post('http://127.0.0.1:3000/api/admin/login', {
     data: {

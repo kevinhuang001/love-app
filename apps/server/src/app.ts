@@ -400,6 +400,9 @@ export async function createApp(options: AppOptions = {}) {
     rateLimit({
       windowMs: 60_000,
       limit: 240,
+      // Authentication already resolved the user. Shared networks must not
+      // consume one combined allowance for every account behind the same IP.
+      keyGenerator: (req) => (req as AuthRequest).user.id,
       standardHeaders: 'draft-8',
       legacyHeaders: false,
       message: { error: '请求过于频繁' },

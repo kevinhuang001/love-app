@@ -6,6 +6,18 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setup } from './support.js';
 import { executeTool } from '../src/ai.js';
+test('authenticated request limits isolate accounts on one IP and persist across sessions', async (t) => {
+  const s = await setup(t),
+    a = await s.register('rate_a'),
+    b = await s.register('rate_b');
+  for (let i = 0; i < 240; i++) await s.api(a.token).get('/api/me').expect(200);
+  await s.api(a.token).get('/api/me').expect(429);
+  const renewed = await s.login('rate_a');
+  assert.equal(renewed.status, 200);
+  await s.api(renewed.body.token).get('/api/me').expect(429);
+  await s.api(b.token).get('/api/me').expect(200);
+  await s.api(b.token).post('/api/pairing/invite', {}).expect(200);
+});
 test('unpaired users only edit their own bounded profile and pair; feature APIs remain closed after unpair', async (t) => {
   const s = await setup(t),
     a = await s.register('gate_a'),

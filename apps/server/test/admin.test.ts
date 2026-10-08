@@ -282,6 +282,15 @@ test('SMTP secrets and credentials do not leak into responses or logs; logs are 
   );
   assert.ok(!raw.includes('smtp-private-test-value'));
   await s.api(u.token).get('/api/missing?token=private-query-token').expect(409);
+  // Access logging writes asynchronously after response finish. Wait for that
+  // write before checking the filtered API, especially with PostgreSQL I/O.
+  for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
+    const written = await s.db
+      .prepare('SELECT COUNT(*) n FROM access_logs WHERE path=? AND status=?')
+      .get('/api/missing', 409);
+    if (Number(written?.n) === 1) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   const access = (await admin.get('/api/admin/logs/access?search=/api/missing&status=4')).body;
   assert.equal(access.total, 1);
   assert.equal(access.items[0].path, '/api/missing');

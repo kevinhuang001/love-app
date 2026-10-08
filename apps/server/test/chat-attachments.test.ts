@@ -99,7 +99,7 @@ test('ordered multi-image messages are isolated, idempotent and supplied in ever
   const expected = await Promise.all(
     body.mediaIds.map(async (id) => {
       const row = (await s.db.prepare('SELECT preview FROM media WHERE id=?').get(id))!;
-      return `data:image/webp;base64,${(await readFile(join(s.dir, 'media', String(row.preview)))).toString('base64')}`;
+      return `data:image/webp;base64,${(await s.mediaRepository.read(String(row.preview))).toString('base64')}`;
     }),
   );
   let rounds = 0;

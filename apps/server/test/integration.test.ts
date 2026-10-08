@@ -243,10 +243,7 @@ test('each uploaded photo detects its own capture date without using upload or m
     const original = (await s.db
       .prepare('SELECT original FROM media WHERE id=?')
       .get(media.body.id))!;
-    assert.deepEqual(
-      await readFile(join(s.dir, 'media', String(original.original))),
-      fixture.bytes,
-    );
+    assert.deepEqual(await s.mediaRepository.read(String(original.original)), fixture.bytes);
     const thumb = await request(s.app).get(media.body.thumbnailUrl).expect(200);
     assert.equal((await sharp(thumb.body).metadata()).exif, undefined);
     await s

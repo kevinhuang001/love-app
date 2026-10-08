@@ -225,7 +225,10 @@ test('pair storage uses real byte counts and enforces quotas without leaving fil
   const measured = (
     await Promise.all(
       ['original', 'preview', 'thumbnail'].map((k) =>
-        stat(join(s.dir, 'media', String(row[k]))).then((v) => v.size),
+        s.mediaRepository
+          .info(String(row[k]))
+          .then((info) => ({ size: info.bytes }))
+          .then((v) => v.size),
       ),
     )
   ).reduce((a, b) => a + b, 0);

@@ -93,8 +93,12 @@ test('compressed-only images and videos retain capture dates, previews, playback
     const sizes = (await s.db.prepare('SELECT * FROM media_sizes WHERE mediaId=?').get(id))!;
     assert.equal(row.original, '');
     assert.equal(sizes.originalBytes, 0);
-    const previewBytes = (await stat(join(s.dir, 'media', String(row.preview)))).size;
-    const thumbnailBytes = (await stat(join(s.dir, 'media', String(row.thumbnail)))).size;
+    const previewBytes = (
+      await s.mediaRepository.info(String(row.preview)).then((info) => ({ size: info.bytes }))
+    ).size;
+    const thumbnailBytes = (
+      await s.mediaRepository.info(String(row.thumbnail)).then((info) => ({ size: info.bytes }))
+    ).size;
     assert.equal(sizes.totalBytes, previewBytes + thumbnailBytes);
     actualBytes += previewBytes + thumbnailBytes;
   }
@@ -113,7 +117,7 @@ test('compressed-only images and videos retain capture dates, previews, playback
   const source = (await s.db
     .prepare('SELECT original FROM media WHERE id=?')
     .get(retained.body.id))!;
-  assert.deepEqual(await readFile(join(s.dir, 'media', String(source.original))), photo);
+  assert.deepEqual(await s.mediaRepository.read(String(source.original)), photo);
   await request(s.app)
     .post('/api/media')
     .auth(a.token, { type: 'bearer' })

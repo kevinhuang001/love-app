@@ -34,6 +34,8 @@ import {
 import { processMedia } from './media.js';
 import { syncMediaFiles, commitMedia, removeMediaFiles } from './media-storage.js';
 import { CommitUncertainError } from './postgres.js';
+import { MediaRepository } from './media-repository.js';
+import { pipeline } from 'node:stream/promises';
 import { notificationStreams } from './notifications.js';
 import sharp from 'sharp';
 import { writeFile } from 'node:fs/promises';
@@ -86,6 +88,13 @@ export async function createApp(options: AppOptions = {}) {
   });
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
+  const mediaRepository = new MediaRepository(db, uploads);
+  try {
+    await mediaRepository.migrate();
+  } catch (error) {
+    await db.close();
+    throw error;
+  }
   await db.exec(
     'CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
   );
@@ -387,12 +396,36 @@ export async function createApp(options: AppOptions = {}) {
     res
       .set('Cache-Control', 'private, max-age=300')
       .type(variant === 'thumbnail' || row!.kind === 'image' ? 'image/webp' : 'video/mp4');
-    res.sendFile(join(uploads, row![variant]));
+    if (db.provider === 'sqlite') return res.sendFile(join(uploads, row![variant]));
+    const name = row![variant],
+      { bytes } = await mediaRepository.info(name);
+    res.set('Accept-Ranges', 'bytes');
+    const ranges = req.range(bytes);
+    if (ranges === -1) {
+      res.set('Content-Range', `bytes */${bytes}`).status(416).end();
+      return;
+    }
+    const range =
+      Array.isArray(ranges) && ranges.type === 'bytes' && ranges.length === 1
+        ? ranges[0]
+        : undefined;
+    const start = range?.start ?? 0,
+      end = range?.end ?? bytes - 1;
+    if (range) res.status(206).set('Content-Range', `bytes ${start}-${end}/${bytes}`);
+    res.set('Content-Length', String(end - start + 1));
+    if (req.method === 'HEAD') return res.end();
+    try {
+      await pipeline(mediaRepository.stream(name, start, end), res);
+    } catch (error) {
+      if (!res.headersSent) throw error;
+      res.destroy(error as Error);
+    }
   });
   installAlbumTransfers({
     app,
     db,
     uploads,
+    mediaRepository,
     secret,
     authenticate,
     control,
@@ -552,6 +585,7 @@ export async function createApp(options: AppOptions = {}) {
           writeFile(join(uploads, thumbnail), small),
         ]);
         const sizes = await syncMediaFiles(uploads, [preview, thumbnail]);
+        await mediaRepository.stage([preview, thumbnail], sizes);
         const old = await commitMedia(
           db,
           async () =>
@@ -583,6 +617,7 @@ export async function createApp(options: AppOptions = {}) {
             await db
               .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
               .run(id, 0, sizes[0], sizes[1], sizes[0] + sizes[1]);
+            await mediaRepository.bind(id, [preview, thumbnail]);
             await db.prepare('UPDATE users SET avatarMediaId=? WHERE id=?').run(id, auth!.user.id);
             if (previous) {
               await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
@@ -596,13 +631,18 @@ export async function createApp(options: AppOptions = {}) {
           await removeMediaFiles(
             [String(old.preview), String(old.thumbnail)].map((name) => join(uploads, name)),
           );
+        if (db.provider === 'postgres')
+          await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
+        if (req.file) await removeMediaFiles([req.file.path]);
         io.to(`user:${(req as AuthRequest).user.id}`).emit('profile:changed');
         if ((req as AuthRequest).user.coupleId)
           io.to(`couple:${(req as AuthRequest).user.coupleId}`).emit('profile:changed');
         res.status(201).json(await mediaView(id));
       } catch (err) {
-        if (!committed && !(err instanceof CommitUncertainError))
+        if (db.provider === 'postgres') await mediaRepository.discard([preview, thumbnail]);
+        if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
           await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
+        if (req.file) await removeMediaFiles([req.file.path]);
         next(err instanceof HttpError ? err : new HttpError(422, '头像无法处理，请选择有效图片'));
       } finally {
         if (req.file) await removeMediaFiles([req.file.path]);
@@ -738,6 +778,7 @@ export async function createApp(options: AppOptions = {}) {
             media.preview,
             media.thumbnail,
           ]);
+          await mediaRepository.stage([media.original, media.preview, media.thumbnail], sizes);
           const totalBytes = sizes.reduce((a, b) => a + b, 0);
           if (!Number.isSafeInteger(totalBytes)) fail(422, '媒体容量数据无效');
           await commitMedia(
@@ -782,14 +823,24 @@ export async function createApp(options: AppOptions = {}) {
               await db
                 .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
                 .run(media.id, sizes[0], sizes[1], sizes[2], totalBytes);
+              await mediaRepository.bind(media.id, [
+                media.original,
+                media.preview,
+                media.thumbnail,
+              ]);
             },
           );
           committed = true;
+          if (db.provider === 'postgres') await removeMediaFiles(generatedFiles);
           res
             .status(201)
             .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
         } catch (err) {
-          if (!committed && !(err instanceof CommitUncertainError))
+          if (db.provider === 'postgres')
+            await mediaRepository.discard(
+              generatedFiles.map((file) => file.slice(uploads.length + 1)),
+            );
+          if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
             await removeMediaFiles([...generatedFiles, ...(req.file ? [req.file.path] : [])]);
           next(
             err instanceof HttpError || err instanceof multer.MulterError
@@ -1123,6 +1174,7 @@ export async function createApp(options: AppOptions = {}) {
     db,
     secret,
     uploads,
+    mediaRepository,
     notify: async (id, row) => {
       io.to(`couple:${id}`).emit('message:new', await messageView(row));
       await streams.flush();
@@ -1174,6 +1226,7 @@ export async function createApp(options: AppOptions = {}) {
     http,
     io,
     db,
+    mediaRepository,
     control,
     runAI,
     close: async () => {

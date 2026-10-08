@@ -153,8 +153,10 @@ test('photo ZIP is portable JPEG; full ZIP round-trips dates, descriptions, vide
       .get(row.mediaId))!;
     assert.equal(size.originalBytes, 0);
     const actual =
-      (await stat(join(s.dir, 'media', String(m.preview)))).size +
-      (await stat(join(s.dir, 'media', String(m.thumbnail)))).size;
+      (await s.mediaRepository.info(String(m.preview)).then((info) => ({ size: info.bytes })))
+        .size +
+      (await s.mediaRepository.info(String(m.thumbnail)).then((info) => ({ size: info.bytes })))
+        .size;
     assert.equal(size.totalBytes, actual);
     bytes += actual;
     await request(s.app).get(row.media.previewUrl).set('Range', 'bytes=0-19').expect(206);

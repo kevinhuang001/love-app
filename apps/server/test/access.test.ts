@@ -66,7 +66,10 @@ test('unpaired users only edit their own bounded profile and pair; feature APIs 
     1,
   );
   assert.equal((await s.api(a.token).get('/api/me')).body.user.avatar.id, second.body.id);
-  assert.equal((await readdir(join(s.dir, 'media'))).filter((n) => n.endsWith('.webp')).length, 2);
+  assert.equal(
+    (await readdir(join(s.dir, 'media'))).filter((n) => n.endsWith('.webp')).length,
+    s.db.provider === 'postgres' ? 0 : 2,
+  );
   await request(s.app)
     .post('/api/me/avatar')
     .auth(b.token, { type: 'bearer' })
@@ -150,5 +153,8 @@ test('concurrent uploads cannot overrun a pair quota and rejected files are remo
     Number((await s.db.prepare('SELECT COUNT(*) n FROM media WHERE coupleId=?').get(pair.id))!.n),
     1,
   );
-  assert.equal((await readdir(join(s.dir, 'media'))).filter((n) => n !== 'tmp').length, 3);
+  assert.equal(
+    (await readdir(join(s.dir, 'media'))).filter((n) => n !== 'tmp').length,
+    s.db.provider === 'postgres' ? 0 : 3,
+  );
 });

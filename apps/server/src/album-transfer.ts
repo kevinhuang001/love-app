@@ -1,10 +1,11 @@
+import { MediaRepository } from './media-repository.js';
 import type { Express, Request, Response, RequestHandler } from 'express';
 import { randomUUID, createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { Writable } from 'node:stream';
+import { Writable, Readable } from 'node:stream';
 import { spawn } from 'node:child_process';
 import archiver from 'archiver';
 import yauzl, { type ZipFile, type Entry } from 'yauzl';
@@ -128,6 +129,7 @@ export function installAlbumTransfers({
   app,
   db,
   uploads,
+  mediaRepository,
   secret,
   authenticate,
   control,
@@ -136,6 +138,7 @@ export function installAlbumTransfers({
   app: Express;
   db: DB;
   uploads: string;
+  mediaRepository: MediaRepository;
   secret: string;
   authenticate: RequestHandler;
   control: Control;
@@ -235,12 +238,8 @@ export function installAlbumTransfers({
             if (!name) return null;
             if (!/^[a-f0-9-]{36}\.(source|preview\.(webp|mp4)|thumb\.webp)$/.test(name))
               fail(409, '相册媒体文件名无效');
-            const path = join(uploads, name);
-            return {
-              path: `media/${name}`,
-              bytes: (await stat(path)).size,
-              sha256: await checksum(path),
-            };
+            const info = await mediaRepository.digest(name);
+            return { path: `media/${name}`, bytes: info.bytes, sha256: info.sha256 };
           };
           manifest.media.push({
             id: String(item.id),
@@ -275,16 +274,23 @@ export function installAlbumTransfers({
         archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
         for (const item of manifest.media)
           for (const file of [item.original, item.preview, item.thumbnail])
-            if (file) archive.file(join(uploads, file.path.slice(6)), { name: file.path });
+            if (file)
+              archive.append(mediaRepository.stream(file.path.slice(6)), { name: file.path });
       } else {
         let index = 0;
         for (const row of rows) {
           const item = media.get(String(row.mediaId));
           if (!item) continue;
           // Portable JPEGs open in ordinary photo viewers, independent of the Love backup format.
-          const photo = sharp(join(uploads, String(item.preview)), {
-            limitInputPixels: false,
-          }).jpeg({ quality: 92 });
+          const photo = Readable.from(
+            (async function* () {
+              // Decode only when archiver consumes this entry; a large album must not
+              // eagerly buffer every preview while earlier ZIP entries are streaming.
+              const data = await mediaRepository.read(String(item.preview));
+              yield await sharp(data, { limitInputPixels: false }).jpeg({ quality: 92 }).toBuffer();
+            })(),
+            { objectMode: false },
+          );
           archive.append(photo, { name: `${row.date}-${String(++index).padStart(5, '0')}.jpg` });
         }
       }
@@ -314,7 +320,8 @@ export function installAlbumTransfers({
       let failure: unknown,
         status = 201,
         result = { imported: 0, alreadyImported: false };
-      const moved: string[] = [];
+      const moved: string[] = [],
+        stagedNames: string[] = [];
       try {
         importWork: {
           if (error) throw error;
@@ -445,6 +452,16 @@ export function installAlbumTransfers({
             )
           ).reduce((sum, size) => sum + size, 0);
           if (durableBytes !== totalBytes) fail(400, '相册落盘大小不匹配，导入未保存');
+          for (const item of manifest.media) {
+            const mapped = remapped.get(item.id)!;
+            const names = [mapped.original, mapped.preview, mapped.thumbnail];
+            stagedNames.push(...names.filter(Boolean));
+            await mediaRepository.stage(names, [
+              keepOriginal ? item.original?.bytes || 0 : 0,
+              item.preview.bytes,
+              item.thumbnail.bytes,
+            ]);
+          }
           await commitMedia(
             db,
             async () =>
@@ -489,6 +506,11 @@ export function installAlbumTransfers({
                     item.thumbnail.bytes,
                     originalBytes + item.preview.bytes + item.thumbnail.bytes,
                   );
+                await mediaRepository.bind(mapped.id, [
+                  mapped.original,
+                  mapped.preview,
+                  mapped.thumbnail,
+                ]);
               }
               for (const item of manifest.moments)
                 await db
@@ -520,6 +542,10 @@ export function installAlbumTransfers({
             ? err
             : new HttpError(400, '导入包无法读取或媒体已损坏，未保存任何回忆');
       } finally {
+        if (db.provider === 'postgres') {
+          await mediaRepository.discard(stagedNames);
+          await removeMediaFiles(moved);
+        }
         zip?.close();
         await Promise.allSettled(
           [req.file?.path, workspace]

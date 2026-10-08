@@ -43,7 +43,7 @@ docker compose -p love-v4 --profile https up -d --no-build --wait
 docker compose -p love-v4 -f compose.yml -f compose.postgres.yml --profile https up -d --no-build --wait
 ```
 
-覆盖文件使用独立 `postgres-data` 卷，挂载 PostgreSQL 18 的 `/var/lib/postgresql`，不会向宿主机发布数据库端口。应用等待数据库健康后启动。图片和视频继续保存在 `love-data` 卷中；PostgreSQL 保存账号、配对、聊天、日期、配置、容量和日志等结构化数据。
+覆盖文件使用独立 `postgres-data` 卷，挂载 PostgreSQL 18 的 `/var/lib/postgresql`，不会向宿主机发布数据库端口。应用等待数据库健康后启动。PostgreSQL 统一保存账号、配对、聊天、日期、配置、容量、日志，以及所有图片、视频和头像的二进制内容。应用的数据卷只用于上传/转码临时文件；成功写入数据库后清理。
 
 连接外部数据库：只使用 `compose.yml`，设置：
 
@@ -52,7 +52,7 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/love?sslmode=verify-full
 ```
 
-可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 / 7 / 8 数据在启动时原子升级到 schema 9，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥与上传文件需要一同备份。
+可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 / 7 / 8 数据在启动时原子升级到 schema 9，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥需要随部署配置备份；SQLite 还需备份媒体文件，PostgreSQL 媒体随数据库备份。
 
 ## PostgreSQL 超时与重试
 
@@ -69,11 +69,17 @@ DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/l
 
 媒体上传、头像及完整相册导入的数据库回调只包含数据库操作，使用预先分配的媒体 ID；已确认未提交的暂时故障会重试整个媒体事务。`COMMIT` 响应丢失时先重新连接、获取同一个事务锁并核对媒体/容量记录或导入摘要；确认成功直接返回原结果，确认未保存才重试。如果数据库一直不可用，返回 503 并保留已落盘文件，避免误删可能已提交的数据。
 
-## 媒体落盘与计量
+## 多媒体存储与计量
 
-图片完整解码、视频完整转码之后，检查每个保留文件为非空普通文件，调用文件 `fsync`，再同步媒体目录。随后在同一事务内重新核对账号、会话、配对、保存策略与最新配额，一起提交媒体记录和实际落盘字节数。处理中及已确认回滚的上传不占配对额度；失败会清理临时文件和生成文件，并发上传不能超额。只保留压缩图/视频时只计算实际保留的文件。SQLite 使用 WAL 与 FULL 同步；PostgreSQL 的媒体与容量记录也在同一个事务提交。
+SQLite 保存磁盘媒体：完整解码/转码后，文件和目录 `fsync`，媒体记录与实际字节数在同一事务提交。
 
-文件系统与数据库不是同一个事务资源：进程/主机意外终止可能留下尚未登记的文件，但这些文件不进入用户额度；提交结果未知且数据库无法恢复连接时也不会冒险删除。底层存储仍需正常支持 `fsync`，备份需要同时包含数据库和媒体。
+PostgreSQL 将原图/原视频（按配对保留设置）、压缩预览、缩略图、个人头像全部存入数据库。`media_files` 保存文件大小、SHA-256 与归属；`media_chunks` 以每块 1 MiB 的 `bytea` 保存内容，按需流式读取，视频支持 HTTP Range。没有单文件大小或时长上限，不把整个大视频加载进内存。容量仍按实际媒体字节计量，不包含 PostgreSQL 索引、WAL 或表开销。
+
+上传先完整接收和处理，在数据库写入尚未绑定的分块；这些内容不计入配对额度，不能通过预览接口读取。全部写入完成后，在一个短事务中重新核对会话、配对、保存策略与额度，一起绑定文件、提交媒体元数据和容量。不在全局事务锁内执行正常大文件传输。暂存写入使用固定编号、幂等 SQL 与有限重试；失败清理未绑定分块，已绑定内容绝不因提交响应丢失而误删。应用启动清理 24 小时未更新的未绑定暂存记录；每次分块写入刷新更新时间。
+
+现有 PostgreSQL 部署首次更新会自动将原磁盘媒体导入数据库：逐个媒体事务校验并迁移全部保留变体，确认提交后才删除原文件。失败保留文件并停止启动，修复缺失文件/连接后重新启动即可继续；不会静默丢失相册。已经迁移的内容在启动时不再依赖媒体目录。转码仍需要临时磁盘空间，成功后清理；未完成的临时文件不作为媒体存储来源。
+
+只保存压缩图/视频的配对不会写入原文件。头像替换会级联删除原头像的数据库分块。预览、AI 多图读取、普通图片 ZIP 和完整相册 ZIP 均使用统一存储接口。
 
 ## PostgreSQL 备份
 
@@ -81,7 +87,7 @@ DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/l
 docker compose -p love-v4 -f compose.yml -f compose.postgres.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > love-postgres.sql
 ```
 
-恢复时使用同一数据库用户及数据库名，将 SQL 输入 `psql`，并恢复对应上传文件与媒体密钥。不要把数据库备份或 `.env` 放到公开仓库。
+恢复时使用同一数据库用户及数据库名，将 SQL 输入 `psql`，并恢复 `.env` 的媒体密钥；PostgreSQL 备份已包含所有媒体二进制，不需要恢复媒体目录。SQLite 仍需同时恢复数据库和媒体目录。不要把数据库备份或 `.env` 放到公开仓库。
 
 ## 验证
 

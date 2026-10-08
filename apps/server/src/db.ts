@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 import { schema } from './schema.js';
+import { postgresMediaSchema } from './media-repository.js';
 import { PostgresConnection, postgresSettings } from './postgres.js';
 import { pairAIUpgrade, scheduleTimeUpgrade, messageAttachmentsUpgrade } from './migrations.js';
 export type User = {
@@ -214,6 +215,7 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
       )
         throw new Error('数据库结构版本不匹配');
       await db.exec(pgSchema());
+      await db.exec(postgresMediaSchema);
       if (version?.version === 4) {
         await db.exec(pairAIUpgrade);
       }

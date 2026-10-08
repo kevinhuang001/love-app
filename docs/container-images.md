@@ -33,7 +33,7 @@ chmod +x love
 
 ## 备份和恢复
 
-备份位于部署目录的 `backups/时间戳/`：`deployment.env`、`data.tar.gz`、PostgreSQL 的 `database.dump` 和 `SHA256SUMS`。包含密码、媒体密钥及私人媒体，请保存到安全位置，不要提交到 Git。
+备份位于部署目录的 `backups/时间戳/`：`deployment.env`、`data.tar.gz`、PostgreSQL 的 `database.dump` 和 `SHA256SUMS`。PostgreSQL 的 `database.dump` 包含全部媒体二进制，`data.tar.gz` 只保留应用卷及可能尚未完成的临时文件；SQLite 的媒体仍在 `data.tar.gz`。备份包含密码、媒体密钥及私人媒体，请保存到安全位置，不要提交到 Git。
 
 SQLite 在应用停止后备份数据卷。PostgreSQL 通过 PostgreSQL 18 的客户端镜像进行一致性 dump；外部数据库需要可从容器网络访问且账号具备 dump / restore 权限。love 停止自己的应用写入，外部数据库若还有其他写入程序，管理员应一并暂停，以保证数据库与媒体对应。
 

@@ -81,7 +81,7 @@ test('upload disk sync failure and quota insert failure leave no files or billab
   const measured = (
     await Promise.all(
       ['original', 'preview', 'thumbnail'].map((key) =>
-        stat(join(s.dir, 'media', String(row[key]))),
+        s.mediaRepository.info(String(row[key])).then((info) => ({ size: info.bytes })),
       ),
     )
   ).reduce((sum, info) => sum + info.size, 0);
@@ -211,6 +211,9 @@ test('a real committed upload with a lost acknowledgement returns its original m
     .prepare('SELECT totalBytes FROM media_sizes WHERE mediaId=?')
     .get(uploaded.body.id))!;
   assert.equal(await s.control.usage(pairId), sizes.totalBytes);
-  assert.equal((await readdir(join(s.dir, 'media'))).filter((name) => name !== 'tmp').length, 3);
+  assert.equal(
+    (await readdir(join(s.dir, 'media'))).filter((name) => name !== 'tmp').length,
+    s.db.provider === 'postgres' ? 0 : 3,
+  );
   await request(s.app).get(uploaded.body.previewUrl).expect(200);
 });

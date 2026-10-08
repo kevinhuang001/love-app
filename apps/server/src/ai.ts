@@ -4,8 +4,8 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import https from 'node:https';
 import http from 'node:http';
 import dns from 'node:dns';
-import { readFile } from 'node:fs/promises';
-import { join, basename } from 'node:path';
+import { MediaRepository } from './media-repository.js';
+import { basename } from 'node:path';
 import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import { transaction, type DB, type User } from './db.js';
@@ -451,6 +451,7 @@ export type AIOptions = {
   db: DB;
   secret: string;
   uploads: string;
+  mediaRepository?: MediaRepository;
   notify: (coupleId: string, message: Record<string, unknown>) => Promise<void>;
   changed: (coupleId: string, userId: string) => void;
   completion?: typeof complete;
@@ -459,6 +460,7 @@ export function aiWorker({
   db,
   secret,
   uploads,
+  mediaRepository = new MediaRepository(db, uploads),
   notify,
   changed,
   completion = complete,
@@ -564,7 +566,7 @@ export function aiWorker({
             {
               type: 'image_url',
               image_url: {
-                url: `data:image/webp;base64,${(await readFile(join(uploads, file))).toString('base64')}`,
+                url: `data:image/webp;base64,${(await mediaRepository.read(file)).toString('base64')}`,
                 detail: 'auto',
               },
             },

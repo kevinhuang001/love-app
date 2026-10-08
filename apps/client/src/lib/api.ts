@@ -65,7 +65,7 @@ export class Api {
     }
   }
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const timeout = AbortSignal.timeout(init.body instanceof FormData ? 240_000 : 20_000);
+    const timeout = init.body instanceof FormData ? undefined : AbortSignal.timeout(20_000);
     let response: Response;
     try {
       response = await fetch(`${this.session.server}${path}`, {
@@ -77,11 +77,12 @@ export class Api {
           ...(this.session.token ? { Authorization: `Bearer ${this.session.token}` } : {}),
           ...init.headers,
         },
-        signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+        signal:
+          init.signal && timeout ? AbortSignal.any([init.signal, timeout]) : init.signal || timeout,
       });
     } catch (error) {
       if (init.signal?.aborted) throw error;
-      if (timeout.aborted) throw new Error('连接服务器超时，请检查服务器地址和网络后重试');
+      if (timeout?.aborted) throw new Error('连接服务器超时，请检查服务器地址和网络后重试');
       throw new Error('无法连接服务器，请检查地址、网络和服务器的跨域配置');
     }
     if (response.status === 401 && this.session.token) this.unauthorized();
@@ -103,22 +104,20 @@ export class Api {
   url(path: string) {
     return `${this.session.server}${path}`;
   }
-  async upload(
+  async upload<T = UploadedMedia>(
     file: File,
     onProgress: (progress: number) => void,
     path = '/api/media',
-  ): Promise<UploadedMedia> {
-    if (file.size > 100 * 1024 * 1024) throw new Error('文件不能超过 100 MB');
+  ): Promise<T> {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', this.url(path));
-      xhr.timeout = 240_000;
+      xhr.timeout = 0;
       xhr.setRequestHeader('Authorization', `Bearer ${this.session.token}`);
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
       };
       xhr.onerror = () => reject(new Error('上传失败，请检查网络'));
-      xhr.ontimeout = () => reject(new Error('处理超时，请使用更短的视频'));
       xhr.onload = () => {
         const result = (() => {
           try {

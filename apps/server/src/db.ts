@@ -78,7 +78,14 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     const sqlite = new DatabaseSync(options.path);
     try {
       const version = Number(sqlite.prepare('PRAGMA user_version').get()!.user_version);
-      if (version !== 0 && version !== 4 && version !== 5 && version !== 6 && version !== 7)
+      if (
+        version !== 0 &&
+        version !== 4 &&
+        version !== 5 &&
+        version !== 6 &&
+        version !== 7 &&
+        version !== 8
+      )
         throw new Error('数据库结构版本不匹配，请使用新的数据目录');
       sqlite.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
       sqlite.exec('BEGIN IMMEDIATE');
@@ -86,7 +93,7 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
         sqlite.exec(schema);
         if (version === 4) sqlite.exec(pairAIUpgrade);
         if (version === 4 || version === 5) sqlite.exec(scheduleTimeUpgrade);
-        sqlite.exec('PRAGMA user_version=7; COMMIT;');
+        sqlite.exec('PRAGMA user_version=8; COMMIT;');
       } catch (error) {
         sqlite.exec('ROLLBACK');
         throw error;
@@ -213,7 +220,8 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
         version.version !== 4 &&
         version.version !== 5 &&
         version.version !== 6 &&
-        version.version !== 7
+        version.version !== 7 &&
+        version.version !== 8
       )
         throw new Error('数据库结构版本不匹配');
       await db.exec(pgSchema());
@@ -223,13 +231,13 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
       if (version?.version === 4 || version?.version === 5) {
         await db.exec(scheduleTimeUpgrade);
       }
-      if (version?.version !== 7) await db.exec('DELETE FROM database_meta');
+      if (version?.version !== 8) await db.exec('DELETE FROM database_meta');
       await db.exec(`DO $$ BEGIN
         IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='users_avatar_fk' AND conrelid='users'::regclass) THEN
           ALTER TABLE users ADD CONSTRAINT users_avatar_fk FOREIGN KEY ("avatarMediaId") REFERENCES media(id);
         END IF;
       END $$;`);
-      await db.prepare('INSERT INTO database_meta VALUES(7) ON CONFLICT DO NOTHING').run();
+      await db.prepare('INSERT INTO database_meta VALUES(8) ON CONFLICT DO NOTHING').run();
     });
     return db;
   } catch (error) {

@@ -46,9 +46,6 @@ https://$LOVE_DOMAIN {
   tls $cert/fullchain.pem $cert/privkey.pem
   encode zstd gzip
   header -Alt-Svc
-  request_body {
-    max_size 105MB
-  }
   reverse_proxy love:3000
 }
 EOF

@@ -17,11 +17,10 @@ refresh_screen() {
 setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
 reload() {
   image=$(setting LOVE_IMAGE); image=${image:-ghcr.io/kevinhuang001/love-app:latest}
-  source=$(setting LOVE_IMAGE_SOURCE); source=${source:-release}
   database=$(setting LOVE_DATABASE); database=${database:-sqlite}
   https=$(setting LOVE_HTTPS); tls=$(setting LOVE_TLS_PROVIDER)
   project=$(setting COMPOSE_PROJECT_NAME); project=${project:-love-v4}
-  case "$source" in release|registry) ;; *) printf '镜像来源无效，请选择镜像来源。\n' >&2; return 1;; esac
+  case "$image" in ghcr.io/kevinhuang001/love-app:*|ghcr.io/kevinhuang001/love-app@sha256:*) ;; *) image=ghcr.io/kevinhuang001/love-app:latest;; esac
 }
 compose() {
   # Only fixed filenames enter the intentionally split argument list.
@@ -55,54 +54,36 @@ set_field() {
   [ -f .env ] || return 0
   sed "/^$1=/d" .env > .env.next && printf "%s='%s'\n" "$1" "$2" >> .env.next && chmod 600 .env.next && mv .env.next .env
 }
-get_asset() {
-  command -v curl >/dev/null 2>&1 || { printf '下载需要 curl，请先安装。\n' >&2; return 1; }
-  [ -n "$work" ] || work=$(mktemp -d "${TMPDIR:-/tmp}/love-download.XXXXXXXX") || return 1
-  asset=$1
-  base=https://github.com/kevinhuang001/love-app/releases/download/docker-latest
-  curl --fail --location --retry 3 --connect-timeout 20 --max-time 1800 "$base/$asset" -o "$work/$asset" || return 1
-  [ -f "$work/SHA256SUMS" ] || curl --fail --location --retry 3 --connect-timeout 20 --max-time 120 "$base/SHA256SUMS" -o "$work/SHA256SUMS" || return 1
-  expected=$(awk -v name="$asset" '$2==name {print $1}' "$work/SHA256SUMS")
-  [ "${#expected}" -eq 64 ] || { printf '发布校验清单缺少 %s，稍后重试。\n' "$asset" >&2; return 1; }
-  if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$work/$asset" | cut -d ' ' -f 1)
-  elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$work/$asset" | cut -d ' ' -f 1)
-  else printf '请安装 sha256sum 或 shasum。\n' >&2; return 1; fi
-  [ "$actual" = "$expected" ] || { printf '下载校验失败，未导入或安装。发布可能正在更新，请稍后重试。\n' >&2; return 1; }
-}
-download_image() {
-  if [ "$source" = registry ]; then docker pull "$image" || return 1
-  else
-    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) printf '只提供 Linux amd64 / arm64 镜像。\n' >&2; return 1;; esac
-    get_asset "Love-docker-$arch.tar.gz" || return 1
-    docker load -i "$work/Love-docker-$arch.tar.gz" || return 1
-    image=love-app:prebuilt
-    set_field LOVE_IMAGE "$image" || return 1
-  fi
-}
+download_image() { docker pull "$image"; }
 ensure_image() { docker image inspect "$image" >/dev/null 2>&1 || download_image; }
-choose_source() {
-  ui source || return 1
-  case "$answer" in
-    release) source=release; image=love-app:prebuilt;;
-    ghcr) source=registry; image=ghcr.io/kevinhuang001/love-app:latest;;
-    custom) ui image || return 1; image=$answer; source=registry;
-       case "$image" in ''|*[!a-zA-Z0-9_./:@-]*) printf '镜像地址无效。\n' >&2; return 1;; esac;;
-    *) return 0;;
-  esac
-  download_image || return 1
-  set_field LOVE_IMAGE_SOURCE "$source" && set_field LOVE_IMAGE "$image"
+deployment_bundle() {
+  [ -n "$work" ] || work=$(mktemp -d "${TMPDIR:-/tmp}/love-deploy.XXXXXXXX") || return 1
+  mkdir -p "$work/deploy" || return 1
+  docker run --rm --entrypoint tar "$image" -C /app -cf - love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml deploy Caddyfile > "$work/deploy.tar" || return 1
+  tar --no-same-owner --no-same-permissions -xf "$work/deploy.tar" -C "$work/deploy" || return 1
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs; do
+    [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '镜像部署配置不完整。\n' >&2; return 1; }
+  done
+}
+install_bundle() {
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
+    cp "$work/deploy/$file" "$file.next" && mv "$file.next" "$file" || return 1
+  done
+  cp -R "$work/deploy/deploy" . || return 1
+  chmod 755 love
 }
 configure() {
   [ -t 0 ] && [ -t 1 ] || { printf '配置需要交互终端。\n' >&2; return 1; }
   ensure_image || return 1
-  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_IMAGE="$image" -e LOVE_IMAGE_SOURCE="$source" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/setup.mjs --output /setup/.env || return 1
+  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_IMAGE="$image" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/setup.mjs --output /setup/.env || return 1
   reload || return 1
-  printf '部署配置已保存。账号、邀请码和 SMTP 的现有设置请在“服务器管理”菜单管理。\n'
+  printf '部署配置已保存。管理员凭据以 .env 为准；注册、邀请码、SMTP 和容量请登录后台管理。\n'
   confirm '立即应用配置并启动？' && start || return 0
 }
 require_config() { [ -f .env ] || configure; [ -f .env ]; }
 start() {
   require_config && ensure_image || return 1
+  set_field LOVE_IMAGE "$image" || return 1
   if [ "$https" != 1 ] || [ "$tls" = external ]; then compose --profile https stop proxy >/dev/null 2>&1 || true; fi
   compose up -d --no-build --pull missing --remove-orphans --wait
 }
@@ -148,26 +129,26 @@ restore() {
   cp "$restore_dir/deployment.env" .env && chmod 600 .env && reload && start
 }
 update() {
-  require_config || return 1
-  confirm '下载最新软件和管理工具，并在备份后更新？' || return 0
+  require_config && ensure_image || return 1
+  printf '正在检查 GHCR 更新…\n'
+  running=$(compose ps --status running -q love) || return 1
+  if [ -n "$running" ]; then current_id=$(docker inspect "$running" --format '{{.Image}}') || return 1
+  else current_id=$(docker image inspect "$image" --format '{{.Id}}') || return 1; fi
+  latest=$(docker run --rm --entrypoint node "$image" /app/scripts/check-update.mjs "$current_id") || return 1
+  [ -n "$latest" ] || { printf '已是最新版本，无需更新。\n'; return 0; }
+  case "$latest" in ghcr.io/kevinhuang001/love-app@sha256:*) ;; *) printf '更新检查结果无效。\n' >&2; return 1;; esac
+  confirm '发现新版本。备份后下载 GHCR 镜像并更新？' || return 0
   backup || return 1
-  [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
-  get_asset Love-docker-deploy.tar.gz || return 1
-  mkdir "$work/deploy" || return 1
-  # The checksum comes from the same HTTPS release. Install only known deployment files.
-  tar --no-same-owner --no-same-permissions -xzf "$work/Love-docker-deploy.tar.gz" -C "$work/deploy" || return 1
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs; do
-    [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '部署包不完整，未更新。\n' >&2; return 1; }
-  done
-  rollback_image="love-app:rollback-$(date -u +%Y%m%dT%H%M%SZ)"
-  docker tag "$image" "$rollback_image" || return 1
-  download_image || return 1
+  rollback_image="ghcr.io/kevinhuang001/love-app:rollback-$(date -u +%Y%m%dT%H%M%SZ)"
+  docker tag "$current_id" "$rollback_image" || return 1
+  previous_image=$image
+  image=$latest
+  download_image || { image=$previous_image; return 1; }
+  deployment_bundle || { image=$previous_image; return 1; }
+  cp "$work/deploy/love" love.next && mv love.next love || { image=$previous_image; return 1; }
+  cp "$work/deploy/deploy/terminal-ui.mjs" deploy/terminal-ui.mjs && chmod 755 love || return 1
   printf '%s\n' "$rollback_image" > .love-rollback
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
-    cp "$work/deploy/$file" "$file.next" && mv "$file.next" "$file" || return 1
-  done
-  cp -R "$work/deploy/deploy" . || return 1
-  chmod 755 love
+  set_field LOVE_IMAGE "$image" || return 1
   start || { printf '启动失败，可从菜单选择回滚；备份已保留。\n' >&2; return 1; }
   printf '更新完成，正在重新加载管理菜单。\n'
   return_to_menu
@@ -177,19 +158,10 @@ update() {
 rollback() {
   [ -f .love-rollback ] || { printf '没有可用的上次更新镜像。\n' >&2; return 1; }
   rollback_image=$(cat .love-rollback)
-  case "$rollback_image" in love-app:rollback-*[!a-zA-Z0-9_-]*|'') printf '回滚记录无效。\n' >&2; return 1;; love-app:rollback-*) ;; *) return 1;; esac
+  case "$rollback_image" in ghcr.io/kevinhuang001/love-app:rollback-*[!a-zA-Z0-9_-]*|'') printf '回滚记录无效。\n' >&2; return 1;; ghcr.io/kevinhuang001/love-app:rollback-*) ;; *) return 1;; esac
   confirm '使用上次更新前的镜像？部署配置和数据不回滚。' || return 0
   docker image inspect "$rollback_image" >/dev/null || return 1
   image=$rollback_image; set_field LOVE_IMAGE "$image" && start
-}
-manage_server() {
-  require_config && ensure_image || return 1
-  running=$(compose ps --status running -q love) || return 1
-  compose stop love || return 1
-  compose run --rm --no-deps --interactive --tty --entrypoint node love /app/scripts/manage-server.mjs
-  result=$?
-  [ -z "$running" ] || compose start love || return 1
-  return "$result"
 }
 uninstall() {
   require_config || return 1
@@ -203,10 +175,9 @@ uninstall() {
   esac
 }
 if [ ! -f compose.yml ]; then
-  printf '正在下载并校验部署配置包…\n'
-  get_asset Love-docker-deploy.tar.gz || exit 1
-  tar --no-same-owner --no-same-permissions -xzf "$work/Love-docker-deploy.tar.gz" -C "$PWD" || exit 1
-  chmod +x love
+  image=ghcr.io/kevinhuang001/love-app:latest
+  printf '正在从 GHCR 获取部署工具…\n'
+  ensure_image && deployment_bundle && install_bundle || exit 1
   rm -rf -- "$work"; work=''
   exec sh ./love
 fi
@@ -231,8 +202,6 @@ while :; do
     update) update || result=$?;;
     backup) backup || result=$?;;
     restore) restore || result=$?;;
-    manage) manage_server || result=$?;;
-    source) choose_source || result=$?;;
     uninstall) uninstall || result=$?;;
     rollback) rollback || result=$?;;
     *) exit 1;;

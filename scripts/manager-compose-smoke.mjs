@@ -14,7 +14,49 @@ import {
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { quoteEnv } from './setup.mjs';
+execFileSync('docker', ['tag', 'love-ci', 'ghcr.io/kevinhuang001/love-app:ci']);
 const realDocker = execFileSync('which', ['docker'], { encoding: 'utf8' }).trim();
+// Bootstrap with the user's single downloaded file. Use the tested image under the official tag.
+execFileSync('docker', ['tag', 'love-ci', 'ghcr.io/kevinhuang001/love-app:latest']);
+const bootstrap = await mkdtemp(join(tmpdir(), 'love-bootstrap-real-'));
+try {
+  await copyFile('love', join(bootstrap, 'love'));
+  await mkdir(join(bootstrap, 'bin'));
+  await writeFile(
+    join(bootstrap, 'bin/docker'),
+    `#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),i=a.indexOf('/setup/deploy/terminal-ui.mjs');
+if(i>=0)fs.writeFileSync(a[i+2].replace('/setup/',process.cwd()+'/'),'exit');
+else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});process.exit(r.status??1);}
+`,
+  );
+  await chmod(join(bootstrap, 'bin/docker'), 0o755);
+  execFileSync('sh', ['love'], {
+    cwd: bootstrap,
+    env: {
+      ...process.env,
+      PATH: join(bootstrap, 'bin') + ':' + process.env.PATH,
+      MANAGER_DOCKER: realDocker,
+    },
+    stdio: 'inherit',
+  });
+  for (const file of [
+    'love',
+    'compose.yml',
+    'compose.postgres.yml',
+    'compose.https.yml',
+    'compose.certbot.yml',
+    'Caddyfile',
+    'deploy/terminal-ui.mjs',
+  ])
+    assert.equal(await readFile(join(bootstrap, file), 'utf8'), await readFile(file, 'utf8'));
+  assert.ok(!(await readdir(bootstrap)).includes('.env'));
+  console.log(
+    'Single-file manager bootstrap extracted verified deployment tools from the tested GHCR image.',
+  );
+} finally {
+  await rm(bootstrap, { recursive: true, force: true });
+}
 for (const database of ['sqlite', 'postgres']) {
   const dir = await mkdtemp(join(tmpdir(), 'love-manager-real-')),
     project = 'love-manager-' + database + '-ci';
@@ -25,8 +67,7 @@ for (const database of ['sqlite', 'postgres']) {
     LOVE_DATABASE: database,
     LOVE_HTTPS: '0',
     LOVE_TLS_PROVIDER: 'none',
-    LOVE_IMAGE: 'love-ci',
-    LOVE_IMAGE_SOURCE: 'registry',
+    LOVE_IMAGE: 'ghcr.io/kevinhuang001/love-app:ci',
     LOVE_PORT: '3002',
     LOVE_BIND_IP: '127.0.0.1',
     MEDIA_SIGNING_SECRET: 'ci-manager-compose-only-secret-at-least-32',

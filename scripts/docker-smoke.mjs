@@ -110,7 +110,7 @@ if (process.argv.includes('--verify-persistence')) {
   );
 } else {
   const settings = await api('/api/admin/settings', null, admin.token);
-  assert.equal(settings.defaultQuotaMiB, Number(process.env.SMOKE_INITIAL_QUOTA || 1024));
+  assert.equal(settings.defaultQuotaMiB, 1024);
   await api('/api/admin/settings', { ...settings, defaultQuotaMiB: 4096 }, admin.token, 'PATCH');
   for (const [username, name] of [
     ['docker_alice', '小爱'],

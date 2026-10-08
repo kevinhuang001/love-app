@@ -4,15 +4,11 @@ import { rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { imageCaptureDate, videoCaptureDate } from './capture-date.js';
-function run(command: string, args: string[], timeout = 180_000): Promise<string> {
+function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '',
       errors = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error('媒体处理超时，请上传更短的视频'));
-    }, timeout);
     child.stdout.on('data', (chunk) => {
       if (output.length < 100_000) output += chunk;
     });
@@ -20,11 +16,9 @@ function run(command: string, args: string[], timeout = 180_000): Promise<string
       if (errors.length < 10_000) errors += chunk;
     });
     child.on('error', (err) => {
-      clearTimeout(timer);
       reject(err);
     });
     child.on('close', (code) => {
-      clearTimeout(timer);
       code === 0
         ? resolve(output)
         : reject(new Error(`无法解码媒体 (${command}): ${errors.slice(-300)}`));
@@ -43,7 +37,7 @@ export async function processMedia(
   let preview = `${id}.preview.webp`;
   try {
     if (mime.startsWith('image/')) {
-      const image = sharp(source, { limitInputPixels: 50_000_000 }).rotate();
+      const image = sharp(source, { limitInputPixels: false }).rotate();
       const info = await image.metadata();
       const capturedDate = await imageCaptureDate(info.exif);
       if (!['jpeg', 'png', 'webp', 'avif', 'heif'].includes(info.format || ''))
@@ -80,14 +74,8 @@ export async function processMedia(
       (item: { codec_type: string }) => item.codec_type === 'video',
     );
     const duration = Number(metadata.format.duration);
-    if (
-      !stream ||
-      !Number.isFinite(duration) ||
-      duration <= 0 ||
-      duration > 300 ||
-      stream.width * stream.height > 35_000_000
-    )
-      throw new Error('视频需在 5 分钟以内');
+    if (!stream || !Number.isFinite(duration) || duration <= 0)
+      throw new Error('视频数据无效，无法读取时长');
     preview = `${id}.preview.mp4`;
     await run('ffmpeg', [
       '-nostdin',

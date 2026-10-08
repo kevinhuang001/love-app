@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.6.0
+        description: New version tag, for example v2.7.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.6.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.7.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,18 +85,18 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          配对共享的媒体保存选项、默认展开设置与使用条款。
+          配置边界、仅 GHCR 部署、相册导出导入与无媒体硬限制。
 
-          - 两人空间可开启“仅保存压缩图片和视频”，之后上传的媒体保留压缩预览及缩略图，压缩成功后丢弃原文件。
-          - 保存方式按配对共享，双方可修改并实时同步；图片与视频日期仍在压缩前自动识别，空间容量按实际保留的文件计算。
-          - 初始设置保留原文件，既有媒体不因修改设置被删除；切回保留原文件会作用于之后的上传。
-          - 设置各分区默认展开，仍支持手动收起，加入禁止非法用途、尊重隐私与知识产权等使用条款。
-          - SQLite / PostgreSQL 升级至 schema 7，新增媒体保存配置，保留已有用户、配对、媒体与 AI 设置。
-          - 继续支持秒级日程、心跳在线状态、清屏刷新管理菜单与下载镜像部署。
+          - .env 管理部署参数与管理员凭据，管理员身份每次启动同步；注册、邀请码、SMTP、容量和日志期限仅在后台配置。
+          - 只需下载 love 管理脚本即可部署，仅提供 GHCR 应用镜像。更新先查元数据，没有更新不下载镜像层、不停机、不备份；有更新才更新脚本与镜像。
+          - 相册支持普通 JPEG 照片 ZIP 和含图片、视频、日期、描述及保留原文件的完整 ZIP；完整 ZIP 可导入，校验哈希、空间与配对，失败不留下半份相册。
+          - Android 原生下载 ZIP，使用系统分享保存；重复导入相同包不会重复增加记录。
+          - 删除单文件大小、图片像素、视频分辨率、五分钟时长和固定媒体处理超时。预览继续压缩，配对总额度仍由管理员分配。
+          - SQLite / PostgreSQL schema 8 保留既有数据，新增相册导入记录。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
-          现有 schema 4 / 5 / 6 数据卷无需清空，更新前请使用管理菜单备份。
+          现有 schema 4 / 5 / 6 / 7 数据卷无需清空，更新前请使用管理菜单备份。
 
           Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md

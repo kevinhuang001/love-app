@@ -56,8 +56,7 @@ const defaults: ControlSettings = {
 };
 export type ControlOptions = {
   notificationConnections?: () => number;
-  initialSettings?: Partial<ControlSettings>;
-  adminBootstrap?: { username: string; password: string };
+  adminCredentials?: { username: string; password: string };
   mailSender?: MailSender;
   onCaptcha?: (id: string, answer: string) => void;
 };
@@ -68,28 +67,36 @@ export async function createControl(
   disconnect: (userId: string) => void,
 ) {
   const bootstrap = (async () => {
-    if (options.initialSettings) {
-      const initial = settingsSchema.parse({ ...defaults, ...options.initialSettings });
-      if (initial.registration !== 'closed' && !(initial.smtp.host && initial.smtp.from))
-        throw new Error('首次开放邮箱注册需要 SMTP');
-      if (initial.smtp.password) initial.smtp.password = seal(initial.smtp.password, secret);
-      await db
-        .prepare("INSERT INTO server_config VALUES('control',?) ON CONFLICT(key) DO NOTHING")
-        .run(JSON.stringify(initial));
-    }
-    if (
-      (await db.prepare('SELECT id FROM administrators LIMIT 1').get()) ||
-      !options.adminBootstrap
-    )
-      return;
+    await db
+      .prepare("INSERT INTO server_config VALUES('control',?) ON CONFLICT(key) DO NOTHING")
+      .run(JSON.stringify(defaults));
+    if (!options.adminCredentials) return;
     const v = z
       .object({ username, password: z.string().min(12).max(128) })
-      .parse(options.adminBootstrap);
+      .strict()
+      .parse(options.adminCredentials);
+    const row = await db
+      .prepare('SELECT * FROM administrators ORDER BY createdAt,id LIMIT 1')
+      .get();
+    if (
+      row &&
+      row.username === v.username &&
+      (await verifyPassword(v.password, String(row.password)))
+    )
+      return;
     const password = await hashPassword(v.password);
-    if (!(await db.prepare('SELECT id FROM administrators LIMIT 1').get()))
-      await db
-        .prepare('INSERT INTO administrators VALUES(?,?,?,?)')
-        .run(randomUUID(), v.username, password, new Date().toISOString());
+    await transaction(db, async () => {
+      if (row) {
+        await db
+          .prepare('UPDATE administrators SET username=?,password=? WHERE id=?')
+          .run(v.username, password, row.id);
+        await db.prepare('DELETE FROM admin_sessions WHERE adminId=?').run(row.id);
+      } else {
+        await db
+          .prepare('INSERT INTO administrators VALUES(?,?,?,?)')
+          .run(randomUUID(), v.username, password, new Date().toISOString());
+      }
+    });
   })();
   // Startup configuration errors are observable without exposing credentials.
   let bootstrapError = false;
@@ -465,22 +472,6 @@ export async function createControl(
       await audit(admin(req), 'admin.logout');
       res.sendStatus(204);
     });
-    router.post('/password', async (req, res) => {
-      const v = z
-        .object({ currentPassword: z.string().min(1), password: z.string().min(12).max(128) })
-        .parse(req.body);
-      const id = admin(req),
-        row = (await db.prepare('SELECT password FROM administrators WHERE id=?').get(id))!;
-      if (!(await verifyPassword(v.currentPassword, String(row.password))))
-        fail(400, '当前密码错误');
-      const password = await hashPassword(v.password);
-      await transaction(db, async () => {
-        await db.prepare('UPDATE administrators SET password=? WHERE id=?').run(password, id);
-        await db.prepare('DELETE FROM admin_sessions WHERE adminId=?').run(id);
-        await audit(id, 'admin.password.changed');
-      });
-      res.sendStatus(204);
-    });
     router.get('/registration-invites', async (_req, res) => {
       res.json(
         await db
@@ -803,7 +794,7 @@ export async function createControl(
   function access(req: Request, res: Response, next: NextFunction) {
     const started = performance.now(),
       requestId = randomUUID(),
-      requestPath = req.path;
+      requestPath = req.path.replace(/^(\/api\/album\/download)\/[^/]+$/, '$1/[redacted]');
     res.setHeader('X-Request-ID', requestId);
     Object.assign(req, { requestId });
     res.on('finish', async () => {
@@ -858,7 +849,7 @@ export async function createControl(
     await db.prepare('DELETE FROM email_codes WHERE expires<?').run(now);
     await db.prepare('DELETE FROM admin_sessions WHERE expires<?').run(now);
   }
-  await log('info', 'server.started', { version: '2.6.0' });
+  await log('info', 'server.started', { version: '2.7.0' });
   return {
     bootstrap,
     installPublic,

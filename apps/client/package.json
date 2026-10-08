@@ -1,6 +1,6 @@
 {
   "name": "@love/client",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,8 +13,13 @@
     "@capacitor/android": "8.5.2",
     "@capacitor/app": "8.1.2",
     "@capacitor/core": "8.5.2",
+    "@capacitor/file-transfer": "2.0.6",
+    "@capacitor/filesystem": "8.1.4",
     "@capacitor/keyboard": "8.0.6",
     "@capacitor/preferences": "8.0.1",
+    "@capacitor/share": "8.0.3",
+    "@fontsource/noto-sans-sc": "5.2.9",
+    "@love/calendar": "*",
     "@radix-ui/react-dialog": "1.1.23",
     "@radix-ui/react-slot": "1.3.3",
     "@radix-ui/react-tabs": "1.1.21",
@@ -28,9 +33,7 @@
     "socket.io-client": "4.8.4",
     "sonner": "2.0.8",
     "tailwind-merge": "3.7.0",
-    "zod": "4.6.5",
-    "@love/calendar": "*",
-    "@fontsource/noto-sans-sc": "5.2.9"
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@capacitor/cli": "8.5.2",

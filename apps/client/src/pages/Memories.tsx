@@ -10,6 +10,7 @@ import {
   Grid3X3,
   Rows3,
   X,
+  Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { newId } from '@/lib/id';
@@ -30,6 +31,7 @@ import { AlbumViewer } from '@/components/AlbumViewer';
 import { useApp } from '@/lib/context';
 import type { Moment, UploadedMedia } from '@/lib/types';
 import { today } from '@/lib/dates';
+import { exportAlbum, type ExportFormat } from '@/lib/album-transfer';
 import { albumDefaults, loadAlbumOptions, type AlbumOptions } from '@/lib/album';
 type AlbumPage = { items: Moment[]; total: number; nextCursor: string | null };
 type UploadFile = {
@@ -142,6 +144,12 @@ function UploadSelection({
   );
 }
 export function Memories() {
+  const [transferOpen, setTransferOpen] = useState(false),
+    [transferBusy, setTransferBusy] = useState(false),
+    [transferStatus, setTransferStatus] = useState(''),
+    [exportFormat, setExportFormat] = useState<ExportFormat>('archive');
+  const archiveInput = useRef<HTMLInputElement>(null);
+
   const { api, profile, openUs } = useApp(),
     cache = useQueryClient();
   const preferenceKey = `love.album:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
@@ -355,9 +363,19 @@ export function Memories() {
               {query.isFetching && !query.isPending ? ' · 更新中…' : ''}
             </p>
           </div>
-          <Button size="icon" aria-label="新增回忆" onClick={() => begin()}>
-            <Plus className="size-5" />
-          </Button>
+          <div className="flex gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="导出或导入相册"
+              onClick={() => setTransferOpen(true)}
+            >
+              <Download className="size-5" />
+            </Button>
+            <Button size="icon" aria-label="新增回忆" onClick={() => begin()}>
+              <Plus className="size-5" />
+            </Button>
+          </div>
         </div>
         <div className="relative">
           <Search className="pointer-events-none absolute top-3.5 left-3 size-4 text-muted-foreground" />
@@ -544,6 +562,109 @@ export function Memories() {
           </div>
         )}
       </div>
+      <Dialog
+        open={transferOpen}
+        onOpenChange={(value) => {
+          if (!transferBusy) setTransferOpen(value);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>导出与导入相册</DialogTitle>
+          <DialogDescription>导出整个两人相册，不受当前筛选影响。</DialogDescription>
+          <div className="space-y-4">
+            <label className="block space-y-2 text-sm">
+              导出格式
+              <select
+                aria-label="相册导出格式"
+                className="album-select mt-2 w-full"
+                value={exportFormat}
+                disabled={transferBusy}
+                onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+              >
+                <option value="pictures">普通照片 ZIP · JPEG 图片</option>
+                <option value="archive">完整相册 ZIP · 可重新导入</option>
+              </select>
+            </label>
+            <p className="text-xs leading-6 text-muted-foreground">
+              {exportFormat === 'pictures'
+                ? '仅导出照片为 JPEG，按相册日期命名，可直接解压查看。视频请使用完整相册导出。'
+                : '保留照片、视频、日期、描述与已保存的原文件。仅保存压缩版本的媒体不会凭空恢复原文件。'}
+            </p>
+            <Button
+              className="w-full"
+              disabled={transferBusy}
+              onClick={async () => {
+                setTransferBusy(true);
+                setTransferStatus('正在准备导出…');
+                try {
+                  toast.success(await exportAlbum(api, exportFormat, setTransferStatus));
+                } catch (error) {
+                  toast.error((error as Error).message || '导出失败，请重试');
+                } finally {
+                  setTransferBusy(false);
+                  setTransferStatus('');
+                }
+              }}
+            >
+              导出相册 ZIP
+            </Button>
+            <div className="border-t pt-4 space-y-3">
+              <p className="text-xs leading-6 text-muted-foreground">
+                导入完整相册 ZIP
+                后，回忆由你发布，保留原日期和描述。原文件是否保存遵循当前两人空间设置；同一导入包重复选择不会重复添加。
+              </p>
+              <input
+                ref={archiveInput}
+                hidden
+                type="file"
+                accept="application/zip,.zip"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setTransferBusy(true);
+                  setTransferStatus('正在上传导入包…');
+                  try {
+                    const result = await api.upload<{ imported: number; alreadyImported: boolean }>(
+                      file,
+                      (progress) =>
+                        setTransferStatus(
+                          progress === 100 ? '正在校验并导入…' : `上传 ${progress}%`,
+                        ),
+                      '/api/album/imports',
+                    );
+                    await cache.invalidateQueries({ queryKey: ['moments'] });
+                    await cache.invalidateQueries({ queryKey: ['profile'] });
+                    toast.success(
+                      result.alreadyImported
+                        ? '此导入包已导入，无需重复添加'
+                        : `已导入 ${result.imported} 个回忆`,
+                    );
+                  } catch (error) {
+                    toast.error((error as Error).message);
+                  } finally {
+                    setTransferBusy(false);
+                    setTransferStatus('');
+                  }
+                }}
+              />
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={transferBusy}
+                onClick={() => archiveInput.current?.click()}
+              >
+                选择 ZIP 导入相册
+              </Button>
+            </div>
+            {transferStatus && (
+              <p className="text-xs text-muted-foreground" role="status">
+                {transferStatus}
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
       <AlbumViewer
         api={api}
         item={current}
@@ -656,9 +777,7 @@ export function Memories() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{edit ? '编辑这个瞬间' : '收藏一个瞬间'}</DialogTitle>
-            <DialogDescription>
-              选择后自动上传并读取拍摄日期，每个文件分别保存。单个文件最多 100 MB，视频最长 5 分钟。
-            </DialogDescription>
+            <DialogDescription>选择后自动上传并读取拍摄日期，每个文件分别保存。</DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             {!edit && (
@@ -671,14 +790,6 @@ export function Memories() {
                   multiple
                   onChange={(e) => {
                     const chosen = Array.from(e.target.files || []);
-                    if (chosen.length > 20) {
-                      toast.error('一次最多选择 20 个文件');
-                      return;
-                    }
-                    if (chosen.some((file) => file.size > 100 * 1024 * 1024)) {
-                      toast.error('每个文件最多 100 MB');
-                      return;
-                    }
                     const drafts = chosen.map((file) => ({
                       id: newId(),
                       file,

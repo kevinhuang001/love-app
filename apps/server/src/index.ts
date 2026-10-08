@@ -11,6 +11,8 @@ if (
   !['sqlite', 'postgres'].includes(process.env.DATABASE_PROVIDER)
 )
   throw new Error('DATABASE_PROVIDER 必须为 sqlite 或 postgres');
+if (production && (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD))
+  throw new Error('生产环境必须配置 ADMIN_USERNAME 与 ADMIN_PASSWORD');
 const server = await createApp({
   database: process.env.DATABASE_URL || process.env.DATABASE_PATH || '../../data/love.sqlite',
   databaseProvider: (process.env.DATABASE_PROVIDER || undefined) as
@@ -19,22 +21,7 @@ const server = await createApp({
   mediaSecret: process.env.MEDIA_SIGNING_SECRET,
   origins: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()),
   production,
-  initialSettings: {
-    invitationRequired: process.env.INITIAL_INVITATION_REQUIRED === '1',
-    defaultQuotaMiB: Number(process.env.INITIAL_QUOTA_MIB || 1024),
-    registration: (process.env.INITIAL_REGISTRATION || 'closed') as
-      'closed' | 'email' | 'whitelist',
-    smtp: {
-      host: process.env.INITIAL_SMTP_HOST || '',
-      port: Number(process.env.INITIAL_SMTP_PORT || 587),
-      security: (process.env.INITIAL_SMTP_SECURITY || 'starttls') as 'plain' | 'tls' | 'starttls',
-      user: process.env.INITIAL_SMTP_USER || '',
-      password: process.env.INITIAL_SMTP_PASSWORD || '',
-      from: process.env.INITIAL_SMTP_FROM || '',
-      senderName: 'Love',
-    },
-  },
-  adminBootstrap:
+  adminCredentials:
     process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD
       ? { username: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD }
       : undefined,

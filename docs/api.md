@@ -41,7 +41,6 @@
 | POST                | /api/admin/login                                        | username、password、captchaId、captcha；返回独立 token、admin             |
 | GET                 | /api/admin/me                                           | 当前管理员                                                                |
 | POST                | /api/admin/logout                                       | 撤销当前管理会话                                                          |
-| POST                | /api/admin/password                                     | currentPassword、password；撤销全部管理会话                               |
 | GET                 | /api/admin/overview                                     | 用户、空间、媒体、请求、错误与队列汇总                                    |
 | GET / POST          | /api/admin/users                                        | 搜索分页；创建 username、name、email、password、confirmedEmail=true       |
 | PATCH               | /api/admin/users/:id                                    | disabled、password 或 revokeSessions=true                                 |
@@ -116,3 +115,13 @@ AI 地址、模型、密钥、启用状态、名称与头像以 `coupleId` 为�
 所有纪念日 / To Do 的 time 和配对 startTime 使用 HH:mm:ss，默认 00:00:00；日期与时间按 UTC+8 解释。每年重复保留所设时间，包括农历节日与闰年调整。客户端逐秒计算显示，不向服务器逐秒请求。AI 创建 / 编辑日程的工具同样提供 time 参数，set_relationship_date 提供 startTime。
 
 PATCH `/api/couple/media-settings` 接受 `{retainOriginal:boolean}`，只允许当前已配对用户修改。GET `/api/me` 的 couple 中包含 retainOriginal（默认 true），配置按配对共享，修改发送 profile:changed 给双方。false 表示之后上传的图片 / 视频仅保存压缩预览与缩略图；已有文件保留。媒体处理期间若保存方式改变，本次上传返回 409 并清理已生成文件，客户端可重新上传。
+
+## 相册导出与导入
+
+| 方法 | 路径                    | 行为                                                                                                                                     |
+| ---- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| POST | /api/album/exports      | format=pictures 或 archive，需有效已配对用户会话；返回 filename 与签名下载 url                                                           |
+| GET  | /api/album/download/:id | 签名链接，20 分钟内开始下载，重新检查原会话及配对；流式 ZIP 响应                                                                         |
+| POST | /api/album/imports      | multipart file，完整 Love 相册 ZIP；事务导入并校验容量、文件哈希和当前配对；201 返回 imported，已导入同包返回 200/0/alreadyImported=true |
+
+导出覆盖整个相册，不含聊天附件、账号密码、AI 或服务器配置。普通图片 ZIP 仅包含 JPEG 照片；完整 ZIP 含 manifest.json 与全部相册媒体。格式见 [相册导入导出](album-export.md)。

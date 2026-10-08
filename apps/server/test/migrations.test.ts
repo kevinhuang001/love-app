@@ -80,7 +80,7 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
   }
 });
 
-test('schema 5 and 6 upgrade schedules and media settings without changing pair configuration or existing dates', async (t) => {
+test('schema 5, 6 and 7 upgrade schedules and media settings without changing pair configuration or existing dates', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-time-upgrade-'));
   const schema = process.env.TEST_DATABASE_URL
     ? 'test_' + randomUUID().replaceAll('-', '')
@@ -150,8 +150,12 @@ test('schema 5 and 6 upgrade schedules and media settings without changing pair 
           : 'SELECT version AS user_version FROM database_meta',
       )
       .get();
-    assert.equal(version!.user_version, 7);
+    assert.equal(version!.user_version, 8);
     await db.prepare('INSERT INTO couple_media_settings VALUES(?,?)').run('pair', 0);
+    await db.exec('DROP TABLE album_imports');
+    await db.exec(
+      db.provider === 'sqlite' ? 'PRAGMA user_version=7' : 'UPDATE database_meta SET version=7',
+    );
   } finally {
     await db.close();
   }
@@ -161,6 +165,8 @@ test('schema 5 and 6 upgrade schedules and media settings without changing pair 
       (await db.prepare('SELECT retainOriginal FROM couple_media_settings').get())!.retainOriginal,
       0,
     );
+    assert.equal((await db.prepare('SELECT COUNT(*) n FROM album_imports').get())!.n, 0);
+    assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '12:34:56');
   } finally {
     await db.close();
   }

@@ -10,15 +10,14 @@
 
 只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。在菜单选择首次配置，下载已构建镜像，用 Docker 交互终端运行配置向导，再按提示启动并等待服务健康。
 
-菜单支持 GHCR 拉取和公开 Release 自动下载导入；详细管理用法见 [预构建镜像部署](container-images.md)。
+菜单只从官方 GHCR 拉取镜像；详细管理用法见 [预构建镜像部署](container-images.md)。
 
 向导包含：
 
 - 数据库：SQLite（默认）、Compose 内置 PostgreSQL 18、外部 PostgreSQL。
 - 访问：可选 HTTP 或 HTTPS；HTTPS 支持 Certbot 自动申请/续期、Caddy 自动证书，或已有反向代理。HTTP 监听 IP 可选 `127.0.0.1`（默认，仅本机）、`0.0.0.0`（全部 IPv4 网卡，用于局域网/公网）或指定宿主机 IPv4/IPv6；端口默认 3000。
 - 管理员：用户名默认 `admin`，密码可输入或留空自动生成。
-- 容量：新配对默认 1024 MiB，0 禁止新增上传。
-- SMTP：可选配置主机、端口、加密、账号、授权码、发件邮箱及初始注册方式。默认仅管理员建号，后续可从 love 服务器管理菜单或后台配置邮件注册与邀请码。
+- 注册、邀请码、SMTP、容量与日志期限：在后台配置，向导不写入这些业务设置。
 
 密码与 URL 输入隐藏。媒体签名/加密密钥自动生成；配置写入权限 0600 的 `.env`，不显示密码。自动生成的管理员密码在 `.env` 的 `ADMIN_PASSWORD` 中。保存前显示无密码摘要，取消不会改动已有文件。
 
@@ -26,7 +25,7 @@
 
 公网 HTTP 直连：运行 `./love`，HTTPS 选“否”，HTTP 监听地址选 `0.0.0.0`，再运行 `./love`。开放所选端口后，用 `http://服务器实际IP:端口` 访问 Web 或配置 APK。`0.0.0.0` 是监听地址，不能填进手机服务器 URL；指定 IP 必须是宿主机已有网卡的地址，云服务器通过 NAT 提供公网 IP 时通常选 `0.0.0.0`。HTTP 未加密，公网建议使用 HTTPS。向导保持 Android 所需的跨域来源，并在直接 HTTP 暴露时设置 `TRUST_PROXY=0`。
 
-初始 SMTP、注册方式与默认容量仅在数据库尚无管理配置时写入，之后通过 love 服务器管理菜单或后台修改现有配置。管理入口仍为 `/#admin`，前台不显示入口。
+SMTP、注册方式、邀请码、默认与独立配对额度保存在数据库，仅通过后台修改。管理员凭据以 .env 为准，每次启动同步。管理入口仍为 `/#admin`，前台不显示入口。
 
 ## 直接配置 Compose
 
@@ -53,7 +52,7 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/love?sslmode=verify-full
 ```
 
-可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 数据在启动时原子升级到 schema 7，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥与上传文件需要一同备份。
+可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 / 7 数据在启动时原子升级到 schema 8，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥与上传文件需要一同备份。
 
 ## PostgreSQL 备份
 

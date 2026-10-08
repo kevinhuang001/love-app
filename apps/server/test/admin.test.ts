@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { io } from 'socket.io-client';
 import { SMTPServer } from 'smtp-server';
+import { createControl } from '../src/control.js';
 import { sendMail } from '../src/mail.js';
 import { setup } from './support.js';
 
@@ -56,14 +57,24 @@ test('administrator and user sessions are separate; captchas are bound, one-use 
   await s
     .api(s.adminToken)
     .post('/api/admin/password', { currentPassword: 'wrong', password: 'new-admin-password-123' })
-    .expect(400);
-  await s
-    .api(s.adminToken)
-    .post('/api/admin/password', {
-      currentPassword: 'admin-test-password-123',
-      password: 'new-admin-password-123',
-    })
-    .expect(204);
+    .expect(404);
+  const unchanged = await createControl(
+    s.db,
+    'test-secret-at-least-thirty-two-chars',
+    { adminCredentials: { username: 'admin_master', password: 'admin-test-password-123' } },
+    () => {},
+  );
+  await unchanged.bootstrap;
+  await unchanged.close();
+  await s.api(s.adminToken).get('/api/admin/overview').expect(200);
+  const changed = await createControl(
+    s.db,
+    'test-secret-at-least-thirty-two-chars',
+    { adminCredentials: { username: 'admin_master', password: 'new-admin-password-123' } },
+    () => {},
+  );
+  await changed.bootstrap;
+  await changed.close();
   await s.api(s.adminToken).get('/api/admin/overview').expect(401);
   await request(s.app)
     .post('/api/admin/login')

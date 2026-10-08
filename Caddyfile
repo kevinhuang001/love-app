@@ -7,8 +7,5 @@ http://{$LOVE_DOMAIN} {
 https://{$LOVE_DOMAIN} {
     encode zstd gzip
     header -Alt-Svc
-    request_body {
-        max_size 105MB
-    }
     reverse_proxy love:3000
 }

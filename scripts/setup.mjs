@@ -65,7 +65,12 @@ export function validateConfig(config) {
   }
   if (config.LOVE_IMAGE && !/^[A-Za-z0-9][A-Za-z0-9_./:@-]*$/.test(config.LOVE_IMAGE))
     throw new Error('Docker 镜像地址无效');
-  if (!['release', 'registry'].includes(config.LOVE_IMAGE_SOURCE)) throw new Error('镜像来源无效');
+  if (
+    !/^ghcr\.io\/kevinhuang001\/love-app(?::[A-Za-z0-9_.-]+|@sha256:[a-f0-9]{64})$/.test(
+      config.LOVE_IMAGE || '',
+    )
+  )
+    throw new Error('仅支持官方 GHCR 镜像');
   if (!['sqlite', 'postgres', 'external'].includes(config.LOVE_DATABASE))
     throw new Error('数据库选择无效');
   if (
@@ -117,13 +122,37 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     );
     return value || old || randomBytes(24).toString('hex');
   };
-  ui.intro('Love · 首次部署配置');
-  const config = { ...previous };
-  delete config.LOVE_DOCKERFILE;
-  delete config.LOVE_IMAGE_PULL;
-  config.LOVE_IMAGE =
-    env.LOVE_IMAGE || prior('LOVE_IMAGE') || 'ghcr.io/kevinhuang001/love-app:latest';
-  config.LOVE_IMAGE_SOURCE = env.LOVE_IMAGE_SOURCE || prior('LOVE_IMAGE_SOURCE') || 'registry';
+  ui.intro('Love · 部署配置');
+  const deploymentKeys = [
+    'COMPOSE_PROJECT_NAME',
+    'LOVE_DATABASE',
+    'DATABASE_PROVIDER',
+    'DATABASE_URL',
+    'POSTGRES_DB',
+    'POSTGRES_USER',
+    'POSTGRES_PASSWORD',
+    'LOVE_HTTPS',
+    'LOVE_DOMAIN',
+    'LOVE_TLS_PROVIDER',
+    'LOVE_TLS_PORT',
+    'LOVE_TLS_BIND_IP',
+    'CERTBOT_EMAIL',
+    'LOVE_BIND_IP',
+    'LOVE_PORT',
+    'TRUST_PROXY',
+    'ALLOWED_ORIGINS',
+    'AI_ALLOWED_HOSTS',
+    'ADMIN_USERNAME',
+    'ADMIN_PASSWORD',
+    'MEDIA_SIGNING_SECRET',
+    'LOVE_IMAGE',
+  ];
+  const config = Object.fromEntries(
+    deploymentKeys.filter((key) => previous[key] !== undefined).map((key) => [key, previous[key]]),
+  );
+  config.LOVE_IMAGE = prior('LOVE_IMAGE')?.startsWith('ghcr.io/kevinhuang001/love-app')
+    ? prior('LOVE_IMAGE')
+    : 'ghcr.io/kevinhuang001/love-app:latest';
   config.LOVE_DATABASE = await ask(
     ui.select({
       message: '选择数据库',
@@ -266,82 +295,54 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   config.ADMIN_USERNAME = await text('管理员用户名', prior('ADMIN_USERNAME') || 'admin', username);
   config.ADMIN_PASSWORD = await password('管理员密码', prior('ADMIN_PASSWORD'), 12);
   config.MEDIA_SIGNING_SECRET = prior('MEDIA_SIGNING_SECRET') || randomBytes(32).toString('hex');
-  config.INITIAL_QUOTA_MIB = await text(
-    '新配对默认容量（MiB）',
-    prior('INITIAL_QUOTA_MIB') || '1024',
-    (v) => (/^\d+$/.test(v) && Number(v) <= 1000000 ? undefined : '填写 0–1000000，0 禁止上传'),
-  );
-  const smtp = await ask(
-    ui.confirm({
-      message: '现在配置 SMTP 和邮箱注册？',
-      initialValue: Boolean(prior('INITIAL_SMTP_HOST')),
-    }),
-  );
-  config.INITIAL_REGISTRATION = 'closed';
-  config.INITIAL_INVITATION_REQUIRED = '0';
-  if (smtp) {
-    config.INITIAL_SMTP_HOST = await text(
-      'SMTP 主机',
-      prior('INITIAL_SMTP_HOST') || 'smtp.example.com',
-      (v) =>
-        /^[a-zA-Z0-9.:-]+$/.test(v) && v !== 'smtp.example.com'
+  if (await ask(ui.confirm({ message: '调整高级部署选项？', initialValue: false }))) {
+    config.COMPOSE_PROJECT_NAME = await text(
+      'Compose 项目名（更改会使用其他数据卷）',
+      prior('COMPOSE_PROJECT_NAME') || 'love-v4',
+      (value) =>
+        /^[a-z0-9][a-z0-9_-]*$/.test(value) ? undefined : '使用小写字母、数字、下划线或连字符',
+    );
+    config.ALLOWED_ORIGINS = await text(
+      '允许的客户端 Origin（逗号分隔）',
+      config.ALLOWED_ORIGINS,
+      (value) => {
+        try {
+          for (const item of value.split(',')) {
+            const url = new URL(item.trim());
+            if (
+              !['http:', 'https:', 'capacitor:'].includes(url.protocol) ||
+              url.username ||
+              url.password ||
+              url.search ||
+              url.hash ||
+              !['', '/'].includes(url.pathname)
+            )
+              return '填写完整 Origin，不含路径或账号';
+          }
+        } catch {
+          return '填写有效 Origin';
+        }
+      },
+    );
+    config.AI_ALLOWED_HOSTS = await text(
+      '允许 AI 访问的内网主机（逗号分隔，留空不放行）',
+      prior('AI_ALLOWED_HOSTS') || '',
+      (value) =>
+        value.split(',').every((host) => !host.trim() || /^[a-zA-Z0-9.:[\]-]+$/.test(host.trim()))
           ? undefined
-          : '填写邮件服务商的 SMTP 主机',
+          : '仅填写主机名或 IP，不含协议或路径',
     );
-    config.INITIAL_SMTP_SECURITY = await ask(
-      ui.select({
-        message: 'SMTP 加密方式',
-        initialValue: prior('INITIAL_SMTP_SECURITY') || 'starttls',
-        options: [
-          { value: 'starttls', label: 'STARTTLS', hint: '默认 · 通常使用端口 587' },
-          { value: 'tls', label: 'TLS', hint: '通常使用端口 465' },
-          { value: 'plain', label: '明文', hint: '仅用于本地邮件中继' },
-        ],
-      }),
-    );
-    config.INITIAL_SMTP_PORT = await text(
-      'SMTP 端口',
-      prior('INITIAL_SMTP_PORT') || (config.INITIAL_SMTP_SECURITY === 'tls' ? '465' : '587'),
-      port,
-    );
-    config.INITIAL_SMTP_USER = await text(
-      'SMTP 用户名',
-      prior('INITIAL_SMTP_USER') || '',
-      () => undefined,
-    );
-    config.INITIAL_SMTP_PASSWORD =
-      (await ask(ui.password({ message: 'SMTP 密码或授权码（回车保留，未配置则为空）' }))) ||
-      prior('INITIAL_SMTP_PASSWORD') ||
-      '';
-    config.INITIAL_SMTP_FROM = await text(
-      '发件邮箱',
-      prior('INITIAL_SMTP_FROM') || 'noreply@example.com',
-      (v) =>
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && v !== 'noreply@example.com'
-          ? undefined
-          : '填写已授权的发件邮箱',
-    );
-    config.INITIAL_REGISTRATION = await ask(
-      ui.select({
-        message: '初始注册方式',
-        initialValue: prior('INITIAL_REGISTRATION') || 'email',
-        options: [
-          { value: 'email', label: '开放邮箱注册', hint: '注册必须验证邮箱和图形验证码' },
-          { value: 'whitelist', label: '邮箱白名单', hint: '登录后台添加允许注册的邮箱' },
-          { value: 'closed', label: '仅管理员创建账号' },
-        ],
-      }),
+    config.TRUST_PROXY = (await ask(
+      ui.confirm({ message: '信任恰好一层反向代理？', initialValue: config.TRUST_PROXY === '1' }),
+    ))
+      ? '1'
+      : '0';
+    config.MEDIA_SIGNING_SECRET = await password(
+      '媒体签名与凭据加密密钥（更换后需重填 SMTP 与 AI 密钥）',
+      config.MEDIA_SIGNING_SECRET,
+      32,
     );
   }
-  config.LOVE_SETUP_COMPLETE = '1';
-  config.INITIAL_INVITATION_REQUIRED = (await ask(
-    ui.confirm({
-      message: '自助注册需要邀请码？',
-      initialValue: prior('INITIAL_INVITATION_REQUIRED') === '1',
-    }),
-  ))
-    ? '1'
-    : '0';
   validateConfig(config);
   const ip = config[bindingKey];
   const binding =
@@ -354,7 +355,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
       ? 'http://服务器实际IP:' + config.LOVE_PORT
       : 'http://' + binding;
   ui.note(
-    `数据库：${config.LOVE_DATABASE}\n${bundledTLS ? 'HTTPS' : 'HTTP'} 监听：${binding}\n${bundledTLS ? '后端 HTTP：仅容器网络，不占宿主机端口\n' : ''}访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
+    `数据库：${config.LOVE_DATABASE}\n${bundledTLS ? 'HTTPS' : 'HTTP'} 监听：${binding}\n${bundledTLS ? '后端 HTTP：仅容器网络，不占宿主机端口\n' : ''}访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n注册、SMTP、邀请码和容量：登录后台配置`,
     '即将保存',
   );
   if (!(await ask(ui.confirm({ message: '保存配置并继续？', initialValue: true }))))
@@ -375,7 +376,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     await unlink(temp).catch(() => {});
   }
   ui.outro(
-    '配置已保存。管理员密码保存在 .env 的 ADMIN_PASSWORD；请妥善保管。SMTP、注册和容量仅用于首次初始化；后续使用 love 菜单中的服务器管理或后台修改。',
+    '配置已保存。管理员密码保存在 .env 的 ADMIN_PASSWORD；请妥善保管。修改管理员凭据并应用配置后，旧管理会话失效。注册、邀请码、SMTP 和容量只在后台修改。',
   );
   return config;
 }

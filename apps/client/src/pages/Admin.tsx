@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Plus,
   Check,
-  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Api, defaultServer, normalizeServer } from '@/lib/api';
@@ -322,9 +321,7 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
       email: '',
       password: '',
       confirmedEmail: false,
-    }),
-    [passwordOpen, setPasswordOpen] = useState(false),
-    [adminPassword, setAdminPassword] = useState({ currentPassword: '', password: '' });
+    });
   const suffix = new URLSearchParams({ page: String(page), search });
   if (filters.from) suffix.set('from', new Date(filters.from).toISOString());
   if (filters.to) suffix.set('to', new Date(filters.to).toISOString());
@@ -380,14 +377,6 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
             <h1 className="mt-1 text-lg font-medium">服务器管理</h1>
           </div>
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="修改管理员密码"
-              onClick={() => setPasswordOpen(true)}
-            >
-              <ShieldCheck size={18} />
-            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -925,48 +914,6 @@ function AdminWorkspace({ api, end }: { api: Api; end: () => void }) {
           </form>
         </DialogContent>
       </Dialog>
-      <Dialog open={passwordOpen} onOpenChange={setPasswordOpen}>
-        <DialogContent>
-          <DialogTitle>修改管理员密码</DialogTitle>
-          <DialogDescription>修改后所有管理员会话失效，需要重新登录。</DialogDescription>
-          <form
-            className="space-y-4"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (await act('/api/admin/password', adminPassword, 'post', '管理员密码已更新'))
-                end();
-            }}
-          >
-            <Field label="当前管理员密码" id="current-admin-password">
-              <Input
-                id="current-admin-password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={adminPassword.currentPassword}
-                onChange={(e) =>
-                  setAdminPassword((v) => ({ ...v, currentPassword: e.target.value }))
-                }
-              />
-            </Field>
-            <Field label="新管理员密码" id="new-admin-password">
-              <Input
-                id="new-admin-password"
-                type="password"
-                autoComplete="new-password"
-                minLength={12}
-                maxLength={128}
-                required
-                value={adminPassword.password}
-                onChange={(e) => setAdminPassword((v) => ({ ...v, password: e.target.value }))}
-              />
-            </Field>
-            <DialogFooter>
-              <Button disabled={busy}>更新管理员密码</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }
@@ -1071,6 +1018,12 @@ function AdminSettings({ api }: { api: Api }) {
     setDraft((v) => (v ? { ...v, smtp: { ...v.smtp, [key]: value } } : v));
   return (
     <>
+      <Panel title="配置管理">
+        <p className="text-xs leading-6 text-muted-foreground">
+          本页设置保存在数据库，保存后立即生效。管理员账号与密码、数据库连接、监听地址及 HTTPS
+          在服务器 .env 中配置，修改后应用部署配置。
+        </p>
+      </Panel>
       <RegistrationInvites api={api} />
       <form onSubmit={save} className="space-y-5">
         <Panel

@@ -95,7 +95,6 @@ jobs:
             ffmpeg -version >/dev/null
           '
       - run: node scripts/setup-compose.test.mjs
-      - run: node scripts/manager-smoke.mjs
       - run: node scripts/manager-compose-smoke.mjs
       - name: Verify HTTPS challenge bootstrap and certificate reload
         if: matrix.dockerfile == 'Dockerfile'
@@ -116,8 +115,6 @@ jobs:
           LOVE_BIND_IP: '0.0.0.0'
           SMOKE_BIND_IP: '0.0.0.0'
           SMOKE_DATABASE: postgres
-          SMOKE_INITIAL_QUOTA: 2048
-          INITIAL_QUOTA_MIB: 2048
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           ADMIN_USERNAME: ci_admin
           ADMIN_PASSWORD: ci-admin-password-for-smoke

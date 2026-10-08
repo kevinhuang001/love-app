@@ -1,6 +1,7 @@
 import { presence } from './presence.js';
 import { today } from '@love/calendar';
 import { readAlbum } from './album.js';
+import { installAlbumTransfers } from './album-transfer.js';
 import {
   anniversarySchema,
   todoSchema,
@@ -110,6 +111,7 @@ export async function createApp(options: AppOptions = {}) {
   ) => callback(null, !value || origins.includes(value));
   const app = express();
   const http = createServer(app);
+  http.requestTimeout = 0; // Large uploads have no fixed transfer deadline.
   const io = new Server(http, { cors: { origin }, maxHttpBufferSize: 16_384 });
   const control = await createControl(
     db,
@@ -262,7 +264,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.6.0',
+      version: '2.7.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -379,6 +381,18 @@ export async function createApp(options: AppOptions = {}) {
       .set('Cache-Control', 'private, max-age=300')
       .type(variant === 'thumbnail' || row!.kind === 'image' ? 'image/webp' : 'video/mp4');
     res.sendFile(join(uploads, row![variant]));
+  });
+  installAlbumTransfers({
+    app,
+    db,
+    uploads,
+    secret,
+    authenticate,
+    control,
+    changed: (id) => {
+      io.to(`couple:${id}`).emit('moments:changed');
+      io.to(`couple:${id}`).emit('profile:changed');
+    },
   });
   app.use(
     '/api',
@@ -507,7 +521,7 @@ export async function createApp(options: AppOptions = {}) {
   });
   const avatarUpload = multer({
     dest: join(uploads, 'tmp'),
-    limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 },
+    limits: { files: 1, fields: 0 },
   });
   app.post('/api/me/avatar', (req, res, next) =>
     avatarUpload.single('file')(req, res, async (error) => {
@@ -517,9 +531,8 @@ export async function createApp(options: AppOptions = {}) {
       let committed = false;
       try {
         if (error) throw error;
-        if (!req.file || !req.file.mimetype.startsWith('image/'))
-          fail(400, '头像请选择图片，最大 2 MB');
-        const image = sharp(req.file!.path, { limitInputPixels: 20_000_000 }).rotate();
+        if (!req.file || !req.file.mimetype.startsWith('image/')) fail(400, '头像请选择有效图片');
+        const image = sharp(req.file!.path, { limitInputPixels: false }).rotate();
         const [large, small] = await Promise.all([
           image.clone().resize(512, 512, { fit: 'cover' }).webp({ quality: 80 }).toBuffer(),
           image.clone().resize(256, 256, { fit: 'cover' }).webp({ quality: 75 }).toBuffer(),
@@ -578,11 +591,7 @@ export async function createApp(options: AppOptions = {}) {
           await Promise.all(
             [preview, thumbnail].map((name) => rm(join(uploads, name), { force: true })),
           );
-        next(
-          err instanceof HttpError
-            ? err
-            : new HttpError(422, '头像无法处理，请选择不超过 2 MB 的有效图片'),
-        );
+        next(err instanceof HttpError ? err : new HttpError(422, '头像无法处理，请选择有效图片'));
       } finally {
         if (req.file) await rm(req.file.path, { force: true });
       }
@@ -665,7 +674,7 @@ export async function createApp(options: AppOptions = {}) {
   let processing = 0;
   const upload = multer({
     dest: join(uploads, 'tmp'),
-    limits: { fileSize: 100 * 1024 * 1024, files: 1, fields: 0 },
+    limits: { files: 1, fields: 0 },
     fileFilter: (_req, file, cb) =>
       cb(
         null,
@@ -766,7 +775,7 @@ export async function createApp(options: AppOptions = {}) {
           next(
             err instanceof HttpError || err instanceof multer.MulterError
               ? err
-              : new HttpError(422, '媒体无法处理，请确认格式、文件大小和视频时长'),
+              : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
           );
         } finally {
           processing--;
@@ -987,7 +996,7 @@ export async function createApp(options: AppOptions = {}) {
   app.use(async (error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof HttpError && error.status >= 400)
       await control.log(error.status >= 500 ? 'error' : 'warn', 'http.rejected', {
-        path: _req.path,
+        path: _req.path.replace(/^(\/api\/album\/download)\/[^/]+$/, '$1/[redacted]'),
         status: error.status,
       });
     if (error instanceof z.ZodError)
@@ -995,10 +1004,10 @@ export async function createApp(options: AppOptions = {}) {
         .status(400)
         .json({ error: '输入不符合要求', details: error.issues.map((issue) => issue.message) });
     if (error instanceof multer.MulterError)
-      return res.status(413).json({ error: '文件超出限制，最大 100 MB' });
+      return res.status(400).json({ error: '上传格式无效，请只提交一个文件' });
     if (error instanceof HttpError) return res.status(error.status).json({ error: error.message });
     await control.log('error', 'http.unexpected', {
-      path: _req.path,
+      path: _req.path.replace(/^(\/api\/album\/download)\/[^/]+$/, '$1/[redacted]'),
       requestId: (_req as Request & { requestId?: string }).requestId,
       error: error instanceof Error ? error.name : 'UnknownError',
     });

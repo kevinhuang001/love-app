@@ -17,11 +17,9 @@ export const menuOptions = [
   { value: 'restart', label: '重启应用' },
   { value: 'status', label: '状态与版本' },
   { value: 'logs', label: '查看日志', hint: '显示最近 200 条' },
-  { value: 'update', label: '更新软件及管理工具', hint: '先备份，再下载和更新' },
+  { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才备份和下载' },
   { value: 'backup', label: '备份数据与配置' },
   { value: 'restore', label: '恢复备份', hint: '恢复前保存当前状态' },
-  { value: 'manage', label: '服务器管理', hint: '账号、邀请码、注册、SMTP 与容量' },
-  { value: 'source', label: '镜像来源', hint: '公开 Release、GHCR 或自定义仓库' },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
   { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
@@ -52,7 +50,7 @@ export async function prompt({
       const content = await readFile(resolve(directory, '.env'), 'utf8');
       const setting = (key) =>
         content.match(new RegExp(`^${key}=['"]?([a-zA-Z0-9_./:@-]*)['"]?$`, 'm'))?.[1];
-      summary = `${setting('COMPOSE_PROJECT_NAME') || 'love-v4'} · ${setting('LOVE_DATABASE') || 'sqlite'} · ${setting('LOVE_HTTPS') === '1' ? 'HTTPS' : 'HTTP'}\n镜像：${env.LOVE_UI_IMAGE || setting('LOVE_IMAGE') || '公开 Release'}`;
+      summary = `${setting('COMPOSE_PROJECT_NAME') || 'love-v4'} · ${setting('LOVE_DATABASE') || 'sqlite'} · ${setting('LOVE_HTTPS') === '1' ? 'HTTPS' : 'HTTP'}\n镜像：${env.LOVE_UI_IMAGE || setting('LOVE_IMAGE') || 'ghcr.io/kevinhuang001/love-app:latest'}`;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
@@ -63,7 +61,7 @@ export async function prompt({
         message: '选择操作',
         options: menuOptions,
         initialValue: existsSync(resolve(directory, '.env')) ? 'status' : 'configure',
-        maxItems: 15,
+        maxItems: 13,
       }),
     );
     if (result === 'exit') ui.outro('已退出部署管理');
@@ -77,38 +75,12 @@ export async function prompt({
         showInstructions: false,
       }),
     );
-  if (kind === 'source')
-    return ask(
-      select({
-        message: '选择镜像来源',
-        initialValue: 'release',
-        options: [
-          {
-            value: 'release',
-            label: 'GitHub Release',
-            hint: '默认 · 公开下载，自动识别架构并校验 SHA-256',
-          },
-          { value: 'ghcr', label: 'GHCR', hint: '拉取 GitHub 容器仓库镜像' },
-          { value: 'custom', label: '自定义镜像仓库' },
-          { value: 'cancel', label: '返回' },
-        ],
-      }),
-    );
   if (kind === 'confirm')
     return (await ask(
       ui.confirm({ message, initialValue: false, active: '确认', inactive: '取消' }),
     ))
       ? 'yes'
       : 'no';
-  if (kind === 'image')
-    return ask(
-      ui.text({
-        message: '镜像完整地址',
-        placeholder: 'registry.example.com/love-app:latest',
-        validate: (value) =>
-          /^[a-zA-Z0-9][a-zA-Z0-9_./:@-]*$/.test(value || '') ? undefined : '填写有效的镜像地址',
-      }),
-    );
   if (kind === 'text')
     return ask(
       ui.text({

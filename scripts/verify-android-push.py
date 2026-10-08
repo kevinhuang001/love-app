@@ -14,6 +14,8 @@ with ZipFile(apk) as archive:
     dex=b'\n'.join(archive.read(n) for n in archive.namelist() if n.endswith('.dex'))
     for name in ['LocalNotificationsPlugin','LocalNotificationService','MainActivity']:
         assert ('Lcom/kevinhuang/love/'+name+';').encode() in dex, name
+    for package, name in [('com/capacitorjs/plugins/filetransfer','FileTransferPlugin'),('com/capacitorjs/plugins/filesystem','FilesystemPlugin'),('com/capacitorjs/plugins/share','SharePlugin')]:
+        assert ('L'+package+'/'+name+';').encode() in dex, f'Missing native album export integration: {name}'
     for forbidden in [b'Lcn/jpush/',b'Lcn/jiguang/',b'Lcom/google/firebase/messaging/',b'Lcom/huawei/hms/push/',b'Lcom/hihonor/push/',b'Lcom/xiaomi/mipush/',b'Lcom/heytap/msp/push/',b'Lcom/vivo/push/',b'Lcom/meizu/cloud/pushsdk/']:
         assert forbidden not in dex, f'Unexpected third-party notification SDK: {forbidden}'
     assert not any(n.endswith('services.json') or 'push-build.json' in n for n in archive.namelist())

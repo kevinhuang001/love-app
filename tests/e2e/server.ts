@@ -15,7 +15,7 @@ const server = await createApp({
   database: process.env.DATABASE_PATH || 'data/e2e-admin.sqlite',
   uploads: process.env.UPLOADS_PATH || 'data/e2e-admin-media',
   mediaSecret: 'test-key-for-ci-not-for-production-use',
-  adminBootstrap: { username: 'admin_master', password: 'admin-test-password-123' },
+  adminCredentials: { username: 'admin_master', password: 'admin-test-password-123' },
   origins: [
     'http://127.0.0.1:5173',
     'http://localhost:5173',

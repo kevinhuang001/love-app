@@ -19,7 +19,7 @@ ADMIN_USERNAME=你的管理员用户名
 ADMIN_PASSWORD=至少12字符的随机密码
 ```
 
-`MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员启动变量仅创建首个账号，创建后移除两个变量；管理员独立访问 `/#admin` 配置 SMTP 和注册政策，用户页面不显示入口。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
+`MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员账号与密码始终以 `.env` 为准，每次启动同步；管理员独立访问 `/#admin` 配置 SMTP 和注册政策，用户页面不显示入口。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
 
 ```bash
 docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --no-build
@@ -49,12 +49,11 @@ Caddy 示例：
 
 ```caddy
 love.example.com {
-  request_body { max_size 105MB }
   reverse_proxy 127.0.0.1:3000
 }
 ```
 
-Nginx 需 `client_max_body_size 105m`、`proxy_read_timeout 300s` 以及 WebSocket Upgrade headers。不要将 `data/media` 映射为公开静态目录。API 通过一个小时有效的签名链接提供预览，支持视频 Range 请求。签名链接相当于短期访问凭据，不应公开转发。
+Nginx 需 `client_max_body_size 0`（取消请求体大小限制），读取超时按实际长视频处理时间设置（例如 `proxy_read_timeout 24h`） 以及 WebSocket Upgrade headers。不要将 `data/media` 映射为公开静态目录。API 通过一个小时有效的签名链接提供预览，支持视频 Range 请求。签名链接相当于短期访问凭据，不应公开转发。
 
 ## 初始化时选择证书方式
 
@@ -106,7 +105,7 @@ docker compose -p love-v4 -f compose.yml -f compose.https.yml -f compose.certbot
 
 停止服务后备份整个 `data/`（SQLite 与原文件一起）和服务端环境变量，再启动。不要在运行中只复制 `.sqlite` 主文件，WAL 模式还包含尚未 checkpoint 的数据。建议使用 SQLite online backup 或短暂停机进行一致性备份。
 
-数据库结构版本为 5。现有 schema 4 在启动时原子升级为配对共享 AI 配置，保留账号、配对、媒体和密钥；两个人都有配置时优先保留已启用且填写完整的配置，其次为填写过地址的配置，最后按用户 ID 确定。升级后删除个人 AI 配置表，不保留运行时兼容代码。更新前用管理菜单备份。schema 3 或更早版本拒绝启动。
+数据库结构版本为 8。现有 schema 4 / 5 / 6 / 7 在启动时原子升级，新增相册导入记录并保留配对共享 AI 配置，保留账号、配对、媒体和密钥；两个人都有配置时优先保留已启用且填写完整的配置，其次为填写过地址的配置，最后按用户 ID 确定。升级后删除个人 AI 配置表，不保留运行时兼容代码。更新前用管理菜单备份。schema 3 或更早版本拒绝启动。
 
 解除配对只断开当前空间，旧消息／回忆记录仍保留数据库中。重新配对创建独立空间，不能通过新关系看到旧空间的数据。删除回忆移除其相册记录，保留原始上传文件，避免误删同时用于聊天或头像的媒体。当前版本不自动清理原文件；需定期监控磁盘容量。
 

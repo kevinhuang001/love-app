@@ -19,7 +19,7 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
     databaseSchema: schema,
     uploads: join(dir, 'media'),
     mediaSecret: 'test-secret-at-least-thirty-two-chars',
-    adminBootstrap: { username: 'admin_master', password: 'admin-test-password-123' },
+    adminCredentials: { username: 'admin_master', password: 'admin-test-password-123' },
     onCaptcha: (id, answer) => answers.set(id, answer),
     mailSender: async (config, message) => {
       if (options.mailSender) await options.mailSender(config, message);

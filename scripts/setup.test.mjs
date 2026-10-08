@@ -38,11 +38,9 @@ const fakeUI = (options = {}) => ({
   confirm: async (p) =>
     p.message === '使用 HTTPS？'
       ? options.https || false
-      : p.message === '现在配置 SMTP 和邮箱注册？'
-        ? false
-        : p.message === '保存配置并继续？'
-          ? options.save !== false
-          : p.initialValue,
+      : p.message === '保存配置并继续？'
+        ? options.save !== false
+        : p.initialValue,
 });
 test('setup selects HTTP without certificates, or HTTPS with Certbot, Caddy or existing proxy', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-tls-'));
@@ -137,21 +135,20 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
     output,
     ui: fakeUI({ database: 'postgres' }),
     env: {
-      LOVE_IMAGE: 'love-app:prebuilt',
-      LOVE_IMAGE_SOURCE: 'release',
+      LOVE_IMAGE: 'ghcr.io/kevinhuang001/love-app:latest',
     },
   });
   const stored = parseDeploymentEnv(await readFile(output, 'utf8'));
   assert.deepEqual(stored, config);
   assert.equal(stored.LOVE_DATABASE, 'postgres');
   assert.equal(stored.LOVE_DOCKERFILE, undefined);
-  assert.equal(stored.LOVE_IMAGE, 'love-app:prebuilt');
-  assert.equal(stored.LOVE_IMAGE_SOURCE, 'release');
+  assert.equal(stored.LOVE_IMAGE, 'ghcr.io/kevinhuang001/love-app:latest');
+  assert.equal(stored.LOVE_IMAGE_SOURCE, undefined);
   assert.equal(stored.LOVE_BIND_IP, '127.0.0.1');
   assert.equal(stored.POSTGRES_DB, 'love');
   assert.equal(stored.DATABASE_PROVIDER, 'postgres');
   assert.equal(stored.ADMIN_USERNAME, 'admin');
-  assert.equal(stored.INITIAL_QUOTA_MIB, '1024');
+  assert.equal(stored.INITIAL_QUOTA_MIB, undefined);
   assert.ok(stored.ADMIN_PASSWORD.length >= 12);
   assert.ok(stored.MEDIA_SIGNING_SECRET.length >= 32);
   assert.equal((await stat(output)).mode & 0o777, 0o600);
@@ -160,8 +157,8 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
   assert.equal(repeat.POSTGRES_PASSWORD, stored.POSTGRES_PASSWORD);
   assert.equal(repeat.ADMIN_PASSWORD, stored.ADMIN_PASSWORD);
   assert.equal(repeat.LOVE_DOCKERFILE, undefined);
-  assert.equal(repeat.LOVE_IMAGE, 'love-app:prebuilt');
-  assert.equal(repeat.LOVE_IMAGE_SOURCE, 'release');
+  assert.equal(repeat.LOVE_IMAGE, 'ghcr.io/kevinhuang001/love-app:latest');
+  assert.equal(repeat.LOVE_IMAGE_SOURCE, undefined);
 });
 test('public and specific interface bindings persist and cannot inject Compose port syntax', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-bind-'));
@@ -201,5 +198,39 @@ test('Compose dotenv literals preserve dollars, quotes, hashes and backslashes',
   assert.equal(
     parseDeploymentEnv('ADMIN_PASSWORD=' + quoteEnv(value) + '\n').ADMIN_PASSWORD,
     value,
+  );
+});
+
+test('setup only writes deployment keys and exposes advanced deployment settings, never registration or SMTP', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-setup-boundary-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = join(dir, '.env');
+  await writeFile(
+    output,
+    "INITIAL_INVITATION_REQUIRED='1'\nINITIAL_SMTP_HOST='smtp.old.test'\nINITIAL_QUOTA_MIB='5'\nLOVE_IMAGE_SOURCE='release'\n",
+  );
+  const questions = [],
+    baseUI = fakeUI();
+  const ui = {
+    ...baseUI,
+    confirm: async (p) => {
+      questions.push(p.message);
+      return p.message === '调整高级部署选项？' ? true : baseUI.confirm(p);
+    },
+    text: async (p) => {
+      questions.push(p.message);
+      return baseUI.text(p);
+    },
+  };
+  const config = await setup({ output, ui, env: {} });
+  assert.ok(Object.keys(config).every((key) => !key.startsWith('INITIAL_')));
+  assert.equal(config.LOVE_IMAGE_SOURCE, undefined);
+  assert.equal(config.COMPOSE_PROJECT_NAME, 'love-v4');
+  assert.equal(config.AI_ALLOWED_HOSTS, '');
+  assert.ok(questions.some((q) => q.includes('允许的客户端 Origin')));
+  assert.ok(
+    questions.every(
+      (q) => !q.includes('邀请码') && !q.includes('SMTP 主机') && !q.includes('初始注册'),
+    ),
   );
 });

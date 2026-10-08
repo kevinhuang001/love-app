@@ -41,24 +41,42 @@ for permission in ['POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE
 for permission in ['ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','READ_PHONE_STATE','QUERY_ALL_PACKAGES','READ_EXTERNAL_STORAGE','WRITE_EXTERNAL_STORAGE','RECEIVE_BOOT_COMPLETED']:
     assert permission not in permissions
 print('APK verified: direct stream/local notifications, no third-party push SDKs or credentials.')
-# Inspect packaged launcher resources, including actual vector paths/colors.
+# Resource paths may be shortened in release APKs. Resolve names/configurations
+# through the packaged resource table, then inspect the actual compiled XML.
+aapt2=Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0/aapt2'
+resource_table=subprocess.check_output([str(aapt2),'dump','resources',str(apk)],text=True)
+resource_paths={}
+current=None
+for line in resource_table.splitlines():
+    header=re.search(r'^\s*resource\s+0x[0-9a-fA-F]+\s+(?:[^\s:]+:)?(\w+/\w+)\b', line)
+    if header:
+        current=header[1]
+    file=re.search(r'^\s*\(([^)]*)\)\s+\(file\)\s+(res/\S+)', line)
+    if current and file:
+        resource_paths.setdefault(current, {})[file[1]]=file[2]
+
+def resource_path(name, qualifier=None):
+    entries=resource_paths.get(name, {})
+    assert entries, f'Missing brand resource in APK table: {name}'
+    paths=[path for config,path in entries.items() if qualifier is None or qualifier in config]
+    assert paths, f'Missing brand resource configuration: {name} {qualifier}'
+    return paths[0]
+
 with ZipFile(apk) as archive:
-    names = archive.namelist()
-    def drawable(name):
-        found=[n for n in names if re.fullmatch(r'res/drawable(?:-[^/]*)?/'+name+r'\.xml', n)]
-        assert found, f'Missing brand resource: {name}'
-        return found[0]
-    foreground_path=drawable('love_icon_foreground')
-    drawable('love_icon_monochrome')
-    for resource in ['res/mipmap-anydpi-v26/ic_launcher.xml','res/mipmap-anydpi-v33/ic_launcher.xml']:
-        assert resource in names, f'Missing brand resource: {resource}'
+    names=archive.namelist()
+    foreground_path=resource_path('drawable/love_icon_foreground')
+    monochrome_path=resource_path('drawable/love_icon_monochrome')
+    adaptive26_path=resource_path('mipmap/ic_launcher', 'v26')
+    adaptive33_path=resource_path('mipmap/ic_launcher', 'v33')
+    for path in [foreground_path,monochrome_path,adaptive26_path,adaptive33_path]:
+        assert path in names, f'Missing packaged brand XML: {path}'
     assert not any(n.endswith('/splash.png') or n.endswith('/ic_launcher_foreground.png') for n in names), 'Capacitor placeholder images remain'
 foreground=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),foreground_path],text=True)
 for path in ['M58 38H48C40 38 34 44 34 52V62C34 70 40 76 48 76H58','M50 32H60C68 32 74 38 74 46V56C74 64 68 70 60 70H50']:
     assert path in foreground, 'Packaged logo differs from designed artwork'
 for color in ['0xffefeade','0xffb69a6b']:
     assert color in foreground.lower(), 'Missing ivory/copper logo colors'
-adaptive=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),'res/mipmap-anydpi-v33/ic_launcher.xml'],text=True)
+adaptive=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),adaptive33_path],text=True)
 assert all('E: '+layer in adaptive for layer in ['background','foreground','monochrome']), 'Missing adaptive/themed layer'
 resources=subprocess.check_output([str(aapt),'dump','resources',str(apk)],text=True)
 assert 'love_icon_background' in resources and 'ff172e29' in resources.lower(), 'Missing ink green background'

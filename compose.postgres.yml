@@ -1,4 +1,4 @@
-# Add with: docker compose -f compose.yml -f compose.postgres.yml up -d --no-build
+# Selected automatically by the love menu when using bundled PostgreSQL.
 services:
   love:
     environment:
@@ -10,15 +10,8 @@ services:
       PGUSER: ${POSTGRES_USER:-love}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
     depends_on:
-      database-tools:
-    environment:
-      PGHOST: postgres
-      PGPORT: '5432'
-      PGDATABASE: ${POSTGRES_DB:-love}
-      PGUSER: ${POSTGRES_USER:-love}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
-  postgres:
-    condition: service_healthy
+      postgres:
+        condition: service_healthy
   database-tools:
     environment:
       PGHOST: postgres

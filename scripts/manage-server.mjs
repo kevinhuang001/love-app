@@ -48,7 +48,10 @@ export async function manage({ env = process.env, prompts = ui } = {}) {
           { value: 'admin', label: '重置管理员密码' },
           { value: 'account', label: '创建用户 / 重置用户密码 / 启停账号' },
           { value: 'quota', label: '调整配对存储容量' },
-          { value: 'invites', label: '批量生成注册邀请码' },
+          { value: 'invites', label: '注册邀请码：批量生成 / 查看 / 停用' },
+          { value: 'allowlist', label: '邮箱白名单：批量添加 / 查看 / 移除' },
+          { value: 'overview', label: '账号、配对、媒体和消息统计' },
+          { value: 'logs', label: '访问、后台与管理操作日志' },
           { value: 'exit', label: '返回主菜单' },
         ],
       }),
@@ -226,28 +229,182 @@ export async function manage({ env = process.env, prompts = ui } = {}) {
         .run(id, quota);
       await audit('terminal.quota.updated', { coupleId: id, quotaMiB: quota });
     }
-    if (action === 'invites') {
-      const count = await number('生成数量', 10, 1, 200),
-        maxUses = await number('每码可用次数', 1, 1, 10000),
-        days = await number('有效天数（0 不过期）', 30, 0, 3650),
-        label = await text('批次备注', '终端生成', (v) =>
-          v.length <= 60 ? undefined : '备注最多 60 字符',
+    if (action === 'overview') {
+      const counts = [];
+      for (const [table, title] of [
+        ['users', '用户'],
+        ['couples', '配对空间'],
+        ['media', '媒体'],
+        ['messages', '聊天消息'],
+      ]) {
+        const row = await db.prepare('SELECT COUNT(*) AS count FROM ' + table).get();
+        counts.push(title + '：' + row.count);
+      }
+      prompts.note(counts.join('\n'), '服务器数据');
+    }
+    if (action === 'logs') {
+      const table = await ask(
+        prompts.select({
+          message: '日志类型',
+          options: [
+            { value: 'access_logs', label: '访问日志' },
+            { value: 'server_logs', label: '后台日志' },
+            { value: 'audit_logs', label: '管理操作' },
+          ],
+        }),
+      );
+      if (!['access_logs', 'server_logs', 'audit_logs'].includes(table))
+        throw new Error('日志类型无效');
+      const rows = await db.prepare('SELECT * FROM ' + table + ' ORDER BY id DESC LIMIT 50').all();
+      prompts.note(rows.map((v) => JSON.stringify(v)).join('\n') || '没有日志', '最近 50 条');
+    }
+    if (action === 'allowlist') {
+      const mode = await ask(
+        prompts.select({
+          message: '白名单操作',
+          options: [
+            { value: 'list', label: '查看白名单' },
+            { value: 'add', label: '批量添加邮箱' },
+            { value: 'remove', label: '移除邮箱' },
+          ],
+        }),
+      );
+      if (mode === 'list') {
+        const rows = await db
+          .prepare('SELECT email,note FROM email_allowlist ORDER BY email')
+          .all();
+        prompts.note(
+          rows.map((v) => v.email + ' · ' + v.note).join('\n') || '暂无白名单',
+          '邮箱白名单',
         );
-      const expires = days ? Date.now() + days * 86400000 : 0,
-        codes = [];
-      await transaction(db, async () => {
-        for (let i = 0; i < count; i++) {
-          const code = randomBytes(18).toString('base64url');
-          await db
-            .prepare(
-              'INSERT INTO registration_invites(id,hash,label,maxUses,expires,createdAt) VALUES(?,?,?,?,?,?)',
-            )
-            .run(randomUUID(), hashToken(code), label, maxUses, expires, new Date().toISOString());
-          codes.push(code);
+      } else {
+        const raw = await text('邮箱（逗号分隔，最多 200 个）', '', (v) => {
+          const a = v.split(',').map((x) => x.trim());
+          return a.length <= 200 &&
+            a.every((x) => x.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x))
+            ? undefined
+            : '填写有效邮箱，最多 200 个';
+        });
+        const addresses = [...new Set(raw.split(',').map((v) => v.trim().toLowerCase()))];
+        const note =
+          mode === 'add'
+            ? await text('备注', '', (v) => (v.length <= 120 ? undefined : '备注最多 120 字符'))
+            : '';
+        if (
+          await ask(
+            prompts.confirm({
+              message:
+                mode === 'add'
+                  ? '添加这些邮箱到白名单？用户仍需自己注册并验证邮箱。'
+                  : '移除这些邮箱的注册许可？已有账号不受影响。',
+              initialValue: false,
+            }),
+          )
+        ) {
+          await transaction(db, async () => {
+            for (const address of addresses) {
+              if (mode === 'add')
+                await db
+                  .prepare(
+                    'INSERT INTO email_allowlist VALUES(?,?,?) ON CONFLICT(email) DO UPDATE SET note=excluded.note',
+                  )
+                  .run(address, note, new Date().toISOString());
+              else await db.prepare('DELETE FROM email_allowlist WHERE email=?').run(address);
+            }
+            await audit('terminal.allowlist.' + mode, { count: addresses.length });
+          });
         }
-        await audit('terminal.invites.created', { count });
-      });
-      prompts.note(codes.join('\n'), '邀请码 · 仅显示一次，请保存');
+      }
+    }
+    if (action === 'invites') {
+      const mode = await ask(
+        prompts.select({
+          message: '邀请码操作',
+          initialValue: 'generate',
+          options: [
+            { value: 'generate', label: '批量生成' },
+            { value: 'list', label: '查看用量与状态' },
+            { value: 'revoke', label: '停用邀请码' },
+          ],
+        }),
+      );
+      if (mode === 'list') {
+        const rows = await db
+          .prepare(
+            'SELECT id,label,uses,maxUses,expires,revoked FROM registration_invites ORDER BY createdAt DESC LIMIT 1000',
+          )
+          .all();
+        prompts.note(
+          rows
+            .map(
+              (v) =>
+                v.id +
+                ' · ' +
+                v.label +
+                ' · ' +
+                v.uses +
+                '/' +
+                v.maxUses +
+                ' · ' +
+                (v.revoked
+                  ? '已停用'
+                  : Number(v.expires)
+                    ? new Date(Number(v.expires)).toLocaleString('zh-CN')
+                    : '不过期'),
+            )
+            .join('\n') || '尚无邀请码',
+          '邀请码列表（不保存明文）',
+        );
+      } else if (mode === 'revoke') {
+        const rows = await db
+          .prepare(
+            'SELECT id,label FROM registration_invites WHERE revoked=0 ORDER BY createdAt DESC LIMIT 1000',
+          )
+          .all();
+        if (!rows.length) throw new Error('没有可以停用的邀请码');
+        const ids = await ask(
+          prompts.multiselect({
+            message: '选择要停用的邀请码',
+            options: rows.map((v) => ({ value: v.id, label: v.label + ' · ' + v.id })),
+            required: true,
+          }),
+        );
+        if (await ask(prompts.confirm({ message: '停用选中的邀请码？', initialValue: false })))
+          await transaction(db, async () => {
+            for (const id of ids)
+              await db.prepare('UPDATE registration_invites SET revoked=1 WHERE id=?').run(id);
+            await audit('terminal.invites.revoked', { count: ids.length });
+          });
+      } else {
+        const count = await number('生成数量', 10, 1, 200),
+          maxUses = await number('每码可用次数', 1, 1, 10000),
+          days = await number('有效天数（0 不过期）', 30, 0, 3650),
+          label = await text('批次备注', '终端生成', (v) =>
+            v.length <= 60 ? undefined : '备注最多 60 字符',
+          );
+        const expires = days ? Date.now() + days * 86400000 : 0,
+          codes = [];
+        await transaction(db, async () => {
+          for (let i = 0; i < count; i++) {
+            const code = randomBytes(18).toString('base64url');
+            await db
+              .prepare(
+                'INSERT INTO registration_invites(id,hash,label,maxUses,expires,createdAt) VALUES(?,?,?,?,?,?)',
+              )
+              .run(
+                randomUUID(),
+                hashToken(code),
+                label,
+                maxUses,
+                expires,
+                new Date().toISOString(),
+              );
+            codes.push(code);
+          }
+          await audit('terminal.invites.created', { count });
+        });
+        prompts.note(codes.join('\n'), '邀请码 · 仅显示一次，请保存');
+      }
     }
     prompts.outro('管理操作已完成');
   } finally {

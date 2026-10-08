@@ -16,7 +16,7 @@ await manage({env,prompts});
 db=await openDatabase(env.DATABASE_PATH);
 assert.ok(await verifyPassword('new-admin-password-123',(await db.prepare('SELECT password FROM administrators').get()).password));
 assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM admin_sessions').get()).count,0);await db.close();
-await manage({env,prompts:{...prompts,select:async()=> 'invites',text:async p=>p.defaultValue}});
+await manage({env,prompts:{...prompts,select:async p=>p.message==='选择管理操作'?'invites':'generate',text:async p=>p.defaultValue}});
 db=await openDatabase(env.DATABASE_PATH);assert.equal((await db.prepare('SELECT COUNT(*) AS count FROM registration_invites').get()).count,10);assert.equal(notes[0].split('\\n').length,10);assert.ok(!(await db.prepare('SELECT hash FROM registration_invites LIMIT 1').get()).hash.includes(notes[0].split('\\n')[0]));await db.close();
 await manage({env,prompts:{...prompts,select:async p=>p.message==='选择管理操作'?'policy':'closed',confirm:async p=>p.message==='注册需要邀请码？'||p.message==='保存服务器设置？',text:async p=>p.defaultValue}});
 db=await openDatabase(env.DATABASE_PATH);const config=JSON.parse((await db.prepare("SELECT value FROM server_config WHERE key='control'").get()).value);assert.equal(config.invitationRequired,true);assert.equal(config.registration,'closed');await db.close();

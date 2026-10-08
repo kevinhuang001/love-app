@@ -38,6 +38,8 @@ describe('backend URL', () => {
       'https://example.com/api',
       '192.168.1.10:3000',
       '',
+      'http://0.0.0.0:3000',
+      'http://[::]:3000',
       'https://example.com/?key=secret',
       'https://example.com/#token',
     ])

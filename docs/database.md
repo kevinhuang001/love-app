@@ -15,7 +15,7 @@
 向导包含：
 
 - 数据库：SQLite（默认）、Compose 内置 PostgreSQL 18、外部 PostgreSQL。
-- 访问：域名与自动 HTTPS，或仅本机 HTTP；HTTP 端口默认 3000。
+- 访问：域名与自动 HTTPS，或直接 HTTP。HTTP 监听 IP 可选 `127.0.0.1`（默认，仅本机）、`0.0.0.0`（全部 IPv4 网卡，用于局域网/公网）或指定宿主机 IPv4/IPv6；端口默认 3000。
 - 管理员：用户名默认 `admin`，密码可输入或留空自动生成。
 - 容量：新配对默认 1024 MiB，0 禁止新增上传。
 - SMTP：可选配置主机、端口、加密、账号、授权码、发件邮箱及初始注册方式。默认仅管理员建号，后续可在后台配置邮件注册。
@@ -24,11 +24,15 @@
 
 再次执行 `./love up` 复用配置。`./love setup` 重新运行向导，空密码保留原值，媒体密钥保持不变。重建容器复用命名卷；`./love down` 停止服务并保留卷。`./love logs` 查看日志，`./love ps` 查看状态。已有手写 `.env` 的部署也可继续使用直接 Compose 命令。
 
+公网 HTTP 直连：运行 `./love setup`，HTTPS 选“否”，HTTP 监听地址选 `0.0.0.0`，再运行 `./love up`。开放所选端口后，用 `http://服务器实际IP:端口` 访问 Web 或配置 APK。`0.0.0.0` 是监听地址，不能填进手机服务器 URL；指定 IP 必须是宿主机已有网卡的地址，云服务器通过 NAT 提供公网 IP 时通常选 `0.0.0.0`。HTTP 未加密，公网建议使用 HTTPS。向导保持 Android 所需的跨域来源，并在直接 HTTP 暴露时设置 `TRUST_PROXY=0`。
+
 初始 SMTP、注册方式与默认容量仅在数据库尚无管理配置时写入，之后以后台保存的配置为准。管理入口仍为 `/#admin`，前台不显示入口。
 
 ## 直接配置 Compose
 
 SQLite：
+
+手动 `.env` 可设置 `LOVE_BIND_IP=0.0.0.0`、`LOVE_PORT=3000`、`LOVE_HTTPS=0`、`TRUST_PROXY=0`，无需修改 Compose。使用 `./love up` 会按 `LOVE_HTTPS` 自动选择 HTTPS profile；直接 Compose 请自行选择是否加 `--profile https`。
 
 ```sh
 docker compose -p love-v4 --profile https up -d --build --wait
@@ -61,4 +65,4 @@ docker compose -p love-v4 -f compose.yml -f compose.postgres.yml exec -T postgre
 
 ## 验证
 
-CI 分别对 SQLite 与真实 PostgreSQL 运行相同后端测试，覆盖认证、一次性验证码、配对隔离、头像/视频、并发容量限制、AI 工具与本地通知事件流。Docker CI 分别测试两种部署，并重建 PostgreSQL 与应用容器验证持久化。终端向导测试覆盖默认值、配置复用、取消及 Compose 对特殊密码的解析。
+CI 分别对 SQLite 与真实 PostgreSQL 运行相同后端测试，覆盖认证、一次性验证码、配对隔离、头像/视频、并发容量限制、AI 工具与本地通知事件流。Docker CI 分别测试两种部署，并重建 PostgreSQL 与应用容器验证持久化。终端向导测试覆盖默认值、绑定 IP 校验/复用、取消及 Compose 对特殊密码的解析，Docker 测试检查实际容器的 `0.0.0.0` 端口绑定。

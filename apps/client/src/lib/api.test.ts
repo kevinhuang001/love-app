@@ -59,3 +59,66 @@ describe('server connection feedback', () => {
     await assertion;
   });
 });
+
+describe('connection test uses public Love endpoints', () => {
+  const api = new Api({ server: 'http://192.168.1.10:3000', token: '' });
+  const config = { registration: 'closed', registrationAvailable: false, mailAvailable: false };
+  it('checks health and the usable login configuration without credentials', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          status: 'ok',
+          version: '2.2.3',
+          notifications: 'local',
+          database: 'sqlite',
+        }),
+      )
+      .mockResolvedValueOnce(Response.json(config));
+    vi.stubGlobal('fetch', fetch);
+    await expect(api.testConnection()).resolves.toEqual({ version: '2.2.3', config });
+    expect(fetch.mock.calls.map((call) => call[0])).toEqual([
+      'http://192.168.1.10:3000/api/health',
+      'http://192.168.1.10:3000/api/auth/config',
+    ]);
+    for (const [, init] of fetch.mock.calls) {
+      expect(init.body).toBeUndefined();
+      expect(init.headers.Authorization).toBeUndefined();
+    }
+  });
+  it('rejects unrelated servers, not just HTTP failures', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(Response.json({ status: 'ok', service: 'other' })),
+    );
+    await expect(api.testConnection()).rejects.toThrow('不是可用的 Love');
+  });
+  it('rejects malformed login configuration', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            status: 'ok',
+            version: '2.2.3',
+            notifications: 'local',
+            database: 'postgres',
+          }),
+        )
+        .mockResolvedValueOnce(Response.json({ registration: 'closed' })),
+    );
+    await expect(api.testConnection()).rejects.toThrow('登录接口响应异常');
+  });
+  it('explains an HTML page in Chinese', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response('<html>proxy</html>', { headers: { 'Content-Type': 'text/html' } }),
+        ),
+    );
+    await expect(api.testConnection()).rejects.toThrow('没有返回有效的 Love 数据');
+  });
+});

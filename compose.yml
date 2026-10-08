@@ -5,7 +5,9 @@ services:
       context: .
       dockerfile: ${LOVE_DOCKERFILE:-Dockerfile}
     ports:
-      - '127.0.0.1:${LOVE_PORT:-3000}:3000'
+      - target: 3000
+        published: '${LOVE_PORT:-3000}'
+        host_ip: '${LOVE_BIND_IP:-127.0.0.1}'
     environment:
       NODE_ENV: production
       DATABASE_PROVIDER: ${DATABASE_PROVIDER:-}

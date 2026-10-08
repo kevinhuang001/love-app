@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, Server, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CaptchaField, type CaptchaValue } from '@/components/CaptchaField';
-import { Api, defaultServer, normalizeServer } from '@/lib/api';
+import { Api, defaultServer, normalizeServer, type AuthConfig } from '@/lib/api';
 import type { Session } from '@/lib/types';
-export type AuthConfig = {
-  registration: 'closed' | 'email' | 'whitelist';
-  registrationAvailable: boolean;
-  mailAvailable: boolean;
-};
 export function Auth({ onSession }: { onSession: (session: Session) => Promise<void> }) {
   const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login'),
     [server, setServer] = useState(localStorage.getItem('love.server') || defaultServer()),
@@ -29,6 +24,9 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
     [captcha, setCaptcha] = useState<CaptchaValue>({ id: '', code: '' }),
     [refreshToken, setRefreshToken] = useState(0),
     [notice, setNotice] = useState('');
+  const [testing, setTesting] = useState(false),
+    [connection, setConnection] = useState('');
+  const connectionAbort = useRef<AbortController | null>(null);
   const { api, serverError } = useMemo(() => {
     try {
       return { api: new Api({ server: normalizeServer(server), token: '' }), serverError: '' };
@@ -37,8 +35,43 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
     }
   }, [server]);
   useEffect(() => {
+    setConnection('');
+    setTesting(false);
+    return () => connectionAbort.current?.abort();
+  }, [server]);
+  async function testConnection() {
+    if (!api) {
+      setConnection(server.trim() ? serverError : '请先配置服务器地址');
+      return;
+    }
+    connectionAbort.current?.abort();
+    const controller = new AbortController();
+    connectionAbort.current = controller;
+    setTesting(true);
+    setConnection('');
+    const start = performance.now();
+    try {
+      const result = await api.testConnection(controller.signal);
+      if (controller.signal.aborted) return;
+      setConfig(result.config);
+      localStorage.setItem('love.server', api.session.server);
+      setConnection(
+        `连接成功 · Love ${result.version} · ${Math.round(performance.now() - start)} ms`,
+      );
+    } catch (error) {
+      if (!controller.signal.aborted) setConnection('连接失败：' + (error as Error).message);
+    } finally {
+      if (connectionAbort.current === controller) setTesting(false);
+    }
+  }
+  useEffect(() => {
     setConfig(null);
     setVerificationId('');
+    setError('');
+    if (!api) {
+      setUsername('');
+      setPassword('');
+    }
     const abort = new AbortController();
     const timer = setTimeout(() => {
       if (api)
@@ -167,88 +200,96 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-4">
-            {mode !== 'reset' && (
+            <fieldset disabled={!api} className="space-y-4">
+              {mode !== 'reset' && (
+                <div className="space-y-2">
+                  <Label htmlFor="username">用户名</Label>
+                  <Input
+                    id="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    minLength={3}
+                    maxLength={mode === 'login' ? 254 : 24}
+                    pattern={mode === 'register' ? '[a-zA-Z0-9_]{3,24}' : undefined}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    placeholder={
+                      !api
+                        ? '请先配置服务器地址'
+                        : mode === 'login'
+                          ? '用户名或已验证邮箱'
+                          : '字母、数字或下划线'
+                    }
+                  />
+                </div>
+              )}
+              {mode === 'register' && (
+                <div className="space-y-2">
+                  <Label htmlFor="name">怎么称呼你</Label>
+                  <Input
+                    id="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={40}
+                    required
+                    autoComplete="nickname"
+                    placeholder={!api ? '请先配置服务器地址' : '你的昵称'}
+                  />
+                </div>
+              )}
+              {mode !== 'login' && (
+                <div className="space-y-2">
+                  <Label htmlFor="email">邮箱</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      setVerificationId('');
+                      setNotice('');
+                    }}
+                    required
+                    maxLength={254}
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder={!api ? '请先配置服务器地址' : 'you@example.com'}
+                  />
+                  {mode === 'register' && config?.registration === 'whitelist' && (
+                    <p className="text-[10px] text-muted-foreground">
+                      此服务器仅接受白名单邮箱注册。
+                    </p>
+                  )}
+                </div>
+              )}
               <div className="space-y-2">
-                <Label htmlFor="username">用户名</Label>
-                <Input
-                  id="username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  required
-                  minLength={3}
-                  maxLength={mode === 'login' ? 254 : 24}
-                  pattern={mode === 'register' ? '[a-zA-Z0-9_]{3,24}' : undefined}
-                  autoComplete="username"
-                  autoCapitalize="none"
-                  placeholder={mode === 'login' ? '用户名或已验证邮箱' : '字母、数字或下划线'}
-                />
+                <Label htmlFor="password">{mode === 'reset' ? '新密码' : '密码'}</Label>
+                <div className="relative">
+                  <Input
+                    className="pr-11"
+                    id="password"
+                    type={visible ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={mode === 'login' ? 1 : 8}
+                    maxLength={128}
+                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                    placeholder={!api ? '请先配置服务器地址' : '至少 8 位'}
+                  />
+                  <button
+                    type="button"
+                    aria-label={visible ? '隐藏密码' : '显示密码'}
+                    onClick={() => setVisible(!visible)}
+                    className="absolute inset-y-0 right-3 text-muted-foreground"
+                  >
+                    {visible ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
               </div>
-            )}
-            {mode === 'register' && (
-              <div className="space-y-2">
-                <Label htmlFor="name">怎么称呼你</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={40}
-                  required
-                  autoComplete="nickname"
-                  placeholder="你的昵称"
-                />
-              </div>
-            )}
-            {mode !== 'login' && (
-              <div className="space-y-2">
-                <Label htmlFor="email">邮箱</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    setVerificationId('');
-                    setNotice('');
-                  }}
-                  required
-                  maxLength={254}
-                  autoComplete="email"
-                  autoCapitalize="none"
-                  spellCheck={false}
-                  placeholder="you@example.com"
-                />
-                {mode === 'register' && config?.registration === 'whitelist' && (
-                  <p className="text-[10px] text-muted-foreground">
-                    此服务器仅接受白名单邮箱注册。
-                  </p>
-                )}
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="password">{mode === 'reset' ? '新密码' : '密码'}</Label>
-              <div className="relative">
-                <Input
-                  className="pr-11"
-                  id="password"
-                  type={visible ? 'text' : 'password'}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={mode === 'login' ? 1 : 8}
-                  maxLength={128}
-                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                  placeholder="至少 8 位"
-                />
-                <button
-                  type="button"
-                  aria-label={visible ? '隐藏密码' : '显示密码'}
-                  onClick={() => setVisible(!visible)}
-                  className="absolute inset-y-0 right-3 text-muted-foreground"
-                >
-                  {visible ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
+            </fieldset>
             {api && (mode === 'login' || !verificationId) && (
               <CaptchaField
                 api={api}
@@ -309,9 +350,9 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                 {notice}
               </p>
             )}
-            {(serverError || error) && (
+            {error && (
               <p role="alert" className="text-sm text-destructive">
-                {serverError || error}
+                {error}
               </p>
             )}
             <Button
@@ -371,6 +412,20 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
               <p className="text-xs leading-6 text-muted-foreground">
                 支持 http://IP:端口 或 https://域名。HTTP 连接未加密，公网建议使用 HTTPS。
               </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={testing || busy}
+                onClick={() => void testConnection()}
+              >
+                {testing ? '正在测试…' : '测试连接'}
+              </Button>
+              {connection && (
+                <p role="status" className="text-xs leading-6 text-muted-foreground">
+                  {connection}
+                </p>
+              )}
             </div>
           </div>
         </details>

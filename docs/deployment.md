@@ -16,13 +16,24 @@ ADMIN_USERNAME=你的管理员用户名
 ADMIN_PASSWORD=至少12字符的随机密码
 ```
 
-`MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员启动变量仅创建首个账号，创建后移除两个变量；通过登录页“管理后台”配置 SMTP 和注册政策。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
+`MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员启动变量仅创建首个账号，创建后移除两个变量；管理员独立访问 `/#admin` 配置 SMTP 和注册政策，用户页面不显示入口。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
 
 ```bash
 docker compose -p love-v4 --profile https up -d --build
 ```
 
-数据保存于 Docker `love-data` volume。`https` profile 启动仓库内置 Caddy，开放 80/443，自动申请证书并转发到内部 `love:3000`（支持 Socket.IO WebSocket）。先将 `LOVE_DOMAIN` 的 DNS 指向服务器，并开放端口。APK 使用相同 HTTPS 根地址。服务另外只绑定宿主 `127.0.0.1:${LOVE_PORT:-3000}`，可供本机访问。仅运行 `docker compose -p love-v4 up -d --build` 时不启动 Caddy，适合本机调试或使用已有 Nginx/Caddy。不要两个反向代理同时占用 80/443。
+数据保存于 Docker `love-data` volume。`https` profile 启动仓库内置 Caddy，开放 80/443，自动申请证书并转发到内部 `love:3000`（支持 Socket.IO WebSocket）。先将 `LOVE_DOMAIN` 的 DNS 指向服务器，并开放端口。APK 使用相同 HTTPS 根地址。HTTP 端口绑定由 `LOVE_BIND_IP` 控制，默认 `127.0.0.1`；可设为 `0.0.0.0` 或宿主机指定 IP。仅运行 `docker compose -p love-v4 up -d --build` 时不启动 Caddy，适合本机调试或使用已有 Nginx/Caddy。不要两个反向代理同时占用 80/443。
+
+直接 HTTP 访问可在 `.env` 配置：
+
+```dotenv
+LOVE_BIND_IP=0.0.0.0
+LOVE_PORT=3000
+LOVE_HTTPS=0
+TRUST_PROXY=0
+```
+
+运行 `./love up`（或不加 HTTPS profile 的 Compose），开放所选端口；浏览器和 APK 使用 `http://服务器实际IP:3000`。`0.0.0.0` 只用于监听，不能当手机的服务器地址。已有部署可执行 `./love setup` 修改监听 IP，再 `./love up` 重新创建服务；数据卷保留。HTTP 未加密，公网建议配置 HTTPS。
 
 日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `docker compose -p love-v4 --profile https up -d --build`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
 

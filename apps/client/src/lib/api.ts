@@ -1,6 +1,11 @@
 import { Preferences } from '@capacitor/preferences';
 import { Capacitor } from '@capacitor/core';
 import type { Session, UploadedMedia } from './types';
+export type AuthConfig = {
+  registration: 'closed' | 'email' | 'whitelist';
+  registrationAvailable: boolean;
+  mailAvailable: boolean;
+};
 export function normalizeServer(input: string): string {
   const message =
     '请输入完整的服务器根地址，例如 http://192.168.1.10:3000 或 https://love.example.com';
@@ -19,6 +24,8 @@ export function normalizeServer(input: string): string {
     (url.pathname !== '/' && url.pathname !== '')
   )
     throw new Error(message);
+  if (['0.0.0.0', '[::]'].includes(url.hostname))
+    throw new Error('这是服务器监听地址，请填写服务器的实际 IP 或域名');
   return url.origin;
 }
 export class Api {
@@ -26,6 +33,36 @@ export class Api {
     public session: Session,
     public unauthorized: () => void = () => {},
   ) {}
+  async testConnection(signal?: AbortSignal) {
+    try {
+      const health = await this.request<{
+        status: string;
+        version: string;
+        notifications: string;
+        database: string;
+      }>('/api/health', { signal });
+      if (
+        health?.status !== 'ok' ||
+        typeof health.version !== 'string' ||
+        health.notifications !== 'local' ||
+        !['sqlite', 'postgres'].includes(health.database)
+      )
+        throw new Error('该地址不是可用的 Love 服务器根地址');
+      const config = await this.request<AuthConfig>('/api/auth/config', { signal });
+      if (
+        !config ||
+        !['closed', 'email', 'whitelist'].includes(config.registration) ||
+        typeof config.registrationAvailable !== 'boolean' ||
+        typeof config.mailAvailable !== 'boolean'
+      )
+        throw new Error('服务器登录接口响应异常，请检查服务器地址');
+      return { version: health.version, config };
+    } catch (error) {
+      if (error instanceof SyntaxError)
+        throw new Error('服务器没有返回有效的 Love 数据，请检查地址是否指向服务器根目录');
+      throw error;
+    }
+  }
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const timeout = AbortSignal.timeout(init.body instanceof FormData ? 240_000 : 20_000);
     let response: Response;

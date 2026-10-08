@@ -47,6 +47,8 @@ npm run android:prepare
 
 ## Docker 部署
 
+中国大陆部署可用 `LOVE_DOCKERFILE=Dockerfile.cn ./love up`，使用 npmmirror 的 npm 源、中科大的 pip 和 apt 源，保留首次配置向导。已有部署在 `.env` 设置 `LOVE_DOCKERFILE=Dockerfile.cn` 后运行 `./love up`。详见 [国内镜像构建](docs/docker-cn.md)。
+
 ```bash
 cp .env.docker.example .env
 # 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET、LOVE_DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD

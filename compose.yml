@@ -1,7 +1,9 @@
 services:
   love:
     image: ${LOVE_IMAGE:-love-app:local}
-    build: .
+    build:
+      context: .
+      dockerfile: ${LOVE_DOCKERFILE:-Dockerfile}
     ports:
       - '127.0.0.1:${LOVE_PORT:-3000}:3000'
     environment:

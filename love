@@ -35,6 +35,12 @@ compose() {
   fi
   docker compose --project-name "$project" --env-file .env $files "$@"
 }
+running_app_containers() {
+  docker ps --quiet --no-trunc \
+    --filter "label=com.docker.compose.project=$project" \
+    --filter 'label=com.docker.compose.service=love' \
+    --filter 'label=com.docker.compose.oneoff=False'
+}
 ui() {
   ui_status=1
   ensure_image || return 1
@@ -92,7 +98,7 @@ backup() {
   ensure_image || return 1
   backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$backup_dir" || return 1
-  running=$(compose ps --status running -q love) || return 1
+  running=$(running_app_containers) || return 1
   [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
   compose stop love || return 1
   cp .env "$backup_dir/deployment.env" || { [ -z "$running" ] || compose start love; return 1; }
@@ -131,9 +137,19 @@ restore() {
 update() {
   require_config && ensure_image || return 1
   printf '正在检查 GHCR 更新…\n'
-  running=$(compose ps --status running -q love) || return 1
-  if [ -n "$running" ]; then current_id=$(docker inspect "$running" --format '{{.Image}}') || return 1
-  else current_id=$(docker image inspect "$image" --format '{{.Id}}') || return 1; fi
+  running=$(running_app_containers) || return 1
+  current_id=''
+  # docker ps may return several IDs. Inspect each separately, never a quoted
+  # multiline argument. All application instances must use the same image.
+  for container_id in $running; do
+    container_image=$(docker container inspect "$container_id" --format '{{.Image}}') || return 1
+    if [ -n "$current_id" ] && [ "$current_id" != "$container_image" ]; then
+      printf '当前部署有多个运行实例使用不同镜像，无法安全确定更新版本；请先在状态页检查实例。\n' >&2
+      return 1
+    fi
+    current_id=$container_image
+  done
+  [ -n "$current_id" ] || current_id=$(docker image inspect "$image" --format '{{.Id}}') || return 1
   latest=$(docker run --rm -i --entrypoint node "$image" --input-type=module - "$current_id" <<'GHCR_CHECK'
 // Read registry metadata without pulling layers or stopping the running application.
 const repository = 'kevinhuang001/love-app';

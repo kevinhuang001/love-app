@@ -147,8 +147,34 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
       '-e',
       `import {openDatabase} from '/app/apps/server/dist/db.js';import fs from 'node:fs/promises';const db=await openDatabase({path:process.env.DATABASE_URL||process.env.DATABASE_PATH,provider:process.env.DATABASE_PROVIDER});try{${code}}finally{await db.close()}`,
     );
+  let maintenanceContainer;
   try {
     menu('2\n0\n');
+    const applicationContainer = compose('ps', '--status', 'running', '-q', 'love').trim();
+    maintenanceContainer = compose(
+      'run',
+      '-d',
+      '--no-deps',
+      '--entrypoint',
+      'sh',
+      'love',
+      '-c',
+      'sleep 300',
+    ).trim();
+    assert.notEqual(maintenanceContainer, applicationContainer);
+    const selector = (await readFile('love', 'utf8')).match(
+      /^running_app_containers\(\) \{[\s\S]*?^\}/m,
+    )[0];
+    const selected = execFileSync(
+      'sh',
+      ['-c', selector + '\nproject=$1; running_app_containers', 'manager-selector', project],
+      { encoding: 'utf8' },
+    ).trim();
+    assert.equal(
+      selected,
+      applicationContainer,
+      'the manager ignores a running Compose one-off task',
+    );
     query(
       `await db.prepare("INSERT INTO server_config(key,value) VALUES('backup-proof','before')").run();`,
     );
@@ -184,6 +210,11 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
       `Interactive manager ${database}: start, consistent backup, checksums, database/media restore and safety backup verified.`,
     );
   } finally {
+    if (maintenanceContainer) {
+      try {
+        execFileSync('docker', ['rm', '-f', maintenanceContainer], { stdio: 'ignore' });
+      } catch {}
+    }
     compose('--profile', 'https', 'down', '--volumes', '--remove-orphans');
     await rm(dir, { recursive: true, force: true });
   }

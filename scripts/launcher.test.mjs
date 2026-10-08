@@ -35,6 +35,12 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  fs.writeFileSync(file,result||'');process.exit(0);
 }
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
+if(a[0]==='ps'){console.log(process.env.TEST_RUNNING_IDS);process.exit(0);}
+if(a[0]==='container'&&a[1]==='inspect'){
+ const id=a[2];if(!/^[a-f0-9]{64}$/.test(id)){console.error('error: no such object: '+id);process.exit(1);}
+ const ids=process.env.TEST_RUNNING_IDS.split('\\n');if(!ids.includes(id))process.exit(1);
+ console.log('sha256:'+(process.env.TEST_MIXED_IMAGES==='1'&&id===ids[1]?'d':'c').repeat(64));process.exit(0);
+}
 if(a.includes('--input-type=module')&&a.includes('-')){if(process.env.TEST_HAS_UPDATE==='1')console.log('ghcr.io/kevinhuang001/love-app@sha256:'+'a'.repeat(64));process.exit(process.env.TEST_CHECK_FAIL==='1'?1:0);}
 if(a.includes('--format'))console.log('fixture-status-output');
 if(a.includes('ps')&&a.includes('--status'))console.log('test-running-container');
@@ -83,6 +89,8 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
         TEST_IMAGE_MISSING: options.missing ? '1' : '0',
         TEST_HAS_UPDATE: options.update ? '1' : '0',
         TEST_CHECK_FAIL: options.checkFail ? '1' : '0',
+        TEST_RUNNING_IDS: (options.containers ?? ['a'.repeat(64)]).join('\n'),
+        TEST_MIXED_IMAGES: options.mixedImages ? '1' : '0',
         TERM: 'xterm-256color',
       },
       encoding: 'utf8',
@@ -164,6 +172,45 @@ test('up-to-date GHCR metadata does not pull layers, stop application or create 
   );
   assert.match(result.stdout, /已是最新版本/);
   assert.equal(config, base + "ADMIN_PASSWORD='$(touch injected)'\n");
+});
+test('multiple running IDs are inspected separately; only this project service and non-oneoff containers are selected', async (t) => {
+  const containers = ['a'.repeat(64), 'b'.repeat(64)];
+  const { calls, result, config } = await launch(t, base, '7\n0\n', { containers });
+  assert.match(result.stdout, /已是最新版本/);
+  assert.equal(config, base);
+  const selected = calls.find((args) => args[0] === 'ps');
+  for (const label of ['project=love-test', 'service=love', 'oneoff=False'])
+    assert.ok(selected.includes('label=com.docker.compose.' + label));
+  assert.deepEqual(
+    calls.filter((args) => args[0] === 'container' && args[1] === 'inspect').map((args) => args[2]),
+    containers,
+  );
+  assert.ok(calls.every((args) => args[0] !== 'pull' && !args.includes('stop')));
+});
+test('mixed running image versions stop before registry checks, backup or mutation', async (t) => {
+  const { calls, result, config } = await launch(t, base, '7\n0\n', {
+    containers: ['a'.repeat(64), 'b'.repeat(64)],
+    mixedImages: true,
+  });
+  assert.match(result.stderr, /多个运行实例使用不同镜像/);
+  assert.equal(config, base);
+  assert.ok(
+    calls.every(
+      (args) =>
+        !args.includes('--input-type=module') &&
+        args[0] !== 'pull' &&
+        !args.includes('stop') &&
+        !args.includes('tar'),
+    ),
+  );
+});
+test('a stopped application compares its local image without inspecting a container ID', async (t) => {
+  const { calls, result } = await launch(t, base, '7\n0\n', { containers: [] });
+  assert.match(result.stdout, /已是最新版本/);
+  assert.ok(
+    calls.some((args) => args[0] === 'image' && args[1] === 'inspect' && args.includes('{{.Id}}')),
+  );
+  assert.ok(!calls.some((args) => args[0] === 'container'));
 });
 test('failed update check and cancelled new version leave application and config unchanged', async (t) => {
   for (const options of [{ checkFail: true }, { update: true }]) {

@@ -80,7 +80,7 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
   }
 });
 
-test('schema 5 adds second-precision fields without changing pair configuration or existing dates', async (t) => {
+test('schema 5 and 6 upgrade schedules and media settings without changing pair configuration or existing dates', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-time-upgrade-'));
   const schema = process.env.TEST_DATABASE_URL
     ? 'test_' + randomUUID().replaceAll('-', '')
@@ -128,12 +128,39 @@ test('schema 5 adds second-precision fields without changing pair configuration 
     assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '00:00:00');
     assert.equal((await db.prepare('SELECT * FROM couple_ai_settings').get())!.secret, 'encrypted');
     await db.prepare('UPDATE todos SET time=?').run('12:34:56');
+    await db.exec('DROP TABLE couple_media_settings');
+    await db.exec(
+      db.provider === 'sqlite' ? 'PRAGMA user_version=6' : 'UPDATE database_meta SET version=6',
+    );
   } finally {
     await db.close();
   }
   db = await openDatabase(options);
   try {
     assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '12:34:56');
+    assert.equal((await db.prepare('SELECT * FROM couple_ai_settings').get())!.secret, 'encrypted');
+    assert.equal(
+      (await db.prepare('SELECT COUNT(*) count FROM couple_media_settings').get())!.count,
+      0,
+    );
+    const version = await db
+      .prepare(
+        db.provider === 'sqlite'
+          ? 'PRAGMA user_version'
+          : 'SELECT version AS user_version FROM database_meta',
+      )
+      .get();
+    assert.equal(version!.user_version, 7);
+    await db.prepare('INSERT INTO couple_media_settings VALUES(?,?)').run('pair', 0);
+  } finally {
+    await db.close();
+  }
+  db = await openDatabase(options);
+  try {
+    assert.equal(
+      (await db.prepare('SELECT retainOriginal FROM couple_media_settings').get())!.retainOriginal,
+      0,
+    );
   } finally {
     await db.close();
   }

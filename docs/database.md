@@ -53,7 +53,7 @@ DATABASE_PROVIDER=postgres
 DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/love?sslmode=verify-full
 ```
 
-可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 数据在启动时原子升级到 schema 6，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥与上传文件需要一同备份。
+可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 数据在启动时原子升级到 schema 7，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥与上传文件需要一同备份。
 
 ## PostgreSQL 备份
 

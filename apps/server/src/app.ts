@@ -228,6 +228,12 @@ export async function createApp(options: AppOptions = {}) {
       enabled: Boolean(row?.enabled),
     };
   };
+  const retainOriginal = async (coupleId: string) => {
+    const settings = await db
+      .prepare('SELECT retainOriginal FROM couple_media_settings WHERE coupleId=?')
+      .get(coupleId);
+    return settings ? Boolean(Number(settings.retainOriginal)) : true;
+  };
   const profile = async (user: User) => {
     const counterpart = await partner(user);
     return {
@@ -239,6 +245,7 @@ export async function createApp(options: AppOptions = {}) {
             ...(await db.prepare('SELECT * FROM couples WHERE id=?').get(user.coupleId)),
             storageBytes: await control.usage(user.coupleId),
             quotaBytes: await control.quota(user.coupleId),
+            retainOriginal: await retainOriginal(user.coupleId),
           }
         : null,
     };
@@ -255,7 +262,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.5.1',
+      version: '2.6.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -481,6 +488,23 @@ export async function createApp(options: AppOptions = {}) {
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     res.json({ startDate, startTime });
   });
+  route('patch', '/api/couple/media-settings', async (req, res) => {
+    const value = z.object({ retainOriginal: z.boolean() }).strict().parse(req.body);
+    const id = await couple(req);
+    await transaction(db, async () => {
+      const current = await db
+        .prepare('SELECT coupleId,disabled FROM users WHERE id=?')
+        .get(req.user.id);
+      if (current?.coupleId !== id || current.disabled) fail(409, '账号或配对状态已改变');
+      await db
+        .prepare(
+          'INSERT INTO couple_media_settings(coupleId,retainOriginal) VALUES(?,?) ON CONFLICT(coupleId) DO UPDATE SET retainOriginal=excluded.retainOriginal',
+        )
+        .run(id, value.retainOriginal ? 1 : 0);
+    });
+    io.to(`couple:${id}`).emit('profile:changed');
+    res.json(value);
+  });
   const avatarUpload = multer({
     dest: join(uploads, 'tmp'),
     limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 },
@@ -671,10 +695,16 @@ export async function createApp(options: AppOptions = {}) {
         try {
           if (error) throw error;
           if (!req.file) fail(400, '请选择支持的图片或视频');
-          const media = await processMedia(req.file!.path, req.file!.mimetype, uploads);
-          generatedFiles = [media.original, media.preview, media.thumbnail].map((name) =>
-            join(uploads, name),
+          const keepOriginal = await retainOriginal((req as AuthRequest).user.coupleId!);
+          const media = await processMedia(
+            req.file!.path,
+            req.file!.mimetype,
+            uploads,
+            keepOriginal,
           );
+          generatedFiles = [media.original, media.preview, media.thumbnail]
+            .filter(Boolean)
+            .map((name) => join(uploads, name));
           const user = (await db
             .prepare('SELECT * FROM users WHERE id=?')
             .get((req as AuthRequest).user.id)) as User;
@@ -682,7 +712,7 @@ export async function createApp(options: AppOptions = {}) {
             fail(409, '配对关系已改变');
           const sizes = await Promise.all(
             [media.original, media.preview, media.thumbnail].map((name) =>
-              stat(join(uploads, name)).then((s) => s.size),
+              name ? stat(join(uploads, name)).then((s) => s.size) : Promise.resolve(0),
             ),
           );
           const totalBytes = sizes.reduce((a, b) => a + b, 0);
@@ -699,6 +729,8 @@ export async function createApp(options: AppOptions = {}) {
             )
               fail(409, '账号或配对状态已改变，请重新登录');
             const limit = await control.quota(current.coupleId);
+            if (current.coupleId && (await retainOriginal(current.coupleId)) !== keepOriginal)
+              fail(409, '媒体保存设置已改变，请重新上传');
             if (!current.coupleId || (await control.usage(current.coupleId)) + totalBytes > limit)
               fail(413, '两人空间存储已达到配额，请联系管理员');
             await db
@@ -726,7 +758,11 @@ export async function createApp(options: AppOptions = {}) {
             .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
         } catch (err) {
           if (!committed)
-            await Promise.all(generatedFiles.map((path) => rm(path, { force: true })));
+            await Promise.all(
+              [...generatedFiles, ...(req.file ? [req.file.path] : [])].map((path) =>
+                rm(path, { force: true }),
+              ),
+            );
           next(
             err instanceof HttpError || err instanceof multer.MulterError
               ? err

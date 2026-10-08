@@ -114,3 +114,5 @@ GET `/api/notifications/stream` 使用 Bearer 认证，返回 SSE。可选 `afte
 AI 地址、模型、密钥、启用状态、名称与头像以 `coupleId` 为单位保存，配对双方均可 GET/POST 设置及 PATCH 助手身份，修改向双方发送 `profile:changed`。响应只包含 `hasKey`，不包含密钥；同地址下省略 `apiKey` 保留密钥，切换地址会清空旧密钥。助手头像可引用当前配对任一方上传的图片。解除后不能访问原配置，重新配对不继承原空间设置。
 
 所有纪念日 / To Do 的 time 和配对 startTime 使用 HH:mm:ss，默认 00:00:00；日期与时间按 UTC+8 解释。每年重复保留所设时间，包括农历节日与闰年调整。客户端逐秒计算显示，不向服务器逐秒请求。AI 创建 / 编辑日程的工具同样提供 time 参数，set_relationship_date 提供 startTime。
+
+PATCH `/api/couple/media-settings` 接受 `{retainOriginal:boolean}`，只允许当前已配对用户修改。GET `/api/me` 的 couple 中包含 retainOriginal（默认 true），配置按配对共享，修改发送 profile:changed 给双方。false 表示之后上传的图片 / 视频仅保存压缩预览与缩略图；已有文件保留。媒体处理期间若保存方式改变，本次上传返回 409 并清理已生成文件，客户端可重新上传。

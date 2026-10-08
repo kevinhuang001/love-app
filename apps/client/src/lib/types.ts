@@ -16,6 +16,7 @@ export type Profile = {
     startTime: string;
     storageBytes: number;
     quotaBytes: number;
+    retainOriginal: boolean;
   } | null;
 };
 export type Media = {

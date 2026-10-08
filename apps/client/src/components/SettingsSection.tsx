@@ -1,16 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import { ChevronDown } from 'lucide-react';
 
-export function SettingsSection({
-  title,
-  children,
-  defaultOpen = false,
-}: {
-  title: string;
-  children: ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
+export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(true);
   return (
     <details
       className="settings-section group rounded-2xl border bg-card text-card-foreground"

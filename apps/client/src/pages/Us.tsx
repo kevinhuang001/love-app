@@ -106,7 +106,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
   }
   return (
     <section className="page-scroll page-enter settings-page space-y-5 p-5 sm:p-8">
-      <SettingsSection title="个人资料" defaultOpen>
+      <SettingsSection title="个人资料">
         <div className="profile-heading flex items-center gap-5 py-2">
           <button
             aria-label="修改头像"
@@ -179,10 +179,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           </Button>
         </form>
       </SettingsSection>
-      <SettingsSection
-        title={profile.partner ? '已经找到你' : '连接另一半'}
-        defaultOpen={!profile.partner}
-      >
+      <SettingsSection title={profile.partner ? '已经找到你' : '连接另一半'}>
         {profile.partner ? (
           <>
             <div className="flex items-center gap-3">
@@ -290,8 +287,27 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             {(profile.couple.quotaBytes / 1048576).toFixed(0)} MiB
           </p>
           <p className="text-xs text-muted-foreground">
-            额度由管理员分配，两人共用；图片和视频的原文件、预览及缩略图均计入。
+            额度由管理员分配，两人共用，按实际保留的文件计算。
           </p>
+          <div className="flex items-center justify-between gap-4 border-t pt-4">
+            <div className="space-y-2">
+              <Label htmlFor="compressed-only">仅保存压缩图片和视频</Label>
+              <p className="text-xs leading-5 text-muted-foreground">
+                开启后，新上传的媒体只保留压缩版本和缩略图。此设置两人共享。
+              </p>
+            </div>
+            <Switch
+              id="compressed-only"
+              checked={!profile.couple.retainOriginal}
+              disabled={busy}
+              onCheckedChange={(value) =>
+                void action(
+                  () => api.patch('/api/couple/media-settings', { retainOriginal: !value }),
+                  value ? '之后上传的媒体仅保存压缩版本' : '之后上传的媒体同时保留原文件',
+                )
+              }
+            />
+          </div>
         </SettingsSection>
       )}
       <SettingsSection title="外观与通知">
@@ -499,6 +515,24 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           )}
         </SettingsSection>
       )}
+      <SettingsSection title="使用条款与免责声明">
+        <div className="space-y-3 text-xs leading-6 text-muted-foreground">
+          <p>
+            本应用仅供合法的私人交流与内容记录。禁止上传、传播违法内容，禁止欺诈、骚扰、侵害他人权益及其他非法用途。
+          </p>
+          <p>
+            请仅上传你拥有合法使用权的内容，尊重他人的隐私、肖像与知识产权。你对自己上传、发送和通过
+            AI 执行的内容与操作负责。
+          </p>
+          <p>
+            请妥善保管账号及服务器凭据，并备份重要资料。只保存压缩媒体时，原文件需要自行另行保存；压缩可能降低画质。第三方
+            AI 服务的内容处理适用其自身条款，AI 结果可能存在错误。
+          </p>
+          <p>
+            应用按现状提供，不承诺持续可用或 AI 结果准确。本条款不排除或限制依法不能免除的责任。
+          </p>
+        </div>
+      </SettingsSection>
       <SettingsSection title="服务器与账号">
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Server size={14} />

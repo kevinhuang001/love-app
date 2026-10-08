@@ -158,7 +158,6 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     page.locator('.message-row[data-own="true"] img[alt="你的聊天头像"]').first(),
   ).toBeVisible();
   await page.getByRole('tab', { name: '我们', exact: true }).click();
-  await page.locator('details[data-section="外观与通知"] summary').click();
   await page.getByLabel('深色模式').click();
   await expect(page.locator('html')).toHaveClass(/dark/);
   const provider = createServer((_req, res) => {
@@ -171,7 +170,6 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   });
   await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
   try {
-    await page.locator('details[data-section="AI 助手"] summary').click();
     await page.getByLabel('AI 名称').fill('星星');
     await page.getByRole('button', { name: '保存 AI 名称', exact: true }).click();
     await expect(page.getByText('AI 名称已更新', { exact: true })).toBeVisible();
@@ -189,7 +187,11 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     await page.getByRole('button', { name: '保存 AI 配置' }).click();
     await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
     await other.getByRole('tab', { name: '我们', exact: true }).click();
-    await other.locator('details[data-section="AI 助手"] summary').click();
+    await expect(page.getByLabel('仅保存压缩图片和视频')).not.toBeChecked();
+    await page.getByLabel('仅保存压缩图片和视频').click();
+    await expect(other.getByLabel('仅保存压缩图片和视频')).toBeChecked();
+    await other.getByLabel('仅保存压缩图片和视频').click();
+    await expect(page.getByLabel('仅保存压缩图片和视频')).not.toBeChecked();
     await expect(other.getByLabel('AI 服务 URL')).toHaveValue(
       await page.getByLabel('AI 服务 URL').inputValue(),
     );

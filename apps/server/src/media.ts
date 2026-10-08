@@ -31,9 +31,14 @@ function run(command: string, args: string[], timeout = 180_000): Promise<string
     });
   });
 }
-export async function processMedia(source: string, mime: string, dir: string) {
+export async function processMedia(
+  source: string,
+  mime: string,
+  dir: string,
+  retainOriginal: boolean,
+) {
   const id = randomUUID();
-  const original = `${id}.source`,
+  const original = retainOriginal ? `${id}.source` : '',
     thumbnail = `${id}.thumb.webp`;
   let preview = `${id}.preview.webp`;
   try {
@@ -53,7 +58,8 @@ export async function processMedia(source: string, mime: string, dir: string) {
         .resize(480, 480, { fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 72 })
         .toFile(join(dir, thumbnail));
-      await rename(source, join(dir, original));
+      if (retainOriginal) await rename(source, join(dir, original));
+      else await rm(source);
       return {
         id,
         kind: 'image',
@@ -125,7 +131,8 @@ export async function processMedia(source: string, mime: string, dir: string) {
       'libwebp',
       join(dir, thumbnail),
     ]);
-    await rename(source, join(dir, original));
+    if (retainOriginal) await rename(source, join(dir, original));
+    else await rm(source);
     return {
       id,
       kind: 'video',
@@ -139,9 +146,10 @@ export async function processMedia(source: string, mime: string, dir: string) {
     };
   } catch (error) {
     await Promise.all(
-      [source, ...[original, preview, thumbnail].map((name) => join(dir, name))].map((path) =>
-        rm(path, { force: true }),
-      ),
+      [
+        source,
+        ...[original, preview, thumbnail].filter(Boolean).map((name) => join(dir, name)),
+      ].map((path) => rm(path, { force: true })),
     );
     throw error;
   }

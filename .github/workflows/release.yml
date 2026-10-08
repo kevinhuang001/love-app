@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.5.1
+        description: New version tag, for example v2.6.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.5.1' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.6.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,17 +85,18 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          更清晰的累计天数与可刷新的现代管理菜单。
+          配对共享的媒体保存选项、默认展开设置与使用条款。
 
-          - “在一起的日子”标题和天数放大，时分秒及起始时间缩小，突出累计天数。
-          - 时间显示组件统一管理主卡片与列表样式，移除旧的专用字号样式。
-          - 管理脚本切换页面时清理屏幕及滚动历史，刷新页面重新读取部署状态。
-          - 操作结果保留至按回车返回，日志、错误与一次性邀请码可以读完再清屏。
-          - 继续支持心跳在线状态、秒级公农历日程、配对共享 AI、HTTP / HTTPS、SQLite / PostgreSQL。
+          - 两人空间可开启“仅保存压缩图片和视频”，之后上传的媒体保留压缩预览及缩略图，压缩成功后丢弃原文件。
+          - 保存方式按配对共享，双方可修改并实时同步；图片与视频日期仍在压缩前自动识别，空间容量按实际保留的文件计算。
+          - 初始设置保留原文件，既有媒体不因修改设置被删除；切回保留原文件会作用于之后的上传。
+          - 设置各分区默认展开，仍支持手动收起，加入禁止非法用途、尊重隐私与知识产权等使用条款。
+          - SQLite / PostgreSQL 升级至 schema 7，新增媒体保存配置，保留已有用户、配对、媒体与 AI 设置。
+          - 继续支持秒级日程、心跳在线状态、清屏刷新管理菜单与下载镜像部署。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
-          现有 schema 4 / 5 数据卷无需清空，更新前请使用管理菜单备份。
+          现有 schema 4 / 5 / 6 数据卷无需清空，更新前请使用管理菜单备份。
 
           Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md

@@ -91,16 +91,18 @@ test('missing presence settles offline; schedules tick each second; settings fol
     .toBeLessThan(remaining);
   await page.getByRole('tab', { name: '我们', exact: true }).click();
   await expect(page.locator('body')).not.toContainText('两个人的生活');
+  await expect(page.locator('.settings-section:not([open])')).toHaveCount(0);
+  await expect(page.locator('details[data-section="使用条款与免责声明"]')).toContainText(
+    '禁止上传、传播违法内容',
+  );
   const ai = page.locator('details[data-section="AI 助手"]');
-  await expect(page.getByLabel('AI 服务 URL')).toBeHidden();
-  await ai.locator('summary').click();
+  await expect(page.getByLabel('AI 服务 URL')).toBeVisible();
   await page.getByLabel('AI 服务 URL').fill('https://example.com/v1');
   await ai.locator('summary').click();
   await expect(page.getByLabel('AI 服务 URL')).toBeHidden();
   await ai.locator('summary').click();
   await expect(page.getByLabel('AI 服务 URL')).toHaveValue('https://example.com/v1');
   const account = page.locator('details[data-section="服务器与账号"]');
-  await account.locator('summary').click();
   await expect(account).toContainText(base);
   await expect(account.getByRole('button', { name: '退出登录 / 切换服务器' })).toBeVisible();
   await page.screenshot({ path: 'test-results/foldable-settings.png', fullPage: true });

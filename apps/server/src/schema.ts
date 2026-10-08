@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS todos(
     repeat TEXT NOT NULL DEFAULT 'none', completed INTEGER NOT NULL DEFAULT 0, completedDate TEXT);
     CREATE INDEX IF NOT EXISTS todos_couple ON todos(coupleId);
 CREATE TABLE IF NOT EXISTS couple_ai_settings(coupleId TEXT PRIMARY KEY REFERENCES couples(id), baseUrl TEXT NOT NULL, model TEXT NOT NULL, secret TEXT NOT NULL, enabled INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '小爱', avatarMediaId TEXT REFERENCES media(id));
+CREATE TABLE IF NOT EXISTS couple_media_settings(coupleId TEXT PRIMARY KEY REFERENCES couples(id), retainOriginal INTEGER NOT NULL DEFAULT 1 CHECK(retainOriginal IN (0,1)));
     CREATE TABLE IF NOT EXISTS ai_jobs(messageId INTEGER PRIMARY KEY REFERENCES messages(id), userId TEXT REFERENCES users(id), status TEXT NOT NULL DEFAULT 'pending', error TEXT, transcript TEXT);
     CREATE TABLE IF NOT EXISTS ai_actions(messageId INTEGER, callId TEXT, result TEXT NOT NULL, PRIMARY KEY(messageId,callId));
     

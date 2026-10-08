@@ -153,6 +153,23 @@ export async function saveSession(session: Session | null) {
   if (session) await Preferences.set({ key: 'love.session', value: JSON.stringify(session) });
   else await Preferences.remove({ key: 'love.session' });
 }
+export async function readLoginHints(): Promise<{ server: string; username: string } | null> {
+  const { value } = await Preferences.get({ key: 'love.login' });
+  try {
+    const hints = value ? JSON.parse(value) : null;
+    return hints && typeof hints.username === 'string'
+      ? { server: normalizeServer(hints.server), username: hints.username }
+      : null;
+  } catch {
+    return null;
+  }
+}
+export async function saveLoginHints(server: string, username: string) {
+  await Preferences.set({
+    key: 'love.login',
+    value: JSON.stringify({ server: normalizeServer(server), username }),
+  });
+}
 export function defaultServer() {
   return (
     import.meta.env.VITE_API_URL || (Capacitor.isNativePlatform() ? '' : window.location.origin)

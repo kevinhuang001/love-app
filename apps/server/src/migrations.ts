@@ -16,3 +16,10 @@ ALTER TABLE couples ADD COLUMN startTime TEXT NOT NULL DEFAULT '00:00:00';
 ALTER TABLE anniversaries ADD COLUMN time TEXT NOT NULL DEFAULT '00:00:00';
 ALTER TABLE todos ADD COLUMN time TEXT NOT NULL DEFAULT '00:00:00';
 `;
+
+// Transform stored messages once; the API only accepts ordered attachment arrays.
+export const messageAttachmentsUpgrade = `
+INSERT INTO message_media(messageId,mediaId,position)
+SELECT id,mediaId,0 FROM messages WHERE mediaId IS NOT NULL;
+ALTER TABLE messages DROP COLUMN mediaId;
+`;

@@ -48,7 +48,7 @@ npm run android:prepare
 
 ## Android APK
 
-从 [Releases](https://github.com/kevinhuang001/love-app/releases/latest) 下载 APK 安装。主分支的 API、前端、手机端 E2E、PostgreSQL 和 Docker 测试全部通过后，CI 自动构建 APK 并发布版本 Release；push／PR 也提供 **love-android-apk** artifact。调试包用于自用和验证；发布签名步骤见 [Android 文档](docs/android.md)。
+从 [Releases](https://github.com/kevinhuang001/love-app/releases/latest) 下载 APK 安装。配置一次固定签名 Secret 后，主分支的 API、前端、手机端 E2E、PostgreSQL 和 Docker 测试全部通过时，CI 自动发布正式签名 APK；直接覆盖安装保留登录数据。未配置固定密钥时仅提供 **love-android-apk** 调试 artifact，不自动发布随机签名 APK。步骤见 [Android 文档](docs/android.md)。卸载或清除数据会删除本地登录信息。
 
 配对后在“我们 → 聊天通知”开启本地通知并允许后台运行。APK 直连自己的 HTTP/HTTPS 后端，无需推送密钥。服务有常驻状态通知；以应用进程存活为前提，系统休眠仍可能造成延迟。
 
@@ -72,7 +72,7 @@ CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、
 - [API、Socket.IO 与 AI 工具](docs/api.md)
 - [架构、目录和测试](docs/architecture.md)
 
-后端支持 SQLite 与 PostgreSQL，当前使用 schema 8，现有 schema 4 / 5 / 6 / 7 启动时原子升级，日期增加时分秒，AI 配置按配对共享；不提供旧 API 别名或 schema 3 及更早版本兼容。登录页底部展开“服务器设置”配置 URL。
+后端支持 SQLite 与 PostgreSQL，当前使用 schema 9，现有 schema 4 / 5 / 6 / 7 / 8 启动时原子升级，日期增加时分秒，AI 配置按配对共享；不提供旧 API 别名或 schema 3 及更早版本兼容。登录页底部展开“服务器设置”配置 URL。
 
 ## License
 

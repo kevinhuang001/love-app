@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.7.0
+        description: New version tag, for example v2.8.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.7.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.8.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,35 +78,43 @@ jobs:
           run-id: ${{ env.SOURCE_RUN_ID }}
       - name: Prepare APK and checksum
         if: steps.source.outputs.publish == 'true'
+        id: apk
         run: |
           set -euo pipefail
-          test -s release/app-debug.apk
-          apk="Love-${RELEASE_TAG}-debug.apk"
-          mv release/app-debug.apk "release/$apk"
+          test -s release/love.apk
+          if ! node --input-type=module -e 'import{readFileSync}from"node:fs";const s=JSON.parse(readFileSync("release/signing.json","utf8"));if(s.mode!=="release"||!/^[a-f0-9]{64}$/.test(s.certificateSha256))process.exit(1)'; then
+            echo '::warning::No fixed signing key configured. CI debug APK stays in Actions; configure Android signing Secrets to publish an APK that can retain login data across updates.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          apk="Love-${RELEASE_TAG}.apk"
+          mv release/love.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
+          cp release/signing.json "release/$apk.signing.json"
+          echo 'publish=true' >> "$GITHUB_OUTPUT"
           cat > release/NOTES.md <<'NOTES'
-          配置边界、仅 GHCR 部署、相册导出导入与无媒体硬限制。
+          聊天多图、AI 名字快捷补全与固定 APK 签名。
 
-          - .env 管理部署参数与管理员凭据，管理员身份每次启动同步；注册、邀请码、SMTP、容量和日志期限仅在后台配置。
-          - 只需下载 love 管理脚本即可部署，仅提供 GHCR 应用镜像。更新先查元数据，没有更新不下载镜像层、不停机、不备份；有更新才更新脚本与镜像。
-          - 相册支持普通 JPEG 照片 ZIP 和含图片、视频、日期、描述及保留原文件的完整 ZIP；完整 ZIP 可导入，校验哈希、空间与配对，失败不留下半份相册。
-          - Android 原生下载 ZIP，使用系统分享保存；重复导入相同包不会重复增加记录。
-          - 删除单文件大小、图片像素、视频分辨率、五分钟时长和固定媒体处理超时。预览继续压缩，配对总额度仍由管理员分配。
-          - SQLite / PostgreSQL schema 8 保留既有数据，新增相册导入记录。
+          - 输入 @ 或助手名称前缀，显示当前助手名字和头像，可点选或 Enter / Tab 补全。
+          - 聊天一次选择多张图片或多个视频，按顺序上传和合并为一条消息；支持逐项移除与失败重试。
+          - 视觉模型获得同一条消息的全部压缩图片与媒体 ID；视频提供封面。AI 工具续接不重复保存图片字节。
+          - Android 保存登录会话、服务器地址与用户名；采用仓库固定 keystore 签名，同签名覆盖更新保留应用数据。卸载或清除数据会丢失本地登录信息，服务器内容不受影响。
+          - SQLite / PostgreSQL schema 9 一次性迁移既有单附件消息；不保留旧单附件 API。
+          - 修复管理工具检查更新时多个容器 ID 合并成单个参数的问题。
 
-          APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
+          APK 来自通过 test、postgres、docker、android 的 Actions 构建，附文件 SHA-256 和签名证书指纹。此前调试 APK 与正式签名不同，首次转换需重新安装，此后请覆盖更新并始终使用同一 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
-          现有 schema 4 / 5 / 6 / 7 数据卷无需清空，更新前请使用管理菜单备份。
+          现有 schema 4 / 5 / 6 / 7 / 8 数据卷无需清空，更新前请使用管理菜单备份。
 
           Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
           管理：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
           NOTES
       - name: Publish release with APK assets
-        if: steps.source.outputs.publish == 'true'
+        if: steps.apk.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          apk="Love-${RELEASE_TAG}-debug.apk"
-          gh release create "$RELEASE_TAG" "release/$apk" "release/$apk.sha256" \
+          apk="Love-${RELEASE_TAG}.apk"
+          gh release create "$RELEASE_TAG" "release/$apk" "release/$apk.sha256" "release/$apk.signing.json" \
             --target "$GITHUB_SHA" --title "Love $RELEASE_TAG" --notes-file release/NOTES.md --draft
           gh release edit "$RELEASE_TAG" --draft=false --latest

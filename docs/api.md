@@ -14,7 +14,7 @@
 | DELETE         | /api/pairing              | 断开当前关系                                                                        |
 | PATCH          | /api/couple               | startDate（YYYY-MM-DD）、startTime（HH:mm:ss）                                      |
 | GET            | /api/messages?before=ID   | 最近 50 条升序 items、hasMore                                                       |
-| POST           | /api/messages             | clientId（UUID）、content、可选 mediaId                                             |
+| POST           | /api/messages             | clientId（UUID）、content、mediaIds（有序 UUID 数组，可为空）                       |
 | POST           | /api/messages/read        | throughId（已看过的最新 ID）                                                        |
 | POST           | /api/media                | multipart 文件字段 file；返回媒体 ID、签名预览 URL 和 capturedDate                  |
 | GET            | /api/media/:id/:variant   | 签名 thumbnail / preview，支持 Range                                                |
@@ -71,7 +71,13 @@ Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`�
 
 工具还包括 `list_todos`、`create_todo`、`update_todo`、`delete_todo`、`complete_todo` 和 `update_ai_profile`。待办 date 在 calendar=lunar 时代表农历年月日；repeat 是 none 或 yearly；leapMonth 是布尔值。
 
-工具：`list_anniversaries`、`create_anniversary`、`update_anniversary`、`delete_anniversary`、`update_profile`、`list_recent_media`、`publish_moment`、`set_relationship_date`。工具 JSON Schema 可通过接口获取，供外部 AI 客户端集成。外部 AI 客户端先用 POST `/api/media` 上传二进制文件，再把返回的 mediaId 传给 `publish_moment` 或 `update_profile`。聊天内附件由应用先上传，AI 接收其 ID；AI 不能凭空上传未提供的本机文件。
+聊天输入 `@` 或助手名称前缀时显示当前名字和头像，点击或 Enter / Tab 补全，Escape 收起。不提供旧 `@ai` 别名。
+
+消息发送前逐个上传附件，再将返回的 ID 放入同一条消息的 `mediaIds`，按选择顺序保存。重复 ID、其他用户或其他空间媒体拒绝整条消息。响应、列表和实时事件均提供 `attachments: Media[]`；旧单附件 `mediaId` 输入不再接受。单附件旧消息在 schema 9 一次性迁入关联表并删除旧字段，保持原有顺序与内容。失败重试继续使用原 clientId 和已上传附件，不生成重复消息或 AI 任务。
+
+配置支持视觉输入的 OpenAI-compatible 模型后，AI 收到本次消息全部图片的压缩 WebP 数据，带顺序与对应媒体 ID；图片通过 `image_url` data URL 随请求传递，无需模型联网读取自建服务器。视频提供封面和时长，不表示模型看过完整视频。图片不会发送原图，也不会将 Base64 图片重复保存在 AI 工具调用记录中。纯文本模型不支持识图，需在“我们 → AI 助手”更换视觉模型。没有提及助手时不会发送附件给 AI。
+
+工具：`list_anniversaries`、`create_anniversary`、`update_anniversary`、`delete_anniversary`、`update_profile`、`list_recent_media`、`publish_moment`、`set_relationship_date`。工具 JSON Schema 可通过接口获取，供外部 AI 客户端集成。外部 AI 客户端先用 POST `/api/media` 上传二进制文件，再把返回的 mediaId 传给 `publish_moment` 或 `update_profile`。助手可以按附件顺序比较图片、选择头像，或逐个保存到相册；不能凭空上传未提供的本机文件。
 
 示例：
 

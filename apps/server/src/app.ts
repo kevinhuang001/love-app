@@ -200,7 +200,13 @@ export async function createApp(options: AppOptions = {}) {
   };
   const messageView = async (row: Record<string, unknown>) => ({
     ...row,
-    media: await mediaView(row.mediaId as string | null),
+    attachments: await Promise.all(
+      (
+        await db
+          .prepare('SELECT mediaId FROM message_media WHERE messageId=? ORDER BY position')
+          .all(row.id)
+      ).map((item) => mediaView(String(item.mediaId))),
+    ),
     assistant:
       row.role === 'assistant'
         ? {
@@ -264,7 +270,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.7.0',
+      version: '2.8.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -619,12 +625,16 @@ export async function createApp(options: AppOptions = {}) {
       .object({
         clientId: z.string().uuid(),
         content: text.max(4000).default(''),
-        mediaId: z.string().uuid().optional(),
+        mediaIds: z
+          .array(z.string().uuid())
+          .default([])
+          .refine((ids) => new Set(ids).size === ids.length, '附件不能重复'),
       })
-      .refine((v) => v.content || v.mediaId, '消息不能为空')
+      .strict()
+      .refine((v) => v.content || v.mediaIds.length, '消息不能为空')
       .parse(req.body);
     const coupleId = await couple(req);
-    await ownedMedia(value.mediaId, req);
+    for (const id of value.mediaIds) await ownedMedia(id, req);
     const existing = await db
       .prepare('SELECT * FROM messages WHERE senderId=? AND clientId=?')
       .get(req.user.id, value.clientId);
@@ -640,19 +650,17 @@ export async function createApp(options: AppOptions = {}) {
         .prepare('SELECT * FROM messages WHERE senderId=? AND clientId=?')
         .get(req.user.id, value.clientId);
       if (existing) return existing;
+      for (const mediaId of value.mediaIds) await ownedMedia(mediaId, req);
       const result = await db
         .prepare(
-          'INSERT INTO messages(coupleId,senderId,clientId,content,mediaId,createdAt) VALUES(?,?,?,?,?,?)',
+          'INSERT INTO messages(coupleId,senderId,clientId,content,createdAt) VALUES(?,?,?,?,?)',
         )
-        .run(
-          coupleId,
-          req.user.id,
-          value.clientId,
-          value.content,
-          value.mediaId || null,
-          new Date().toISOString(),
-        );
+        .run(coupleId, req.user.id, value.clientId, value.content, new Date().toISOString());
       const id = Number(result.lastInsertRowid);
+      for (const [position, mediaId] of value.mediaIds.entries())
+        await db
+          .prepare('INSERT INTO message_media(messageId,mediaId,position) VALUES(?,?,?)')
+          .run(id, mediaId, position);
       if (mentionsAI(value.content, String((await aiIdentity(req.user)).name)))
         await db.prepare('INSERT INTO ai_jobs(messageId,userId) VALUES(?,?)').run(id, req.user.id);
       return (await db.prepare('SELECT * FROM messages WHERE id=?').get(id))!;
@@ -1106,6 +1114,7 @@ export async function createApp(options: AppOptions = {}) {
   const worker = aiWorker({
     db,
     secret,
+    uploads,
     notify: async (id, row) => {
       io.to(`couple:${id}`).emit('message:new', await messageView(row));
       await streams.flush();

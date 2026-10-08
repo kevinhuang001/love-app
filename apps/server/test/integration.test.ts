@@ -126,7 +126,7 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .expect(403);
   await s
     .api(b.token)
-    .post('/api/messages', { clientId: randomUUID(), mediaId: upload.body.id })
+    .post('/api/messages', { clientId: randomUUID(), mediaIds: [upload.body.id] })
     .expect(403);
   await s
     .api(a.token)
@@ -317,6 +317,7 @@ test('named assistant encrypted config, tool execution and per-user permissions'
   let calls = 0;
   const worker = aiWorker({
     db: s.db,
+    uploads: join(s.dir, 'media'),
     secret: 'test-secret-at-least-thirty-two-chars',
     notify: () => {},
     changed: () => {},
@@ -540,6 +541,7 @@ test('custom AI name and avatar are separate from user identity and visible to b
   );
   const worker = aiWorker({
     db: s.db,
+    uploads: join(s.dir, 'media'),
     secret: 'test-secret-at-least-thirty-two-chars',
     notify: () => {},
     changed: () => {},

@@ -112,10 +112,29 @@ put(
 );
 const gradle = resolve(app, 'build.gradle');
 let build = readFileSync(gradle, 'utf8')
+  .replace(/\n\/\/ LOVE SIGNING BEGIN[\s\S]*?\/\/ LOVE SIGNING END\n?/g, '')
   .replace(
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
   .replace(/versionName "[^\"]*"/, 'versionName "' + appVersion + '"');
+build += `
+// LOVE SIGNING BEGIN
+def loveSigningPath = System.getenv("LOVE_ANDROID_KEYSTORE_PATH")
+if (loveSigningPath) {
+    android {
+        signingConfigs {
+            love {
+                storeFile file(loveSigningPath)
+                storePassword System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("LOVE_ANDROID_KEY_ALIAS") ?: "love"
+                keyPassword System.getenv("LOVE_ANDROID_KEY_PASSWORD") ?: System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+        buildTypes { release { signingConfig signingConfigs.love } }
+    }
+}
+// LOVE SIGNING END
+`;
 writeFileSync(gradle, build);
 cap('sync', 'android');

@@ -37,7 +37,7 @@ export type Message = {
   clientId: string;
   createdAt: string;
   readAt: string | null;
-  media: Media | null;
+  attachments: Media[];
   assistant: { name: string; avatar: Media | null } | null;
 };
 export type Moment = {

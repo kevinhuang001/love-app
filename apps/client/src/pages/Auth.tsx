@@ -5,7 +5,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CaptchaField, type CaptchaValue } from '@/components/CaptchaField';
-import { Api, defaultServer, normalizeServer, type AuthConfig } from '@/lib/api';
+import {
+  Api,
+  defaultServer,
+  normalizeServer,
+  readLoginHints,
+  saveLoginHints,
+  type AuthConfig,
+} from '@/lib/api';
 import type { Session } from '@/lib/types';
 export function Auth({ onSession }: { onSession: (session: Session) => Promise<void> }) {
   const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login'),
@@ -28,6 +35,21 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
   const [testing, setTesting] = useState(false),
     [connection, setConnection] = useState('');
   const connectionAbort = useRef<AbortController | null>(null);
+  const hintsLoaded = useRef(false);
+  useEffect(() => {
+    let active = true;
+    void readLoginHints().then((hints) => {
+      if (!active || hintsLoaded.current) return;
+      if (hints) {
+        setServer(hints.server);
+        setUsername(hints.username);
+      }
+      hintsLoaded.current = true;
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
   const { api, serverError } = useMemo(() => {
     try {
       return { api: new Api({ server: normalizeServer(server), token: '' }), serverError: '' };
@@ -144,6 +166,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
           : { captchaId: captcha.id, captcha: captcha.code }),
       });
       localStorage.setItem('love.server', api.session.server);
+      await saveLoginHints(api.session.server, username);
       await onSession({ server: api.session.server, token: result.token });
     } catch (err) {
       setError((err as Error).message);
@@ -209,7 +232,10 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                   <Input
                     id="username"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(e) => {
+                      hintsLoaded.current = true;
+                      setUsername(e.target.value);
+                    }}
                     required
                     minLength={3}
                     maxLength={mode === 'login' ? 254 : 24}
@@ -424,7 +450,10 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                 id="server"
                 type="url"
                 value={server}
-                onChange={(e) => setServer(e.target.value)}
+                onChange={(e) => {
+                  hintsLoaded.current = true;
+                  setServer(e.target.value);
+                }}
                 placeholder="https://love.example.com"
                 autoCapitalize="none"
                 spellCheck={false}

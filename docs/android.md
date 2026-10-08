@@ -13,7 +13,39 @@ cd apps/client/android
 ./gradlew assembleDebug
 ```
 
-APK 位于 `apps/client/android/app/build/outputs/apk/debug/app-debug.apk`。GitHub Actions 的 Test and build 完成测试、Docker 验证后生成 `love-android-apk`；无需配置推送 Secret。包名 `com.kevinhuang.love`。正式使用请用自己的固定 keystore 在 Android Studio Generate Signed Bundle / APK 中签名，keystore 不提交到仓库。不同 CI 调试包的签名可能不同，更新安装发生签名冲突时需卸载旧包。
+APK 位于 `apps/client/android/app/build/outputs/apk/debug/app-debug.apk`。GitHub Actions 生成 `love-android-apk`，包含 `love.apk` 和不含私钥的 `signing.json`。包名始终为 `com.kevinhuang.love`，WebView origin 始终为 `https://localhost`。
+
+## 更新与登录信息
+
+正常更新直接安装新 APK 覆盖旧版本，不要卸载。相同包名、相同签名且 versionCode 不降低时，Android 保留应用数据。登录会话、上次服务器地址和用户名保存在 Capacitor Preferences 中，密码不保存；退出登录仅清除会话，仍可复用服务器和用户名。会话默认有效期 30 天，过期、改密码或管理员撤销后需重新登录。
+
+卸载或清除应用数据会删除本地信息；应用不依赖 Android 云备份恢复登录，也不会把登录令牌写到公开下载目录。服务器上的配对、相册、聊天不会因卸载而删除。
+
+以前发布的 APK 使用临时调试签名，可能不能覆盖安装。转换到固定正式签名时通常需要最后一次重新安装；之后一直使用同一密钥覆盖更新。
+
+## 一次性配置固定 APK 签名
+
+在自己的电脑上生成 keystore（提示时设置密码并填写证书信息）：
+
+```bash
+keytool -genkeypair -keystore love-release.jks -alias love -keyalg RSA -keysize 3072 -validity 10000
+base64 < love-release.jks | tr -d '\n'
+```
+
+将第二行结果复制到仓库 [Settings → Secrets and variables → Actions](https://github.com/kevinhuang001/love-app/settings/secrets/actions)，创建：
+
+| Secret                           | 内容                         |
+| -------------------------------- | ---------------------------- |
+| `LOVE_ANDROID_KEYSTORE_BASE64`   | keystore 的 Base64           |
+| `LOVE_ANDROID_KEYSTORE_PASSWORD` | keystore 密码                |
+| `LOVE_ANDROID_KEY_ALIAS`         | 可不填，默认 `love`          |
+| `LOVE_ANDROID_KEY_PASSWORD`      | 可不填，默认同 keystore 密码 |
+
+备份 keystore 与密码，后续更新不要重新生成或替换。私钥不提交到 Git，不上传到 Release，也不进入 Docker 镜像。插件没有管理仓库 Secrets 的权限，需要仓库所有者在 GitHub 设置。
+
+配置后在 Actions 的 **Test and build** 点 **Run workflow**（main）。CI 使用固定密钥构建正式 APK，并核对 APK 实际签名证书；全部检查通过后发布 `Love-v2.8.0.apk`、文件 SHA-256 与签名指纹到 Release。没有配置密钥时，CI 仍构建调试 APK用于测试，但不自动发布随机签名 APK。
+
+本地正式构建：设置 `LOVE_ANDROID_KEYSTORE_PATH` 为 keystore 绝对路径，设置上述密码、alias 环境变量，执行 `npm run android:prepare` 和 `./gradlew assembleRelease`。APK 位于 `app/build/outputs/apk/release/app-release.apk`。无需配置任何推送 Secret。
 
 ## 使用
 

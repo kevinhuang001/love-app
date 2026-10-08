@@ -33,11 +33,31 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
         .prepare('INSERT INTO users(id,username,name,password,email,coupleId) VALUES(?,?,?,?,?,?)')
         .run(id, id, id, 'hash', id + '@example.test', id === 'unpaired' ? null : 'our-pair');
     }
-    await db.exec(`ALTER TABLE couples DROP COLUMN startTime;
+    await db.exec(`ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id);
+      ALTER TABLE couples DROP COLUMN startTime;
       ALTER TABLE anniversaries DROP COLUMN time;
       ALTER TABLE todos DROP COLUMN time;
       DROP TABLE couple_ai_settings;
       CREATE TABLE ai_settings(userId TEXT PRIMARY KEY REFERENCES users(id),baseUrl TEXT NOT NULL,model TEXT NOT NULL,secret TEXT NOT NULL,enabled INTEGER NOT NULL,name TEXT NOT NULL,avatarMediaId TEXT REFERENCES media(id));`);
+    await db
+      .prepare(
+        'INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES(?,?,?,?,?,?,?,?)',
+      )
+      .run(
+        'photo',
+        'our-pair',
+        'a',
+        'image',
+        'source',
+        'preview',
+        'thumb',
+        '2026-01-01T00:00:00.000Z',
+      );
+    await db
+      .prepare(
+        'INSERT INTO messages(coupleId,senderId,clientId,content,mediaId,createdAt) VALUES(?,?,?,?,?,?)',
+      )
+      .run('our-pair', 'a', 'old-message', '旧照片消息', 'photo', '2026-01-01T00:00:00.000Z');
     await db
       .prepare('INSERT INTO ai_settings VALUES(?,?,?,?,?,?,?)')
       .run('a', '', '', '', 0, '空白助手', null);
@@ -69,6 +89,17 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
       .all();
     assert.equal(tables.length, 0);
     assert.equal((await db.prepare('SELECT COUNT(*) n FROM users').get())!.n, 3);
+    const message = (await db
+      .prepare('SELECT * FROM messages WHERE clientId=?')
+      .get('old-message'))!;
+    assert.equal(message.content, '旧照片消息');
+    assert.equal(Object.hasOwn(message, 'mediaId'), false);
+    const attachments = await db
+      .prepare('SELECT mediaId,position FROM message_media WHERE messageId=?')
+      .all(message.id);
+    assert.equal(attachments.length, 1);
+    assert.equal(attachments[0].mediaId, 'photo');
+    assert.equal(attachments[0].position, 0);
   } finally {
     await db.close();
   }
@@ -100,7 +131,8 @@ test('schema 5, 6 and 7 upgrade schedules and media settings without changing pa
   });
   let db = await openDatabase(options);
   try {
-    await db.exec(`ALTER TABLE couples DROP COLUMN startTime;
+    await db.exec(`ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id);
+      ALTER TABLE couples DROP COLUMN startTime;
       ALTER TABLE anniversaries DROP COLUMN time;
       ALTER TABLE todos DROP COLUMN time;`);
     await db.prepare('INSERT INTO couples(id,startDate) VALUES(?,?)').run('pair', '2025-01-02');
@@ -128,7 +160,9 @@ test('schema 5, 6 and 7 upgrade schedules and media settings without changing pa
     assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '00:00:00');
     assert.equal((await db.prepare('SELECT * FROM couple_ai_settings').get())!.secret, 'encrypted');
     await db.prepare('UPDATE todos SET time=?').run('12:34:56');
-    await db.exec('DROP TABLE couple_media_settings');
+    await db.exec(
+      'ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id); DROP TABLE couple_media_settings',
+    );
     await db.exec(
       db.provider === 'sqlite' ? 'PRAGMA user_version=6' : 'UPDATE database_meta SET version=6',
     );
@@ -150,9 +184,11 @@ test('schema 5, 6 and 7 upgrade schedules and media settings without changing pa
           : 'SELECT version AS user_version FROM database_meta',
       )
       .get();
-    assert.equal(version!.user_version, 8);
+    assert.equal(version!.user_version, 9);
     await db.prepare('INSERT INTO couple_media_settings VALUES(?,?)').run('pair', 0);
-    await db.exec('DROP TABLE album_imports');
+    await db.exec(
+      'ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id); DROP TABLE album_imports',
+    );
     await db.exec(
       db.provider === 'sqlite' ? 'PRAGMA user_version=7' : 'UPDATE database_meta SET version=7',
     );

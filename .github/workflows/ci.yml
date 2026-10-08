@@ -141,6 +141,10 @@ jobs:
     timeout-minutes: 25
     env:
       LOVE_VERSION_CODE: ${{ github.run_number }}
+      LOVE_ANDROID_KEYSTORE_BASE64: ${{ secrets.LOVE_ANDROID_KEYSTORE_BASE64 }}
+      LOVE_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.LOVE_ANDROID_KEYSTORE_PASSWORD }}
+      LOVE_ANDROID_KEY_ALIAS: ${{ secrets.LOVE_ANDROID_KEY_ALIAS }}
+      LOVE_ANDROID_KEY_PASSWORD: ${{ secrets.LOVE_ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -157,12 +161,23 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - run: npm ci
       - run: npm run android:prepare
+      - name: Prepare persistent APK signing key
+        id: signing
+        run: node scripts/android-key.mjs
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - run: chmod +x gradlew && ./gradlew assemble${{ steps.signing.outputs.mode == 'release' && 'Release' || 'Debug' }} --no-daemon
         working-directory: apps/client/android
       - run: python scripts/verify-android-push.py
+        env:
+          LOVE_APK_PATH: ${{ steps.signing.outputs.apk }}
+          LOVE_APK_SIGNING_METADATA: ${{ steps.signing.outputs.metadata }}
+      - name: Prepare verified Android artifact
+        run: |
+          mkdir -p android-artifact
+          cp "${{ steps.signing.outputs.apk }}" android-artifact/love.apk
+          cp "${{ steps.signing.outputs.metadata }}" android-artifact/signing.json
       - uses: actions/upload-artifact@v4
         with:
           name: love-android-apk
-          path: apps/client/android/app/build/outputs/apk/debug/app-debug.apk
+          path: android-artifact/
           retention-days: 30

@@ -5,7 +5,7 @@ import { Heart, MessageCircle, Images, CalendarDays, UsersRound, ListTodo } from
 import { App as NativeApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { toast, Toaster } from 'sonner';
-import { Api, readSession, saveSession } from './lib/api';
+import { Api, readSession, saveSession, saveLoginHints } from './lib/api';
 import { AppContext } from './lib/context';
 import {
   clearNotificationListener,
@@ -45,6 +45,10 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     refetchInterval: 30_000,
     retry: 1,
   });
+  useEffect(() => {
+    if (profile.data)
+      void saveLoginHints(session.server, profile.data.user.username).catch(() => {});
+  }, [session.server, profile.data?.user.username]);
   useEffect(() => {
     let nativeActive = true;
     const connection = io(session.server, {

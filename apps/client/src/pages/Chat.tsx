@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Paperclip, Send, X, Check, CheckCheck, WifiOff, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { newId } from '@/lib/id';
+import { aiMention, completeMention } from '@/lib/chat';
 import { useApp } from '@/lib/context';
 import type { Message, Media } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -11,17 +12,20 @@ import { Avatar, Empty, MediaPreview, Loading, ErrorState } from '@/components/c
 type Pending = {
   clientId: string;
   content: string;
-  mediaId?: string;
-  media?: Media;
+  attachments: Media[];
   failed?: boolean;
 };
 export function Chat() {
   const { api, profile, socket, connected, partnerOnline, openUs } = useApp(),
     cache = useQueryClient();
-  const key = `love.outbox:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
+  const key = `love.outbox.v2:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
   const [text, setText] = useState(''),
-    [attachment, setAttachment] = useState<Media | null>(null),
-    [uploading, setUploading] = useState<number | null>(null),
+    [attachments, setAttachments] = useState<Media[]>([]),
+    [uploading, setUploading] = useState<{ index: number; total: number; percent: number } | null>(
+      null,
+    ),
+    [caret, setCaret] = useState(0),
+    [mentionDismissed, setMentionDismissed] = useState(false),
     [sending, setSending] = useState(false),
     [typing, setTyping] = useState(false);
   const [pending, setPending] = useState<Pending[]>(() => {
@@ -32,6 +36,8 @@ export function Chat() {
     }
   });
   const file = useRef<HTMLInputElement>(null),
+    composer = useRef<HTMLTextAreaElement>(null),
+    uploadLock = useRef(false),
     scroller = useRef<HTMLDivElement>(null),
     bottom = useRef<HTMLDivElement>(null),
     typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
@@ -93,7 +99,7 @@ export function Chat() {
       await api.post<Message>('/api/messages', {
         clientId: item.clientId,
         content: item.content,
-        ...(item.mediaId ? { mediaId: item.mediaId } : {}),
+        mediaIds: item.attachments.map((media) => media.id),
       });
       setPending((items) => items.filter((entry) => entry.clientId !== item.clientId));
       await cache.invalidateQueries({ queryKey: ['messages'] });
@@ -116,7 +122,7 @@ export function Chat() {
   }, [connected]);
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    if ((!text.trim() && !attachment) || sending || uploading !== null) return;
+    if ((!text.trim() && !attachments.length) || sending || uploadLock.current) return;
     if (pending.length >= 100) {
       toast.error('请先处理待发送的消息');
       return;
@@ -124,25 +130,47 @@ export function Chat() {
     const item: Pending = {
       clientId: newId(),
       content: text.trim(),
-      ...(attachment ? { mediaId: attachment.id, media: attachment } : {}),
+      attachments,
     };
     setPending((items) => [...items, item]);
     setText('');
-    setAttachment(null);
+    setAttachments([]);
+    setMentionDismissed(true);
     autoScroll.current = true;
     await deliver(item);
   }
-  async function attach(value?: File) {
-    if (!value) return;
-    setUploading(0);
+  async function attach(values: File[]) {
+    if (!values.length || uploadLock.current) return;
+    uploadLock.current = true;
     try {
-      setAttachment(await api.upload(value, setUploading));
-    } catch (err) {
-      toast.error((err as Error).message);
+      for (const [index, value] of values.entries()) {
+        setUploading({ index: index + 1, total: values.length, percent: 0 });
+        try {
+          const media = await api.upload(value, (percent) =>
+            setUploading({ index: index + 1, total: values.length, percent }),
+          );
+          setAttachments((items) => [...items, media]);
+        } catch (err) {
+          toast.error(`${value.name}：${(err as Error).message}`);
+        }
+      }
     } finally {
+      uploadLock.current = false;
       setUploading(null);
       if (file.current) file.current.value = '';
     }
+  }
+  const mention = mentionDismissed ? null : aiMention(text, caret, profile.ai.name);
+  function chooseAI() {
+    if (!mention) return;
+    const completed = completeMention(text, mention, profile.ai.name);
+    setText(completed.text);
+    setCaret(completed.caret);
+    setMentionDismissed(true);
+    requestAnimationFrame(() => {
+      composer.current?.focus();
+      composer.current?.setSelectionRange(completed.caret, completed.caret);
+    });
   }
   if (!profile.partner)
     return (
@@ -276,10 +304,19 @@ export function Chat() {
                       <div
                         className={`message-bubble overflow-hidden rounded-2xl px-3.5 py-2.5 ${mine ? 'rounded-br-sm bg-primary text-primary-foreground' : 'rounded-bl-sm border bg-card'}`}
                       >
-                        {message.media && <MediaPreview media={message.media} api={api} compact />}
+                        {message.attachments.length > 0 && (
+                          <div
+                            className={`grid gap-1.5 ${message.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}
+                            data-testid="message-attachments"
+                          >
+                            {message.attachments.map((media) => (
+                              <MediaPreview key={media.id} media={media} api={api} compact />
+                            ))}
+                          </div>
+                        )}
                         {message.content && (
                           <p
-                            className={`whitespace-pre-wrap break-words text-sm leading-6 ${message.media ? 'mt-2' : ''}`}
+                            className={`whitespace-pre-wrap break-words text-sm leading-6 ${message.attachments.length ? 'mt-2' : ''}`}
                           >
                             {message.content}
                           </p>
@@ -321,7 +358,13 @@ export function Chat() {
               alt="你的聊天头像"
             />
             <div className="min-w-0 max-w-[calc(100%-44px)] rounded-2xl border border-dashed border-primary/40 bg-secondary p-3 text-sm">
-              {item.media && <MediaPreview api={api} media={item.media} compact />}
+              <div
+                className={`grid gap-1.5 ${item.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}
+              >
+                {item.attachments.map((media) => (
+                  <MediaPreview key={media.id} api={api} media={media} compact />
+                ))}
+              </div>
               <p className="whitespace-pre-wrap break-words">{item.content}</p>
               <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
                 <span>{item.failed ? '发送失败，消息已保留' : '正在发送…'}</span>
@@ -346,46 +389,80 @@ export function Chat() {
         ))}
         <div ref={bottom} />
       </div>
-      <form onSubmit={send} className="chat-composer border-t bg-card px-3 py-3 sm:px-6">
-        {(attachment || uploading !== null) && (
-          <div className="mb-3 flex items-center gap-3 rounded-xl bg-secondary px-3 py-2">
-            {attachment ? (
-              <>
-                <img
-                  alt="待发送附件"
-                  src={api.url(attachment.thumbnailUrl)}
-                  className="size-12 rounded-lg object-cover"
-                />
-                <span className="flex-1 text-xs">
-                  {attachment.kind === 'video' ? '视频' : '照片'}已准备好
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="移除附件"
-                  onClick={() => setAttachment(null)}
-                >
-                  <X size={16} />
-                </Button>
-              </>
-            ) : (
-              <>
-                <LoaderCircle size={16} className="animate-spin" />
-                <span className="text-xs">
-                  {uploading === 100 ? '正在压缩并生成预览…' : `上传中 ${uploading}%`}
-                </span>
-              </>
-            )}
+      <form onSubmit={send} className="chat-composer relative border-t bg-card px-3 py-3 sm:px-6">
+        {mention && (
+          <div
+            id="ai-mentions"
+            role="listbox"
+            aria-label="提及助手"
+            className="absolute right-3 bottom-full left-3 mb-2 rounded-2xl border bg-card p-1.5 shadow-lg sm:right-6 sm:left-6"
+          >
+            <button
+              type="button"
+              role="option"
+              id="ai-mention-option"
+              aria-selected="true"
+              aria-label={`提及 ${profile.ai.name}`}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={chooseAI}
+              className="flex w-full items-center gap-3 rounded-xl bg-secondary/60 px-3 py-2.5 text-left"
+            >
+              <Avatar
+                small
+                name={profile.ai.name}
+                src={profile.ai.avatar ? api.url(profile.ai.avatar.thumbnailUrl) : undefined}
+              />
+              <span className="flex-1 text-sm font-medium">{profile.ai.name}</span>
+              <span className="text-[11px] text-muted-foreground">AI 助手</span>
+            </button>
           </div>
+        )}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex gap-2 overflow-x-auto pb-1" aria-label="待发送附件">
+            {attachments.map((media, index) => (
+              <div
+                key={media.id}
+                className="relative shrink-0 rounded-xl border bg-secondary p-1.5"
+              >
+                <img
+                  alt={`待发送${media.kind === 'video' ? '视频' : '图片'} ${index + 1}`}
+                  src={api.url(media.thumbnailUrl)}
+                  className="size-16 rounded-lg object-cover"
+                />
+                <button
+                  type="button"
+                  aria-label={`移除附件 ${index + 1}`}
+                  onClick={() =>
+                    setAttachments((items) => items.filter((item) => item.id !== media.id))
+                  }
+                  className="absolute top-0 right-0 grid size-6 place-items-center rounded-full bg-card shadow-sm"
+                >
+                  <X size={14} />
+                </button>
+                {media.kind === 'video' && (
+                  <span className="absolute bottom-2 left-2 rounded bg-black/60 px-1 text-[10px] text-white">
+                    视频
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {uploading && (
+          <p role="status" className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <LoaderCircle size={14} className="animate-spin" />
+            {uploading.index}/{uploading.total} ·{' '}
+            {uploading.percent === 100 ? '正在压缩并生成预览…' : `上传中 ${uploading.percent}%`}
+          </p>
         )}
         <div className="flex items-end gap-2">
           <input
             ref={file}
             type="file"
+            multiple
             accept="image/jpeg,image/png,image/webp,image/avif,image/heic,video/mp4,video/quicktime,video/webm"
             hidden
-            onChange={(e) => void attach(e.target.files?.[0])}
+            onChange={(e) => void attach(Array.from(e.target.files || []))}
           />
           <Button
             type="button"
@@ -399,15 +476,35 @@ export function Chat() {
             <Paperclip size={21} />
           </Button>
           <Textarea
+            ref={composer}
             aria-label="消息内容"
             placeholder={`发消息，或 @${profile.ai.name}`}
             value={text}
             maxLength={4000}
+            aria-controls={mention ? 'ai-mentions' : undefined}
+            aria-expanded={Boolean(mention)}
+            aria-autocomplete="list"
+            aria-activedescendant={mention ? 'ai-mention-option' : undefined}
             onChange={(e) => {
               setText(e.target.value);
+              setCaret(e.target.selectionStart);
+              setMentionDismissed(false);
               socket?.emit('typing');
             }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
+            onBlur={() => setMentionDismissed(true)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
+              if (mention && ['Enter', 'Tab'].includes(e.key)) {
+                e.preventDefault();
+                chooseAI();
+                return;
+              }
+              if (mention && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
+                e.preventDefault();
+                return;
+              }
+              if (e.key === 'Escape') setMentionDismissed(true);
               if (
                 e.key === 'Enter' &&
                 !e.shiftKey &&
@@ -426,7 +523,7 @@ export function Chat() {
             size="icon"
             className="size-11 shrink-0 rounded-2xl"
             aria-label="发送消息"
-            disabled={sending || uploading !== null || (!text.trim() && !attachment)}
+            disabled={sending || uploading !== null || (!text.trim() && !attachments.length)}
           >
             {sending ? <LoaderCircle className="animate-spin" size={18} /> : <Send size={18} />}
           </Button>

@@ -5,7 +5,16 @@ import subprocess
 import os
 import re
 import json
-apk=Path('apps/client/android/app/build/outputs/apk/debug/app-debug.apk')
+apk=Path(os.environ.get('LOVE_APK_PATH', 'apps/client/android/app/build/outputs/apk/debug/app-debug.apk'))
+metadata_path=os.environ.get('LOVE_APK_SIGNING_METADATA')
+if metadata_path:
+    signing=json.loads(Path(metadata_path).read_text())
+    if signing['mode']=='release':
+        apksigner=Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0/apksigner'
+        report=subprocess.check_output([str(apksigner),'verify','--verbose','--print-certs',str(apk)],text=True)
+        actual=re.search(r'Signer #1 certificate SHA-256 digest: ([a-fA-F0-9]+)',report)
+        assert actual and actual[1].lower()==signing['certificateSha256'], 'APK signing certificate mismatch'
+        print('Fixed signing certificate verified:', actual[1].lower())
 with ZipFile(apk) as archive:
     config=json.loads(archive.read('assets/capacitor.config.json'))
     assert config['server']['androidScheme']=='https', 'Changed the app origin'

@@ -1,9 +1,47 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Api } from './api';
+import { Api, readSession, saveSession, readLoginHints, saveLoginHints } from './api';
+import { Preferences } from '@capacitor/preferences';
+
+vi.mock('@capacitor/preferences', () => ({
+  Preferences: { get: vi.fn(), set: vi.fn(), remove: vi.fn() },
+}));
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+describe('persistent login state', () => {
+  it('restores an existing session without retaining the password', async () => {
+    const session = { server: 'http://192.168.1.10:8013', token: 'existing-session' };
+    vi.mocked(Preferences.get).mockResolvedValue({ value: JSON.stringify(session) });
+    await expect(readSession()).resolves.toEqual(session);
+    await saveSession(session);
+    expect(Preferences.set).toHaveBeenCalledWith({
+      key: 'love.session',
+      value: JSON.stringify(session),
+    });
+  });
+  it('keeps server and username when logout removes the session', async () => {
+    await saveLoginHints('https://love.example.com/', 'alice');
+    expect(Preferences.set).toHaveBeenCalledWith({
+      key: 'love.login',
+      value: JSON.stringify({ server: 'https://love.example.com', username: 'alice' }),
+    });
+    await saveSession(null);
+    expect(Preferences.remove).toHaveBeenCalledWith({ key: 'love.session' });
+    vi.mocked(Preferences.get).mockResolvedValue({
+      value: JSON.stringify({ server: 'https://love.example.com', username: 'alice' }),
+    });
+    await expect(readLoginHints()).resolves.toEqual({
+      server: 'https://love.example.com',
+      username: 'alice',
+    });
+  });
+  it('ignores broken persisted state instead of blocking login', async () => {
+    vi.mocked(Preferences.get).mockResolvedValue({ value: '{broken' });
+    await expect(readLoginHints()).resolves.toBeNull();
+    await expect(readSession()).resolves.toBeNull();
+  });
 });
 describe('server connection feedback', () => {
   const api = new Api({ server: 'http://192.168.1.10:3000', token: '' });

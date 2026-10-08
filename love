@@ -12,10 +12,29 @@ LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-$(setting LOVE_DOCKERFILE)}
 LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-Dockerfile}
 case "$LOVE_DOCKERFILE" in Dockerfile|Dockerfile.cn) ;; *) echo 'LOVE_DOCKERFILE 只能为 Dockerfile 或 Dockerfile.cn。' >&2; exit 1 ;; esac
 export LOVE_DOCKERFILE
+image_setting() { [ ! -f .env ] || sed -n "s/^LOVE_IMAGE=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
+LOVE_IMAGE=${LOVE_IMAGE:-$(image_setting)}
+LOVE_IMAGE=${LOVE_IMAGE:-love-app:local}
+LOVE_IMAGE_PULL=${LOVE_IMAGE_PULL:-$(setting LOVE_IMAGE_PULL)}
+LOVE_IMAGE_PULL=${LOVE_IMAGE_PULL:-1}
+case "$LOVE_IMAGE_PULL" in 0|1) ;; *) echo 'LOVE_IMAGE_PULL 只能为 0 或 1。' >&2; exit 1 ;; esac
+export LOVE_IMAGE LOVE_IMAGE_PULL
+image_ready=0
+prepare_image() {
+  [ "$image_ready" = 0 ] || return 0
+  if [ "$LOVE_IMAGE" = love-app:local ]; then
+    docker build -f "$LOVE_DOCKERFILE" -t "$LOVE_IMAGE" .
+  elif [ "$LOVE_IMAGE_PULL" = 1 ]; then
+    docker pull "$LOVE_IMAGE"
+  else
+    docker image inspect "$LOVE_IMAGE" >/dev/null || { echo '预构建镜像不存在，请先运行 docker load。' >&2; exit 1; }
+  fi
+  image_ready=1
+}
 if [ "$mode" = setup ] || { [ "$mode" = up ] && [ ! -f .env ]; }; then
   [ -t 0 ] && [ -t 1 ] || { echo '首次部署需要交互终端，请运行 ./love setup。' >&2; exit 1; }
-  docker build -f "$LOVE_DOCKERFILE" -t love-app:local .
-  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_DOCKERFILE -v "$PWD:/setup" --entrypoint node love-app:local /app/scripts/setup.mjs --output /setup/.env
+  prepare_image
+  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_DOCKERFILE -e LOVE_IMAGE -e LOVE_IMAGE_PULL -v "$PWD:/setup" --entrypoint node "$LOVE_IMAGE" /app/scripts/setup.mjs --output /setup/.env
   [ "$mode" = setup ] && exit 0
 fi
 [ -f .env ] || { echo '配置不存在，请先运行 ./love setup。' >&2; exit 1; }
@@ -27,7 +46,13 @@ set -- docker compose --project-name "$project" --env-file .env -f compose.yml
 [ "$database" != postgres ] || set -- "$@" -f compose.postgres.yml
 [ "$https" != 1 ] || set -- "$@" --profile https
 case "$mode" in
- up) exec "$@" up -d --build --wait ;;
+ up)
+   if [ "$LOVE_IMAGE" = love-app:local ]; then
+     exec "$@" up -d --build --wait
+   else
+     prepare_image
+     exec "$@" up -d --no-build --pull missing --wait
+   fi ;;
  down) exec "$@" down ;;
  logs) exec "$@" logs -f ;;
  ps) exec "$@" ps ;;

@@ -41,6 +41,10 @@ export function validateConfig(config) {
   if (port(config.LOVE_PORT)) throw new Error('服务端口无效');
   if (config.LOVE_DOCKERFILE && !['Dockerfile', 'Dockerfile.cn'].includes(config.LOVE_DOCKERFILE))
     throw new Error('构建文件只能为 Dockerfile 或 Dockerfile.cn');
+  if (config.LOVE_IMAGE && !/^[A-Za-z0-9][A-Za-z0-9_./:@-]*$/.test(config.LOVE_IMAGE))
+    throw new Error('Docker 镜像地址无效');
+  if (config.LOVE_IMAGE_PULL && !['0', '1'].includes(config.LOVE_IMAGE_PULL))
+    throw new Error('镜像拉取设置只能为 0 或 1');
   if (!['sqlite', 'postgres', 'external'].includes(config.LOVE_DATABASE))
     throw new Error('数据库选择无效');
   if (
@@ -95,6 +99,8 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   ui.intro('Love · 首次部署配置');
   const config = { ...previous };
   config.LOVE_DOCKERFILE = env.LOVE_DOCKERFILE || prior('LOVE_DOCKERFILE') || 'Dockerfile';
+  config.LOVE_IMAGE = env.LOVE_IMAGE || prior('LOVE_IMAGE') || 'love-app:local';
+  config.LOVE_IMAGE_PULL = env.LOVE_IMAGE_PULL || prior('LOVE_IMAGE_PULL') || '1';
   config.LOVE_DATABASE = await ask(
     ui.select({
       message: '选择数据库',

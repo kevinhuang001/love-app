@@ -47,6 +47,8 @@ npm run android:prepare
 
 ## Docker 部署
 
+**免构建部署**：`LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up`，自动拉取预构建镜像并保留首次配置向导。也可从 [Docker 镜像 Release](https://github.com/kevinhuang001/love-app/releases/tag/docker-latest) 下载 x86_64 或 ARM64 镜像包后 `docker load`。详细步骤、更新与固定版本见 [预构建镜像部署](docs/container-images.md)。
+
 中国大陆部署可用 `LOVE_DOCKERFILE=Dockerfile.cn ./love up`，使用 npmmirror 的 npm 源、中科大的 pip 和 apt 源，保留首次配置向导。已有部署在 `.env` 设置 `LOVE_DOCKERFILE=Dockerfile.cn` 后运行 `./love up`。详见 [国内镜像构建](docs/docker-cn.md)。
 
 ```bash

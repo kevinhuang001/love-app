@@ -1,0 +1,222 @@
+name: Build and publish container images
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/containers.yml'
+      - 'Dockerfile'
+      - 'love'
+      - 'scripts/setup*'
+  workflow_run:
+    workflows: [Test and build]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Test and build run from current main
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: containers-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: true
+jobs:
+  source:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      image: ${{ steps.source.outputs.image }}
+      ready: ${{ steps.source.outputs.ready }}
+    steps:
+      - name: Select and verify source
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            source_sha="$PR_SHA"
+          else
+            [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > run.json
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?per_page=100" > jobs.json
+            node --input-type=module <<'JS'
+            import assert from 'node:assert/strict';
+            import { readFileSync, writeFileSync } from 'node:fs';
+            const run = JSON.parse(readFileSync('run.json'));
+            const jobs = JSON.parse(readFileSync('jobs.json')).jobs;
+            assert.equal(run.name, 'Test and build');
+            assert.equal(run.conclusion, 'success');
+            assert.equal(run.head_branch, 'main');
+            assert.equal(run.head_repository.full_name, process.env.GITHUB_REPOSITORY);
+            assert.ok(['push', 'workflow_dispatch'].includes(run.event));
+            for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android'])
+              assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `${name} must pass`);
+            writeFileSync('sha.txt', run.head_sha);
+            JS
+            source_sha=$(cat sha.txt)
+            main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+            if [ "$source_sha" != "$main_sha" ]; then
+              echo 'Current main has moved; skip publishing an older run.'
+              echo 'ready=false' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          [[ "$source_sha" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+  build:
+    needs: source
+    if: needs.source.outputs.ready == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ${{ needs.source.outputs.image }}
+      SOURCE_SHA: ${{ needs.source.outputs.sha }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build native image
+        run: |
+          docker build -t "$IMAGE:sha-$SOURCE_SHA-$ARCH" -t love-app:prebuilt \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --label 'org.opencontainers.image.licenses=MIT' .
+      - name: Test image and persisted data
+        run: |
+          docker run -d --name love-smoke -p 127.0.0.1:3000:3000 \
+            -e MEDIA_SIGNING_SECRET=ci-image-signing-key-for-smoke-tests-only \
+            -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke \
+            -v love-image-data:/app/data love-app:prebuilt
+          node scripts/docker-smoke.mjs
+          docker restart love-smoke
+          node scripts/docker-smoke.mjs --verify-persistence
+      - name: Export and verify loadable archive
+        run: |
+          set -euo pipefail
+          mkdir -p images
+          docker save love-app:prebuilt "$IMAGE:sha-$SOURCE_SHA-$ARCH" | gzip -1 > "images/Love-docker-$ARCH.tar.gz"
+          docker rm -f love-smoke
+          docker image rm love-app:prebuilt "$IMAGE:sha-$SOURCE_SHA-$ARCH"
+          docker load -i "images/Love-docker-$ARCH.tar.gz"
+          test "$(docker image inspect love-app:prebuilt --format '{{.Architecture}}')" = "$ARCH"
+          docker run -d --name love-smoke -p 127.0.0.1:3000:3000 \
+            -e MEDIA_SIGNING_SECRET=ci-image-signing-key-for-smoke-tests-only \
+            -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke \
+            -v love-image-data:/app/data love-app:prebuilt
+          node scripts/docker-smoke.mjs --verify-persistence
+      - name: Push tested architecture to GHCR
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:sha-$SOURCE_SHA-$ARCH"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docker-${{ matrix.arch }}
+          path: images/*.tar.gz
+          compression-level: 0
+          retention-days: 7
+      - name: Clean test containers
+        if: always()
+        run: |
+          docker logs love-smoke || true
+          docker rm -f love-smoke || true
+          docker volume rm love-image-data || true
+  publish:
+    needs: [source, build]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      IMAGE: ${{ needs.source.outputs.image }}
+      SOURCE_SHA: ${{ needs.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: docker-*
+          merge-multiple: true
+          path: images
+      - name: Verify current main and publish multi-platform manifest
+        run: |
+          set -euo pipefail
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$SOURCE_SHA" = "$main_sha"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker buildx imagetools create \
+            -t "$IMAGE:sha-$SOURCE_SHA" -t "$IMAGE:main" -t "$IMAGE:latest" \
+            "$IMAGE:sha-$SOURCE_SHA-amd64" "$IMAGE:sha-$SOURCE_SHA-arm64"
+          docker buildx imagetools inspect --raw "$IMAGE:sha-$SOURCE_SHA" > images/manifest.json
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync('images/manifest.json'));
+          assert.deepEqual(manifest.manifests.map(x => x.platform.os + '/' + x.platform.architecture).sort(), ['linux/amd64', 'linux/arm64']);
+          writeFileSync('images/image-info.json', JSON.stringify({source: process.env.SOURCE_SHA, image: process.env.IMAGE, platforms: manifest.manifests.map(x => ({...x.platform, digest: x.digest}))}, null, 2) + '\n');
+          JS
+          rm images/manifest.json
+      - name: Prepare deployment bundle and checksums
+        run: |
+          tar -czf images/Love-docker-deploy.tar.gz love compose.yml compose.postgres.yml Caddyfile .env.docker.example docs/container-images.md docs/database.md
+          (cd images && sha256sum *.tar.gz image-info.json > SHA256SUMS)
+          cat > images/NOTES.md <<'NOTES'
+          主分支通过 CI 后自动发布的预构建 Docker 镜像，支持 Linux x86_64（amd64）和 ARM64。此滚动发布不会替代 Android 的版本 Release。
+
+          **直接拉取：** `LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up`
+
+          **从本页下载导入：** 下载对应架构的 `Love-docker-*.tar.gz`，执行 `docker load -i 文件名`，再运行 `LOVE_IMAGE=love-app:prebuilt LOVE_IMAGE_PULL=0 ./love up`。
+
+          `Love-docker-deploy.tar.gz` 是部署配置包，解压后包含启动器、Compose、Caddy 配置和说明，无需下载源码或本地 build。没有 .env 时仍会启动配置向导；后续沿用配置和数据卷。
+
+          `SHA256SUMS` 提供校验，`image-info.json` 记录源码提交和各架构 digest。GHCR 的 latest/main 为滚动标签，可用 sha-完整提交或 digest 固定部署。首次发布后，仓库所有者须将 GHCR 包可见性设为 Public，其他用户才能匿名拉取；本页镜像下载无需登录 GHCR。
+
+          文档：https://github.com/kevinhuang001/love-app/blob/main/docs/container-images.md
+          NOTES
+          printf '\n源码提交：`%s`\n' "$SOURCE_SHA" >> images/NOTES.md
+      - name: Publish downloadable images
+        run: |
+          set -euo pipefail
+          if gh release view docker-latest >/dev/null 2>&1; then
+            gh release edit docker-latest --draft=true
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/docker-latest" -f sha="$SOURCE_SHA" -F force=true
+          else
+            gh release create docker-latest --target "$SOURCE_SHA" --title 'Docker images · latest tested main' --notes-file images/NOTES.md --prerelease --latest=false --draft
+          fi
+          gh release upload docker-latest images/*.tar.gz images/SHA256SUMS images/image-info.json --clobber
+          gh release edit docker-latest --title 'Docker images · latest tested main' --notes-file images/NOTES.md --draft=false --prerelease --latest=false

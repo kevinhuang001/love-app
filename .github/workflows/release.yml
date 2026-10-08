@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.2.2
+        description: New version tag, for example v2.2.3
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.2.2' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.2.3' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,13 +85,14 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          修复 Android 输入非 localhost 服务器地址后无法登录、按钮无法点击的问题。
+          新增部署监听 IP 选择和登录页服务器连接测试。
 
-          - 支持 HTTP/HTTPS 域名、IPv4、IPv6 和自定义端口；填写完整服务器根地址，不加 /api。
-          - 同步开启 Android 与 WebView 的 HTTP 访问，聊天、媒体和本地通知使用相同的地址规则。
-          - 无效地址显示明确的中文提示；验证码和配置请求保留超时，网络错误可以重试。
-          - HTTP 连接未加密，公网建议使用 HTTPS。HTTPS 证书校验保持开启。
-          - 新增非 localhost HTTP 登录及地址/网络错误回归测试，并检查实际 APK 网络配置。
+          - ./love setup 可选择 127.0.0.1、0.0.0.0 或指定宿主机 IPv4/IPv6；Compose 自动绑定所选地址。
+          - 公网/局域网 HTTP 直连可选择 0.0.0.0，手机填写服务器实际 IP 或域名，不填写 0.0.0.0。
+          - 登录页未配置有效服务器地址时，账号/密码禁止输入，placeholder 为“请先配置服务器地址”；不弹窗、不显示缺失地址红字。
+          - 最下面折叠的服务器设置增加“测试连接”，校验 Love 健康接口和登录配置，直接显示结果；成功配置可保存。
+          - 保留 HTTP/HTTPS、自定义端口和 Android 本地通知。HTTP 未加密，公网建议使用 HTTPS。
+          - CI 覆盖绑定 IP 校验、实际 Docker 公网端口绑定、账号输入锁定/恢复、连接测试和真实登录。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。

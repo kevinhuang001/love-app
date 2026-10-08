@@ -4,6 +4,7 @@ import { readFile, writeFile, rename, chmod, mkdir, unlink } from 'node:fs/promi
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseEnv } from 'node:util';
+import { isIP } from 'node:net';
 const identifier = (value) =>
   /^[a-z][a-z0-9_]{0,30}$/.test(value) ? undefined : '使用小写字母、数字、下划线，以字母开头';
 const username = (value) =>
@@ -12,6 +13,8 @@ const port = (value) =>
   /^\d+$/.test(value) && Number(value) > 0 && Number(value) <= 65535
     ? undefined
     : '端口范围为 1–65535';
+const bindIP = (value) =>
+  isIP(value) && !value.includes('%') ? undefined : '填写有效的 IPv4 或 IPv6 地址，不含端口';
 export const quoteEnv = (value) => "'" + String(value).replaceAll("'", "\\'") + "'";
 export function parseDeploymentEnv(content) {
   const config = {};
@@ -39,6 +42,7 @@ export function validateConfig(config) {
   )
     throw new Error('管理员密码长度为 12–128 字符');
   if (port(config.LOVE_PORT)) throw new Error('服务端口无效');
+  if (bindIP(config.LOVE_BIND_IP || '')) throw new Error('HTTP 监听 IP 无效');
   if (config.LOVE_DOCKERFILE && !['Dockerfile', 'Dockerfile.cn'].includes(config.LOVE_DOCKERFILE))
     throw new Error('构建文件只能为 Dockerfile 或 Dockerfile.cn');
   if (config.LOVE_IMAGE && !/^[A-Za-z0-9][A-Za-z0-9_./:@-]*$/.test(config.LOVE_IMAGE))
@@ -157,8 +161,33 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
           : '填写解析到服务器的真实域名，不含 https:// 或路径',
       )
     : '';
-  config.LOVE_PORT = await text('本机 HTTP 端口', prior('LOVE_PORT') || '3000', port);
-  config.TRUST_PROXY = https ? '1' : '0';
+  const previousIP = prior('LOVE_BIND_IP') || '127.0.0.1';
+  const address = await ask(
+    ui.select({
+      message: 'HTTP 监听地址（宿主机）',
+      initialValue: ['127.0.0.1', '0.0.0.0'].includes(previousIP) ? previousIP : 'custom',
+      options: [
+        { value: '127.0.0.1', label: '127.0.0.1 · 仅本机', hint: '默认 · 适合 HTTPS 反向代理' },
+        {
+          value: '0.0.0.0',
+          label: '0.0.0.0 · 全部 IPv4 网卡',
+          hint: '允许局域网或公网直接访问 HTTP',
+        },
+        { value: 'custom', label: '指定宿主机 IP', hint: '绑定一张网卡，支持 IPv4 / IPv6' },
+      ],
+    }),
+  );
+  config.LOVE_BIND_IP =
+    address === 'custom'
+      ? await text(
+          '宿主机 IP（例如 192.168.1.10 或 ::1）',
+          previousIP === '127.0.0.1' ? '' : previousIP,
+          bindIP,
+        )
+      : address;
+  config.LOVE_PORT = await text('HTTP 端口', prior('LOVE_PORT') || '3000', port);
+  const loopback = config.LOVE_BIND_IP.startsWith('127.') || config.LOVE_BIND_IP === '::1';
+  config.TRUST_PROXY = https && loopback ? '1' : '0';
   config.ALLOWED_ORIGINS = https
     ? `https://${config.LOVE_DOMAIN},https://localhost,capacitor://localhost`
     : 'http://localhost:' +
@@ -237,8 +266,17 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   }
   config.LOVE_SETUP_COMPLETE = '1';
   validateConfig(config);
+  const binding =
+    (isIP(config.LOVE_BIND_IP) === 6 ? '[' + config.LOVE_BIND_IP + ']' : config.LOVE_BIND_IP) +
+    ':' +
+    config.LOVE_PORT;
+  const access = https
+    ? 'https://' + config.LOVE_DOMAIN
+    : ['0.0.0.0', '::'].includes(config.LOVE_BIND_IP)
+      ? 'http://服务器实际IP:' + config.LOVE_PORT
+      : 'http://' + binding;
   ui.note(
-    `数据库：${config.LOVE_DATABASE}\n访问：${https ? 'https://' + config.LOVE_DOMAIN : 'http://localhost:' + config.LOVE_PORT}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
+    `数据库：${config.LOVE_DATABASE}\nHTTP 监听：${binding}\n访问：${access}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
     '即将保存',
   );
   if (!(await ask(ui.confirm({ message: '保存配置并继续？', initialValue: true }))))

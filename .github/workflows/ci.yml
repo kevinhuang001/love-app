@@ -108,6 +108,8 @@ jobs:
           SMOKE_CONTAINER=$(docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml ps -q love) node scripts/docker-smoke.mjs --verify-persistence
         env:
           LOVE_IMAGE: love-ci
+          LOVE_BIND_IP: '0.0.0.0'
+          SMOKE_BIND_IP: '0.0.0.0'
           SMOKE_DATABASE: postgres
           SMOKE_INITIAL_QUOTA: 2048
           INITIAL_QUOTA_MIB: 2048

@@ -10,6 +10,7 @@ try {
   const special = `postgres'pa"ss$word#\\literal`;
   const env = {
     LOVE_IMAGE: 'love-ci',
+    LOVE_BIND_IP: '0.0.0.0',
     LOVE_DOCKERFILE: process.env.LOVE_DOCKERFILE || 'Dockerfile',
     MEDIA_SIGNING_SECRET: 'ci-compose-fixture-secret-at-least-32-characters',
     POSTGRES_PASSWORD: special,
@@ -50,6 +51,21 @@ try {
   assert.equal(literal(config.services.love.environment.ADMIN_PASSWORD), special);
   assert.equal(config.services.love.environment.DATABASE_PROVIDER, 'postgres');
   assert.equal(config.services.love.build.dockerfile, env.LOVE_DOCKERFILE);
+  assert.equal(config.services.love.ports[0].host_ip, '0.0.0.0');
+  assert.equal(config.services.love.ports[0].target, 3000);
+  for (const ip of ['127.0.0.1', '192.168.1.10', '::1']) {
+    const selected = JSON.parse(
+      execFileSync(
+        'docker',
+        ['compose', '--env-file', file, '-f', 'compose.yml', 'config', '--format', 'json'],
+        {
+          encoding: 'utf8',
+          env: { PATH: process.env.PATH, HOME: process.env.HOME, LOVE_BIND_IP: ip },
+        },
+      ),
+    );
+    assert.equal(selected.services.love.ports[0].host_ip, ip);
+  }
   assert.equal(config.services.postgres.ports, undefined);
   execFileSync(
     'docker',

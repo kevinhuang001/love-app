@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 const base = 'http://127.0.0.1:3000';
+if (process.env.SMOKE_BIND_IP) {
+  const [container] = JSON.parse(
+    execFileSync('docker', ['inspect', process.env.SMOKE_CONTAINER || 'love-smoke'], {
+      encoding: 'utf8',
+    }),
+  );
+  assert.ok(
+    container.NetworkSettings.Ports['3000/tcp'].some(
+      (binding) => binding.HostIp === process.env.SMOKE_BIND_IP,
+    ),
+    'Container must publish the configured host IP',
+  );
+}
 for (let attempt = 0; attempt < 60; attempt++) {
   try {
     const response = await fetch(base + '/api/health');

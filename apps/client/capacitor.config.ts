@@ -3,7 +3,9 @@ const config: CapacitorConfig = {
   appId: 'com.kevinhuang.love',
   appName: 'Love',
   webDir: 'dist',
-  server: { androidScheme: 'https' },
+  // Keep the app origin stable; self-hosted HTTP backends need both native and WebView opt-ins.
+  server: { androidScheme: 'https', cleartext: true },
+  android: { allowMixedContent: true },
   plugins: {
     Keyboard: { resize: 'native' },
   },

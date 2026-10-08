@@ -29,11 +29,11 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
     [captcha, setCaptcha] = useState<CaptchaValue>({ id: '', code: '' }),
     [refreshToken, setRefreshToken] = useState(0),
     [notice, setNotice] = useState('');
-  const api = useMemo(() => {
+  const { api, serverError } = useMemo(() => {
     try {
-      return new Api({ server: normalizeServer(server), token: '' });
-    } catch {
-      return null;
+      return { api: new Api({ server: normalizeServer(server), token: '' }), serverError: '' };
+    } catch (error) {
+      return { api: null, serverError: (error as Error).message };
     }
   }, [server]);
   useEffect(() => {
@@ -309,9 +309,9 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                 {notice}
               </p>
             )}
-            {error && (
+            {(serverError || error) && (
               <p role="alert" className="text-sm text-destructive">
-                {error}
+                {serverError || error}
               </p>
             )}
             <Button
@@ -368,6 +368,9 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                 spellCheck={false}
               />
               <p className="text-xs text-muted-foreground">你和另一半需要连接同一台服务器。</p>
+              <p className="text-xs leading-6 text-muted-foreground">
+                支持 http://IP:端口 或 https://域名。HTTP 连接未加密，公网建议使用 HTTPS。
+              </p>
             </div>
           </div>
         </details>

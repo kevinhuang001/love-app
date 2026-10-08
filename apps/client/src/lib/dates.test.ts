@@ -31,15 +31,26 @@ describe('calendar days', () => {
 describe('backend URL', () => {
   it('normalizes a server origin', () =>
     expect(normalizeServer(' https://love.example.com/ ')).toBe('https://love.example.com'));
-  it('rejects credentials, paths, unsafe protocols and remote cleartext', () => {
+  it('rejects credentials, paths, unsafe protocols and incomplete addresses', () => {
     for (const value of [
       'ftp://example.com',
       'https://user:pass@example.com',
       'https://example.com/api',
-      'http://example.com',
+      '192.168.1.10:3000',
+      '',
       'https://example.com/?key=secret',
+      'https://example.com/#token',
     ])
       expect(() => normalizeServer(value)).toThrow();
+  });
+  it('permits HTTP self-hosted domains and IPv4/IPv6 addresses', () => {
+    for (const value of [
+      'http://example.com',
+      'http://192.168.1.10:3000',
+      'http://203.0.113.10:8080',
+      'http://[2001:db8::1]:3000',
+    ])
+      expect(normalizeServer(` ${value}/ `)).toBe(value);
   });
   it('permits the Android emulator development host', () =>
     expect(normalizeServer('http://10.0.2.2:3000')).toBe('http://10.0.2.2:3000'));

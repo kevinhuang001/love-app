@@ -24,11 +24,11 @@ public class LocalNotificationsPlugin extends Plugin {
   try {
    String server=call.getString("server",""), token=call.getString("token",""), user=call.getString("userId",""), couple=call.getString("coupleId","");
    URI uri=new URI(server);
-   if(!"https".equals(uri.getScheme()) || uri.getHost()==null || uri.getUserInfo()!=null || uri.getQuery()!=null || uri.getFragment()!=null || !(uri.getPath().isEmpty() || "/".equals(uri.getPath())) || token.isEmpty() || user.isEmpty() || couple.isEmpty()) throw new IllegalArgumentException();
+   if(!("https".equals(uri.getScheme()) || "http".equals(uri.getScheme())) || uri.getHost()==null || uri.getUserInfo()!=null || uri.getQuery()!=null || uri.getFragment()!=null || !(uri.getPath().isEmpty() || "/".equals(uri.getPath())) || token.isEmpty() || user.isEmpty() || couple.isEmpty()) throw new IllegalArgumentException();
    Intent intent=new Intent(getContext(),LocalNotificationService.class);
    intent.putExtra("server",server).putExtra("token",token).putExtra("user",user).putExtra("couple",couple);
    getContext().startForegroundService(intent); call.resolve();
-  } catch(Exception error) { call.reject("无法启动本地通知，请检查 HTTPS 地址和配对状态"); }
+  } catch(Exception error) { call.reject("无法启动本地通知，请检查服务器地址和配对状态"); }
  }
  @PluginMethod public void stop(PluginCall call) { activation.incrementAndGet(); LocalNotificationService.disable(getContext()); call.resolve(); }
  @PluginMethod public void status(PluginCall call) {

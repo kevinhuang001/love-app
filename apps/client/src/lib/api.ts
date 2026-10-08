@@ -2,7 +2,14 @@ import { Preferences } from '@capacitor/preferences';
 import { Capacitor } from '@capacitor/core';
 import type { Session, UploadedMedia } from './types';
 export function normalizeServer(input: string): string {
-  const url = new URL(input.trim());
+  const message =
+    '请输入完整的服务器根地址，例如 http://192.168.1.10:3000 或 https://love.example.com';
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    throw new Error(message);
+  }
   if (
     !['http:', 'https:'].includes(url.protocol) ||
     url.username ||
@@ -11,12 +18,7 @@ export function normalizeServer(input: string): string {
     url.hash ||
     (url.pathname !== '/' && url.pathname !== '')
   )
-    throw new Error('请输入服务器根地址，例如 https://love.example.com');
-  if (
-    url.protocol !== 'https:' &&
-    !['localhost', '127.0.0.1', '10.0.2.2', '[::1]'].includes(url.hostname)
-  )
-    throw new Error('服务器必须使用 HTTPS；本地开发可以使用 HTTP');
+    throw new Error(message);
   return url.origin;
 }
 export class Api {
@@ -25,17 +27,25 @@ export class Api {
     public unauthorized: () => void = () => {},
   ) {}
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(`${this.session.server}${path}`, {
-      ...init,
-      headers: {
-        ...(init.body && !(init.body instanceof FormData)
-          ? { 'Content-Type': 'application/json' }
-          : {}),
-        ...(this.session.token ? { Authorization: `Bearer ${this.session.token}` } : {}),
-        ...init.headers,
-      },
-      signal: init.signal || AbortSignal.timeout(init.body instanceof FormData ? 240_000 : 20_000),
-    });
+    const timeout = AbortSignal.timeout(init.body instanceof FormData ? 240_000 : 20_000);
+    let response: Response;
+    try {
+      response = await fetch(`${this.session.server}${path}`, {
+        ...init,
+        headers: {
+          ...(init.body && !(init.body instanceof FormData)
+            ? { 'Content-Type': 'application/json' }
+            : {}),
+          ...(this.session.token ? { Authorization: `Bearer ${this.session.token}` } : {}),
+          ...init.headers,
+        },
+        signal: init.signal ? AbortSignal.any([init.signal, timeout]) : timeout,
+      });
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      if (timeout.aborted) throw new Error('连接服务器超时，请检查服务器地址和网络后重试');
+      throw new Error('无法连接服务器，请检查地址、网络和服务器的跨域配置');
+    }
     if (response.status === 401 && this.session.token) this.unauthorized();
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
@@ -55,7 +65,11 @@ export class Api {
   url(path: string) {
     return `${this.session.server}${path}`;
   }
-  async upload(file: File, onProgress: (progress: number) => void, path = '/api/media'): Promise<UploadedMedia> {
+  async upload(
+    file: File,
+    onProgress: (progress: number) => void,
+    path = '/api/media',
+  ): Promise<UploadedMedia> {
     if (file.size > 100 * 1024 * 1024) throw new Error('文件不能超过 100 MB');
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();

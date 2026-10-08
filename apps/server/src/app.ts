@@ -17,7 +17,6 @@ import multer from 'multer';
 import { createServer } from 'node:http';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { stat, rm } from 'node:fs/promises';
 import { createControl, type ControlOptions } from './control.js';
 import { HttpError, fail } from './errors.js';
 import { resolve, join } from 'node:path';
@@ -33,6 +32,8 @@ import {
   validSignature,
 } from './security.js';
 import { processMedia } from './media.js';
+import { syncMediaFiles, commitMedia, removeMediaFiles } from './media-storage.js';
+import { CommitUncertainError } from './postgres.js';
 import { notificationStreams } from './notifications.js';
 import sharp from 'sharp';
 import { writeFile } from 'node:fs/promises';
@@ -550,59 +551,61 @@ export async function createApp(options: AppOptions = {}) {
           writeFile(join(uploads, preview), large),
           writeFile(join(uploads, thumbnail), small),
         ]);
-        const old = await transaction(db, async () => {
-          const auth = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
-          if (!auth) fail(401, '登录已过期');
-          const previous = await db
-            .prepare('SELECT * FROM media WHERE id=? AND coupleId IS NULL AND ownerId=?')
-            .get(
-              (auth!.user as User & { avatarMediaId?: string }).avatarMediaId || '',
-              auth!.user.id,
-            );
-          await db
-            .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-            .run(
-              id,
-              null,
-              auth!.user.id,
-              'image',
-              preview,
-              preview,
-              thumbnail,
-              512,
-              512,
-              null,
-              new Date().toISOString(),
-            );
-          await db
-            .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
-            .run(id, 0, large.length, small.length, large.length + small.length);
-          await db.prepare('UPDATE users SET avatarMediaId=? WHERE id=?').run(id, auth!.user.id);
-          if (previous) {
-            await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
-            await db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
-          }
-          return previous;
-        });
+        const sizes = await syncMediaFiles(uploads, [preview, thumbnail]);
+        const old = await commitMedia(
+          db,
+          async () =>
+            Boolean(await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(id)),
+          async () => {
+            const auth = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
+            if (!auth) fail(401, '登录已过期');
+            const previous = await db
+              .prepare('SELECT * FROM media WHERE id=? AND coupleId IS NULL AND ownerId=?')
+              .get(
+                (auth!.user as User & { avatarMediaId?: string }).avatarMediaId || '',
+                auth!.user.id,
+              );
+            await db
+              .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+              .run(
+                id,
+                null,
+                auth!.user.id,
+                'image',
+                preview,
+                preview,
+                thumbnail,
+                512,
+                512,
+                null,
+                new Date().toISOString(),
+              );
+            await db
+              .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
+              .run(id, 0, sizes[0], sizes[1], sizes[0] + sizes[1]);
+            await db.prepare('UPDATE users SET avatarMediaId=? WHERE id=?').run(id, auth!.user.id);
+            if (previous) {
+              await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
+              await db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
+            }
+            return previous;
+          },
+        );
         committed = true;
         if (old)
-          await Promise.all(
-            [...new Set([String(old.preview), String(old.thumbnail)])].map((name) =>
-              rm(join(uploads, name), { force: true }),
-            ),
+          await removeMediaFiles(
+            [String(old.preview), String(old.thumbnail)].map((name) => join(uploads, name)),
           );
         io.to(`user:${(req as AuthRequest).user.id}`).emit('profile:changed');
         if ((req as AuthRequest).user.coupleId)
           io.to(`couple:${(req as AuthRequest).user.coupleId}`).emit('profile:changed');
         res.status(201).json(await mediaView(id));
       } catch (err) {
-        if (!committed)
-          await Promise.all(
-            [preview, thumbnail].map((name) => rm(join(uploads, name), { force: true })),
-          );
+        if (!committed && !(err instanceof CommitUncertainError))
+          await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
         next(err instanceof HttpError ? err : new HttpError(422, '头像无法处理，请选择有效图片'));
       } finally {
-        if (req.file) await rm(req.file.path, { force: true });
+        if (req.file) await removeMediaFiles([req.file.path]);
       }
     }),
   );
@@ -728,61 +731,66 @@ export async function createApp(options: AppOptions = {}) {
           const user = (await db
             .prepare('SELECT * FROM users WHERE id=?')
             .get((req as AuthRequest).user.id)) as User;
-          if (user.disabled || user.coupleId !== (req as AuthRequest).user.coupleId)
+          if (!user || user.disabled || user.coupleId !== (req as AuthRequest).user.coupleId)
             fail(409, '配对关系已改变');
-          const sizes = await Promise.all(
-            [media.original, media.preview, media.thumbnail].map((name) =>
-              name ? stat(join(uploads, name)).then((s) => s.size) : Promise.resolve(0),
-            ),
-          );
+          const sizes = await syncMediaFiles(uploads, [
+            media.original,
+            media.preview,
+            media.thumbnail,
+          ]);
           const totalBytes = sizes.reduce((a, b) => a + b, 0);
-          await transaction(db, async () => {
-            const current = (await db
-              .prepare('SELECT * FROM users WHERE id=?')
-              .get(user.id)) as User;
-            if (
-              current.disabled ||
-              current.coupleId !== user.coupleId ||
-              !(await db
-                .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
-                .get((req as AuthRequest).sessionHash, Date.now()))
-            )
-              fail(409, '账号或配对状态已改变，请重新登录');
-            const limit = await control.quota(current.coupleId);
-            if (current.coupleId && (await retainOriginal(current.coupleId)) !== keepOriginal)
-              fail(409, '媒体保存设置已改变，请重新上传');
-            if (!current.coupleId || (await control.usage(current.coupleId)) + totalBytes > limit)
-              fail(413, '两人空间存储已达到配额，请联系管理员');
-            await db
-              .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-              .run(
-                media.id,
-                user.coupleId!,
-                user.id,
-                media.kind,
-                media.original,
-                media.preview,
-                media.thumbnail,
-                media.width || null,
-                media.height || null,
-                media.duration,
-                new Date().toISOString(),
-              );
-            await db
-              .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
-              .run(media.id, sizes[0], sizes[1], sizes[2], totalBytes);
-          });
+          if (!Number.isSafeInteger(totalBytes)) fail(422, '媒体容量数据无效');
+          await commitMedia(
+            db,
+            async () =>
+              Boolean(
+                await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(media.id),
+              ),
+            async () => {
+              const current = (await db
+                .prepare('SELECT * FROM users WHERE id=?')
+                .get(user.id)) as User;
+              if (
+                !current ||
+                current.disabled ||
+                current.coupleId !== user.coupleId ||
+                !(await db
+                  .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
+                  .get((req as AuthRequest).sessionHash, Date.now()))
+              )
+                fail(409, '账号或配对状态已改变，请重新登录');
+              const limit = await control.quota(current.coupleId);
+              if (current.coupleId && (await retainOriginal(current.coupleId)) !== keepOriginal)
+                fail(409, '媒体保存设置已改变，请重新上传');
+              if (!current.coupleId || (await control.usage(current.coupleId)) + totalBytes > limit)
+                fail(413, '两人空间存储已达到配额，请联系管理员');
+              await db
+                .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+                .run(
+                  media.id,
+                  user.coupleId!,
+                  user.id,
+                  media.kind,
+                  media.original,
+                  media.preview,
+                  media.thumbnail,
+                  media.width || null,
+                  media.height || null,
+                  media.duration,
+                  new Date().toISOString(),
+                );
+              await db
+                .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
+                .run(media.id, sizes[0], sizes[1], sizes[2], totalBytes);
+            },
+          );
           committed = true;
           res
             .status(201)
             .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
         } catch (err) {
-          if (!committed)
-            await Promise.all(
-              [...generatedFiles, ...(req.file ? [req.file.path] : [])].map((path) =>
-                rm(path, { force: true }),
-              ),
-            );
+          if (!committed && !(err instanceof CommitUncertainError))
+            await removeMediaFiles([...generatedFiles, ...(req.file ? [req.file.path] : [])]);
           next(
             err instanceof HttpError || err instanceof multer.MulterError
               ? err

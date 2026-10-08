@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
+import { removeMediaFiles } from './media-storage.js';
 import { imageCaptureDate, videoCaptureDate } from './capture-date.js';
 function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -79,6 +80,9 @@ export async function processMedia(
     preview = `${id}.preview.mp4`;
     await run('ffmpeg', [
       '-nostdin',
+      '-xerror',
+      '-err_detect',
+      'explode',
       '-y',
       '-i',
       source,
@@ -108,6 +112,9 @@ export async function processMedia(
     ]);
     await run('ffmpeg', [
       '-nostdin',
+      '-xerror',
+      '-err_detect',
+      'explode',
       '-y',
       '-i',
       join(dir, preview),
@@ -133,12 +140,10 @@ export async function processMedia(
       capturedDate: videoCaptureDate(metadata.format?.tags, stream.tags),
     };
   } catch (error) {
-    await Promise.all(
-      [
-        source,
-        ...[original, preview, thumbnail].filter(Boolean).map((name) => join(dir, name)),
-      ].map((path) => rm(path, { force: true })),
-    );
+    await removeMediaFiles([
+      source,
+      ...[original, preview, thumbnail].filter(Boolean).map((name) => join(dir, name)),
+    ]);
     throw error;
   }
 }

@@ -12,8 +12,10 @@ import multer from 'multer';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { validSolarDate } from '@love/calendar';
-import { type DB, type User, transaction } from './db.js';
+import { type DB, type User } from './db.js';
 import { fail, HttpError } from './errors.js';
+import { syncMediaFiles, commitMedia, removeMediaFiles } from './media-storage.js';
+import { CommitUncertainError } from './postgres.js';
 import { signMedia, validSignature } from './security.js';
 
 type Auth = Request & { user: User; sessionHash: string };
@@ -436,74 +438,90 @@ export function installAlbumTransfers({
             }
             remapped.set(item.id, mapped);
           }
-          await transaction(db, async () => {
-            await validSession(auth.user.id, auth.sessionHash, pairId);
-            const current = await db
-              .prepare('SELECT retainOriginal FROM couple_media_settings WHERE coupleId=?')
-              .get(pairId);
-            if ((!current || Boolean(Number(current.retainOriginal))) !== keepOriginal)
-              fail(409, '媒体保存设置已改变，请重新导入');
-            if ((await control.usage(pairId)) + totalBytes > (await control.quota(pairId)))
-              fail(413, '两人空间剩余容量不足，请联系管理员');
-            for (const item of manifest.media) {
-              const mapped = remapped.get(item.id)!;
+          const durableBytes = (
+            await syncMediaFiles(
+              uploads,
+              moved.map((path) => path.slice(uploads.length + 1)),
+            )
+          ).reduce((sum, size) => sum + size, 0);
+          if (durableBytes !== totalBytes) fail(400, '相册落盘大小不匹配，导入未保存');
+          await commitMedia(
+            db,
+            async () =>
+              Boolean(
+                await db
+                  .prepare('SELECT digest FROM album_imports WHERE coupleId=? AND digest=?')
+                  .get(pairId, digest),
+              ),
+            async () => {
+              await validSession(auth.user.id, auth.sessionHash, pairId);
+              const current = await db
+                .prepare('SELECT retainOriginal FROM couple_media_settings WHERE coupleId=?')
+                .get(pairId);
+              if ((!current || Boolean(Number(current.retainOriginal))) !== keepOriginal)
+                fail(409, '媒体保存设置已改变，请重新导入');
+              if ((await control.usage(pairId)) + totalBytes > (await control.quota(pairId)))
+                fail(413, '两人空间剩余容量不足，请联系管理员');
+              for (const item of manifest.media) {
+                const mapped = remapped.get(item.id)!;
+                await db
+                  .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+                  .run(
+                    mapped.id,
+                    pairId,
+                    auth.user.id,
+                    item.kind,
+                    mapped.original,
+                    mapped.preview,
+                    mapped.thumbnail,
+                    item.width,
+                    item.height,
+                    item.duration,
+                    item.createdAt,
+                  );
+                const originalBytes = keepOriginal ? item.original?.bytes || 0 : 0;
+                await db
+                  .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
+                  .run(
+                    mapped.id,
+                    originalBytes,
+                    item.preview.bytes,
+                    item.thumbnail.bytes,
+                    originalBytes + item.preview.bytes + item.thumbnail.bytes,
+                  );
+              }
+              for (const item of manifest.moments)
+                await db
+                  .prepare(
+                    'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date,createdAt) VALUES(?,?,?,?,?,?,?)',
+                  )
+                  .run(
+                    randomUUID(),
+                    pairId,
+                    auth.user.id,
+                    item.title,
+                    remapped.get(item.mediaId)!.id,
+                    item.date,
+                    item.createdAt,
+                  );
               await db
-                .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-                .run(
-                  mapped.id,
-                  pairId,
-                  auth.user.id,
-                  item.kind,
-                  mapped.original,
-                  mapped.preview,
-                  mapped.thumbnail,
-                  item.width,
-                  item.height,
-                  item.duration,
-                  item.createdAt,
-                );
-              const originalBytes = keepOriginal ? item.original?.bytes || 0 : 0;
-              await db
-                .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
-                .run(
-                  mapped.id,
-                  originalBytes,
-                  item.preview.bytes,
-                  item.thumbnail.bytes,
-                  originalBytes + item.preview.bytes + item.thumbnail.bytes,
-                );
-            }
-            for (const item of manifest.moments)
-              await db
-                .prepare(
-                  'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date,createdAt) VALUES(?,?,?,?,?,?,?)',
-                )
-                .run(
-                  randomUUID(),
-                  pairId,
-                  auth.user.id,
-                  item.title,
-                  remapped.get(item.mediaId)!.id,
-                  item.date,
-                  item.createdAt,
-                );
-            await db
-              .prepare('INSERT INTO album_imports(coupleId,digest) VALUES(?,?)')
-              .run(pairId, digest);
-          });
+                .prepare('INSERT INTO album_imports(coupleId,digest) VALUES(?,?)')
+                .run(pairId, digest);
+            },
+          );
           committed = true;
           changed(pairId);
           result = { imported: manifest.moments.length, alreadyImported: false };
         }
       } catch (err) {
-        if (!committed) await Promise.all(moved.map((path) => rm(path, { force: true })));
+        if (!committed && !(err instanceof CommitUncertainError)) await removeMediaFiles(moved);
         failure =
           err instanceof HttpError || err instanceof z.ZodError || err instanceof multer.MulterError
             ? err
             : new HttpError(400, '导入包无法读取或媒体已损坏，未保存任何回忆');
       } finally {
         zip?.close();
-        await Promise.all(
+        await Promise.allSettled(
           [req.file?.path, workspace]
             .filter(Boolean)
             .map((path) => rm(path!, { force: true, recursive: true })),

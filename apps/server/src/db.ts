@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 import { schema } from './schema.js';
+import { PostgresConnection, postgresSettings } from './postgres.js';
 import { pairAIUpgrade, scheduleTimeUpgrade, messageAttachmentsUpgrade } from './migrations.js';
 export type User = {
   id: string;
@@ -88,7 +89,9 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
         version !== 9
       )
         throw new Error('数据库结构版本不匹配，请使用新的数据目录');
-      sqlite.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+      sqlite.exec(
+        'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;',
+      );
       sqlite.exec('BEGIN IMMEDIATE');
       try {
         sqlite.exec(schema);
@@ -147,10 +150,14 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
   }
   if (options.schema && !/^[a-z][a-z0-9_]{0,62}$/.test(options.schema))
     throw new Error('无效的数据库 schema');
+  const settings = postgresSettings();
   const pool = new pg.Pool({
     ...(url ? { connectionString: options.path } : {}),
     max: 10,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: settings.connectionTimeoutMillis,
+    statement_timeout: settings.statement_timeout,
+    query_timeout: settings.query_timeout,
+    keepAlive: true,
     idleTimeoutMillis: 30000,
     ...(options.schema ? { options: `-c search_path=${options.schema}` } : {}),
     // Keep SQLite-compatible numeric API values; reject loss of integer precision.
@@ -166,14 +173,17 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     },
   });
   pool.on('error', () => console.error('PostgreSQL idle connection failed'));
-  const context = new AsyncLocalStorage<pg.PoolClient>();
-  const query = (sql: string, values: unknown[] = []) =>
-    (context.getStore() || pool).query(postgresSQL(sql), values);
+  const connection = new PostgresConnection(pool, settings);
+  const query = (sql: string, values: unknown[] = [], readOnly = false) =>
+    connection.query(postgresSQL(sql), values, readOnly);
+  const readOnly = (sql: string) =>
+    /^\s*SELECT\b/i.test(sql) &&
+    !/\bFOR\s+(UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)\b/i.test(sql);
   const db: DB = {
     provider,
     prepare: (sql) => ({
-      get: async (...values) => (await query(sql, values)).rows[0],
-      all: async (...values) => (await query(sql, values)).rows,
+      get: async (...values) => (await query(sql, values, readOnly(sql))).rows[0],
+      all: async (...values) => (await query(sql, values, readOnly(sql))).rows,
       run: async (...values) => {
         // The only API consuming generated row IDs is message creation.
         const returning =
@@ -185,35 +195,11 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     exec: async (sql) => {
       await query(sql);
     },
-    transaction: async (action) => {
-      if (context.getStore()) return action();
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        // Serialize short mutation transactions across processes, preserving the same
-        // quota/pairing/one-use-code semantics as SQLite's single-writer transaction.
-        await client.query('SELECT pg_advisory_xact_lock(1279874629)');
-        return await context.run(client, async () => {
-          try {
-            const value = await action();
-            await client.query('COMMIT');
-            return value;
-          } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-          }
-        });
-      } catch (error) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw error;
-      } finally {
-        client.release();
-      }
-    },
+    transaction: (action) => connection.transaction(action),
     close: () => pool.end(),
   };
   try {
-    if (options.schema) await pool.query(`CREATE SCHEMA IF NOT EXISTS "${options.schema}"`);
+    if (options.schema) await query(`CREATE SCHEMA IF NOT EXISTS "${options.schema}"`);
     await db.transaction(async () => {
       await db.exec('CREATE TABLE IF NOT EXISTS database_meta(version BIGINT PRIMARY KEY)');
       const version = await db.prepare('SELECT version FROM database_meta').get();

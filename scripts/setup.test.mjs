@@ -234,3 +234,34 @@ test('setup only writes deployment keys and exposes advanced deployment settings
     ),
   );
 });
+
+test('PostgreSQL timeout/retry deployment defaults and custom values survive reconfiguration', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-setup-pg-timeouts-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = join(dir, '.env');
+  const keys = {
+    PG_CONNECTION_TIMEOUT_MS: '60000',
+    PG_QUERY_TIMEOUT_MS: '120000',
+    PG_RETRY_ATTEMPTS: '3',
+    PG_RETRY_DELAY_MS: '1000',
+  };
+  const initial = await setup({ output, ui: fakeUI({ database: 'postgres' }), env: {} });
+  for (const [key, value] of Object.entries(keys)) assert.equal(initial[key], value);
+  const custom = {
+    ...initial,
+    PG_CONNECTION_TIMEOUT_MS: '90000',
+    PG_QUERY_TIMEOUT_MS: '240000',
+    PG_RETRY_ATTEMPTS: '4',
+    PG_RETRY_DELAY_MS: '500',
+  };
+  await writeFile(
+    output,
+    Object.entries(custom)
+      .map(([k, v]) => k + '=' + quoteEnv(v))
+      .join('\n'),
+  );
+  const saved = await setup({ output, ui: fakeUI({ database: 'postgres' }), env: {} });
+  for (const key of Object.keys(keys)) assert.equal(saved[key], custom[key]);
+  assert.throws(() => validateConfig({ ...saved, PG_RETRY_ATTEMPTS: '0' }), /尝试次数/);
+  assert.throws(() => validateConfig({ ...saved, PG_QUERY_TIMEOUT_MS: 'NaN' }), /查询超时/);
+});

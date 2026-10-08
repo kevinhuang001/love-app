@@ -6,6 +6,7 @@
 | -------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | `.env`   | `ADMIN_USERNAME`、`ADMIN_PASSWORD`                                                                  | 每次启动同步管理员凭据，修改后应用部署配置；变化时撤销管理会话，值未变则保留会话 |
 | `.env`   | `LOVE_DATABASE`、`DATABASE_PROVIDER`、`DATABASE_URL`、`POSTGRES_DB/USER/PASSWORD`                   | 重新创建容器；切换数据库不会搬迁数据                                             |
+| `.env`   | `PG_CONNECTION_TIMEOUT_MS`、`PG_QUERY_TIMEOUT_MS`、`PG_RETRY_ATTEMPTS`、`PG_RETRY_DELAY_MS`         | PostgreSQL 超时与安全重试；高级部署选项修改，重新创建容器生效                    |
 | `.env`   | `LOVE_BIND_IP/PORT`、`LOVE_HTTPS`、`LOVE_DOMAIN`、`LOVE_TLS_PROVIDER/PORT/BIND_IP`、`CERTBOT_EMAIL` | 应用部署配置，控制宿主机监听、代理和证书服务                                     |
 | `.env`   | `ALLOWED_ORIGINS`、`TRUST_PROXY`、`AI_ALLOWED_HOSTS`                                                | 重启生效；高级部署选项可修改                                                     |
 | `.env`   | `MEDIA_SIGNING_SECRET`                                                                              | 稳定密钥，随备份保存；更换后重填 SMTP 密码与 AI Key                              |

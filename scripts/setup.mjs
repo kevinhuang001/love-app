@@ -80,6 +80,34 @@ export function validateConfig(config) {
       identifier(config.POSTGRES_DB))
   )
     throw new Error('PostgreSQL 配置无效');
+  if (
+    config.PG_CONNECTION_TIMEOUT_MS !== undefined &&
+    (!/^\d+$/.test(config.PG_CONNECTION_TIMEOUT_MS) ||
+      Number(config.PG_CONNECTION_TIMEOUT_MS) < 1000 ||
+      Number(config.PG_CONNECTION_TIMEOUT_MS) > 3600000)
+  )
+    throw new Error('PostgreSQL 连接超时（毫秒）无效');
+  if (
+    config.PG_QUERY_TIMEOUT_MS !== undefined &&
+    (!/^\d+$/.test(config.PG_QUERY_TIMEOUT_MS) ||
+      Number(config.PG_QUERY_TIMEOUT_MS) < 1000 ||
+      Number(config.PG_QUERY_TIMEOUT_MS) > 3600000)
+  )
+    throw new Error('PostgreSQL 查询超时（毫秒）无效');
+  if (
+    config.PG_RETRY_ATTEMPTS !== undefined &&
+    (!/^\d+$/.test(config.PG_RETRY_ATTEMPTS) ||
+      Number(config.PG_RETRY_ATTEMPTS) < 1 ||
+      Number(config.PG_RETRY_ATTEMPTS) > 10)
+  )
+    throw new Error('PostgreSQL 最大尝试次数无效');
+  if (
+    config.PG_RETRY_DELAY_MS !== undefined &&
+    (!/^\d+$/.test(config.PG_RETRY_DELAY_MS) ||
+      Number(config.PG_RETRY_DELAY_MS) < 0 ||
+      Number(config.PG_RETRY_DELAY_MS) > 60000)
+  )
+    throw new Error('PostgreSQL 重试初始间隔（毫秒）无效');
   if (config.LOVE_DATABASE === 'external') {
     const url = new URL(config.DATABASE_URL);
     if (
@@ -128,6 +156,11 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     'LOVE_DATABASE',
     'DATABASE_PROVIDER',
     'DATABASE_URL',
+    'PG_CONNECTION_TIMEOUT_MS',
+    'PG_QUERY_TIMEOUT_MS',
+    'PG_RETRY_ATTEMPTS',
+    'PG_RETRY_DELAY_MS',
+
     'POSTGRES_DB',
     'POSTGRES_USER',
     'POSTGRES_PASSWORD',
@@ -170,6 +203,11 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   );
   config.DATABASE_PROVIDER = config.LOVE_DATABASE === 'sqlite' ? 'sqlite' : 'postgres';
   config.DATABASE_URL = '';
+  config.PG_CONNECTION_TIMEOUT_MS = prior('PG_CONNECTION_TIMEOUT_MS') || '60000';
+  config.PG_QUERY_TIMEOUT_MS = prior('PG_QUERY_TIMEOUT_MS') || '120000';
+  config.PG_RETRY_ATTEMPTS = prior('PG_RETRY_ATTEMPTS') || '3';
+  config.PG_RETRY_DELAY_MS = prior('PG_RETRY_DELAY_MS') || '1000';
+
   if (config.LOVE_DATABASE === 'postgres') {
     config.POSTGRES_DB = await text('数据库名称', prior('POSTGRES_DB') || 'love', identifier);
     config.POSTGRES_USER = await text('数据库用户', prior('POSTGRES_USER') || 'love', identifier);
@@ -296,6 +334,40 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   config.ADMIN_PASSWORD = await password('管理员密码', prior('ADMIN_PASSWORD'), 12);
   config.MEDIA_SIGNING_SECRET = prior('MEDIA_SIGNING_SECRET') || randomBytes(32).toString('hex');
   if (await ask(ui.confirm({ message: '调整高级部署选项？', initialValue: false }))) {
+    if (config.LOVE_DATABASE !== 'sqlite') {
+      config.PG_CONNECTION_TIMEOUT_MS = await text(
+        'PostgreSQL 连接超时（毫秒）',
+        config.PG_CONNECTION_TIMEOUT_MS,
+        (value) =>
+          /^\d+$/.test(value) && Number(value) >= 1000 && Number(value) <= 3600000
+            ? undefined
+            : '填写 1000–3600000 的整数',
+      );
+      config.PG_QUERY_TIMEOUT_MS = await text(
+        'PostgreSQL 查询超时（毫秒）',
+        config.PG_QUERY_TIMEOUT_MS,
+        (value) =>
+          /^\d+$/.test(value) && Number(value) >= 1000 && Number(value) <= 3600000
+            ? undefined
+            : '填写 1000–3600000 的整数',
+      );
+      config.PG_RETRY_ATTEMPTS = await text(
+        'PostgreSQL 最大尝试次数',
+        config.PG_RETRY_ATTEMPTS,
+        (value) =>
+          /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 10
+            ? undefined
+            : '填写 1–10 的整数',
+      );
+      config.PG_RETRY_DELAY_MS = await text(
+        'PostgreSQL 重试初始间隔（毫秒）',
+        config.PG_RETRY_DELAY_MS,
+        (value) =>
+          /^\d+$/.test(value) && Number(value) >= 0 && Number(value) <= 60000
+            ? undefined
+            : '填写 0–60000 的整数',
+      );
+    }
     config.COMPOSE_PROJECT_NAME = await text(
       'Compose 项目名（更改会使用其他数据卷）',
       prior('COMPOSE_PROJECT_NAME') || 'love-v4',

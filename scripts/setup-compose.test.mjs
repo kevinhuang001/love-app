@@ -21,6 +21,10 @@ try {
     CERTBOT_EMAIL: 'admin@example.test',
     LOVE_TLS_PORT: '8013',
     LOVE_TLS_BIND_IP: '0.0.0.0',
+    PG_CONNECTION_TIMEOUT_MS: '90000',
+    PG_QUERY_TIMEOUT_MS: '240000',
+    PG_RETRY_ATTEMPTS: '4',
+    PG_RETRY_DELAY_MS: '500',
   };
   const file = join(dir, '.env');
   await writeFile(
@@ -53,6 +57,13 @@ try {
   assert.equal(literal(config.services.love.environment.PGPASSWORD), special);
   assert.equal(literal(config.services.love.environment.ADMIN_PASSWORD), special);
   assert.equal(config.services.love.environment.DATABASE_PROVIDER, 'postgres');
+  for (const key of [
+    'PG_CONNECTION_TIMEOUT_MS',
+    'PG_QUERY_TIMEOUT_MS',
+    'PG_RETRY_ATTEMPTS',
+    'PG_RETRY_DELAY_MS',
+  ])
+    assert.equal(String(config.services.love.environment[key]), env[key]);
   assert.equal(config.services.love.build, undefined);
   assert.equal(config.services.love.ports[0].host_ip, '0.0.0.0');
   assert.equal(config.services.love.ports[0].target, 3000);

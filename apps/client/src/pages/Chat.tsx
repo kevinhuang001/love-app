@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { Paperclip, Send, X, Check, CheckCheck, WifiOff, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { newId } from '@/lib/id';
 import { useApp } from '@/lib/context';
 import type { Message, Media } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -121,7 +122,7 @@ export function Chat() {
       return;
     }
     const item: Pending = {
-      clientId: crypto.randomUUID(),
+      clientId: newId(),
       content: text.trim(),
       ...(attachment ? { mediaId: attachment.id, media: attachment } : {}),
     };

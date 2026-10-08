@@ -1,0 +1,39 @@
+# Used automatically by ./love when HTTPS certificate provider is certbot.
+services:
+  proxy:
+    entrypoint: ['/bin/sh', '/opt/love/certbot-proxy.sh']
+    command: []
+    volumes:
+      - ./deploy/certbot-proxy.sh:/opt/love/certbot-proxy.sh:ro
+      - certbot-certs:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'test -f /tmp/love-tls-ready && wget -q --header="Host: $$LOVE_DOMAIN" -O /dev/null http://127.0.0.1/__love_proxy_health',
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 30
+  certbot:
+    image: certbot/certbot:v5.8.0
+    profiles: [https]
+    entrypoint: ['/bin/sh', '/opt/love/certbot-renew.sh']
+    depends_on:
+      proxy:
+        condition: service_started
+    environment:
+      LOVE_DOMAIN: ${LOVE_DOMAIN:?Configure the HTTPS domain with ./love setup}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Configure the Certbot email with ./love setup}
+      CERTBOT_PROXY_URL: http://proxy/__love_proxy_health
+    volumes:
+      - ./deploy/certbot-renew.sh:/opt/love/certbot-renew.sh:ro
+      - certbot-certs:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    restart: unless-stopped
+    init: true
+volumes:
+  certbot-certs:
+  certbot-webroot:

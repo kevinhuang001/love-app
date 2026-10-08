@@ -35,7 +35,20 @@ async function api(path, body, token, method = body ? 'POST' : 'GET') {
   return r.status === 204 ? null : r.json();
 }
 assert.equal((await api('/api/health')).database, process.env.SMOKE_DATABASE || 'sqlite');
-const html = await (await fetch(base)).text();
+const web = await fetch(base);
+assert.ok(web.ok);
+assert.doesNotMatch(web.headers.get('content-security-policy'), /upgrade-insecure-requests/);
+for (const header of [
+  'cross-origin-opener-policy',
+  'origin-agent-cluster',
+  'strict-transport-security',
+])
+  assert.equal(web.headers.get(header), null, `${header} must not be sent over HTTP`);
+assert.equal(web.headers.get('x-content-type-options'), 'nosniff');
+const html = await web.text();
+const jsPath = html.match(/src="([^" ]+\.js)"/)[1];
+assert.ok((await fetch(base + jsPath)).ok);
+assert.ok((await fetch(base + '/favicon.svg')).ok);
 assert.match(html, /<meta charset="UTF-8"/);
 assert.match(html, /Love/);
 const cssPath = html.match(/href="([^"]+\.css)"/)[1];

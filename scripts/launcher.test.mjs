@@ -57,6 +57,17 @@ test('loaded Release image is inspected locally and never pulled or built', asyn
   assert.ok(calls.at(-1).args.includes('--no-build'));
   assert.equal(calls.at(-1).pull, '0');
 });
+test('HTTPS chooses Certbot overlay, Caddy profile or an existing proxy; HTTP starts neither', async (t) => {
+  for (const tls of ['certbot', 'caddy', 'external', 'none']) {
+    const calls = await launch(
+      t,
+      `LOVE_IMAGE='love-app:prebuilt'\nLOVE_IMAGE_PULL='0'\nLOVE_HTTPS='${tls === 'none' ? '0' : '1'}'\nLOVE_TLS_PROVIDER='${tls}'\n`,
+    );
+    const args = calls.at(-1).args;
+    assert.equal(args.includes('compose.certbot.yml'), tls === 'certbot');
+    assert.equal(args.includes('--profile'), ['certbot', 'caddy'].includes(tls));
+  }
+});
 
 test('local build remains available and log inspection does not pull an image', async (t) => {
   const build = await launch(t, "LOVE_DOCKERFILE='Dockerfile.cn'\n");

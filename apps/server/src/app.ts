@@ -114,21 +114,31 @@ export async function createApp(options: AppOptions = {}) {
   );
   app.use(control.access);
   if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
-  app.use(
+  // Public HTTP deployments must not upgrade assets to a TLS port that does not exist.
+  // req.secure also handles HTTPS behind the explicitly configured trusted proxy.
+  const securityHeaders = (secure: boolean) =>
     helmet({
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'blob:', 'data:', 'https:'],
-          mediaSrc: ["'self'", 'blob:', 'https:'],
-          connectSrc: ["'self'", 'https:', 'wss:', 'http://localhost:*', 'http://127.0.0.1:*'],
+          imgSrc: ["'self'", 'blob:', 'data:', 'https:', ...(!secure ? ['http:'] : [])],
+          mediaSrc: ["'self'", 'blob:', 'https:', ...(!secure ? ['http:'] : [])],
+          connectSrc: secure
+            ? ["'self'", 'https:', 'wss:', 'http://localhost:*', 'http://127.0.0.1:*']
+            : ["'self'", 'https:', 'wss:', 'http:', 'ws:'],
+          upgradeInsecureRequests: secure ? [] : null,
         },
       },
+      crossOriginOpenerPolicy: secure,
+      originAgentCluster: secure,
+      strictTransportSecurity: secure,
       crossOriginResourcePolicy: { policy: 'cross-origin' },
-    }),
-  );
+    });
+  const httpsHeaders = securityHeaders(true),
+    httpHeaders = securityHeaders(false);
+  app.use((req, res, next) => (req.secure ? httpsHeaders : httpHeaders)(req, res, next));
   app.use(cors({ origin }));
   app.use(express.json({ limit: '32kb' }));
   const lookup = async (
@@ -237,7 +247,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.2.3',
+      version: '2.2.4',
       notifications: 'local',
       database: db.provider,
     }),

@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { newId } from '@/lib/id';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -677,7 +678,7 @@ export function Memories() {
                       return;
                     }
                     const drafts = chosen.map((file) => ({
-                      id: crypto.randomUUID(),
+                      id: newId(),
                       file,
                       date: '',
                       editDate: false,

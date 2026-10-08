@@ -24,3 +24,25 @@ for permission in ['POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE
 for permission in ['ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','READ_PHONE_STATE','QUERY_ALL_PACKAGES','READ_EXTERNAL_STORAGE','WRITE_EXTERNAL_STORAGE','RECEIVE_BOOT_COMPLETED']:
     assert permission not in permissions
 print('APK verified: direct stream/local notifications, no third-party push SDKs or credentials.')
+# Inspect packaged launcher resources, including actual vector paths/colors.
+with ZipFile(apk) as archive:
+    names = archive.namelist()
+    def drawable(name):
+        found=[n for n in names if re.fullmatch(r'res/drawable(?:-[^/]*)?/'+name+r'\.xml', n)]
+        assert found, f'Missing brand resource: {name}'
+        return found[0]
+    foreground_path=drawable('love_icon_foreground')
+    drawable('love_icon_monochrome')
+    for resource in ['res/mipmap-anydpi-v26/ic_launcher.xml','res/mipmap-anydpi-v33/ic_launcher.xml']:
+        assert resource in names, f'Missing brand resource: {resource}'
+    assert not any(n.endswith('/splash.png') or n.endswith('/ic_launcher_foreground.png') for n in names), 'Capacitor placeholder images remain'
+foreground=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),foreground_path],text=True)
+for path in ['M58 38H48C40 38 34 44 34 52V62C34 70 40 76 48 76H58','M50 32H60C68 32 74 38 74 46V56C74 64 68 70 60 70H50']:
+    assert path in foreground, 'Packaged logo differs from designed artwork'
+for color in ['0xffefeade','0xffb69a6b']:
+    assert color in foreground.lower(), 'Missing ivory/copper logo colors'
+adaptive=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),'res/mipmap-anydpi-v33/ic_launcher.xml'],text=True)
+assert all('E: '+layer in adaptive for layer in ['background','foreground','monochrome']), 'Missing adaptive/themed layer'
+resources=subprocess.check_output([str(aapt),'dump','resources',str(apk)],text=True)
+assert 'love_icon_background' in resources and 'ff172e29' in resources.lower(), 'Missing ink green background'
+print('APK branding verified: paired-arch artwork, adaptive/themed icons and branded launch resources.')

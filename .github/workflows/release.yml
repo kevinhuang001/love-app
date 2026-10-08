@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.2.0
+        description: New version tag, for example v2.2.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.2.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.2.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +76,12 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          后端同时支持 SQLite 和 PostgreSQL，并提供 Docker 首次部署终端向导。
+          新增原创双拱应用图标：深墨绿、暖白与铜色，统一 Android 桌面图标、启动画面和 Web favicon。
+
+          - 支持圆形/圆角等自适应图标，以及 Android 13 单色主题图标。
+          - CI 检查实际 APK 中的图标与启动资源，避免打包回默认 Capacitor 图标。
+
+          后端继续支持 SQLite 和 PostgreSQL，Docker 部署方式不变。
 
           - ./love up 首次自动启动现代终端向导，提供默认值与隐藏密码输入；后续启动复用配置。
           - 支持 SQLite、Compose 内置 PostgreSQL 18 和外部 PostgreSQL URL。

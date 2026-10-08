@@ -1,6 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  mkdirSync,
+  copyFileSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
+import sharp from 'sharp';
 const client = resolve('apps/client');
 function cap(...args) {
   const result = spawnSync(
@@ -40,12 +49,72 @@ writeFileSync(
   resolve(app, 'src/main/res/drawable/ic_stat_message.xml'),
   '<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#FFFFFFFF" android:pathData="M4,3h16v14H8l-4,4zM7,7v2h10V7zM7,11v2h7v-2z"/></vector>',
 );
+// Brand resources are generated from text/vector sources, never from Capacitor placeholders.
+const res = resolve(app, 'src/main/res');
+rmSync(resolve(res, 'values/ic_launcher_background.xml'), { force: true });
+const put = (folder, file, content) => {
+  mkdirSync(resolve(res, folder), { recursive: true });
+  writeFileSync(resolve(res, folder, file), content);
+};
+for (const folder of readdirSync(res)) {
+  if (!folder.startsWith('drawable') && !folder.startsWith('mipmap')) continue;
+  for (const file of readdirSync(resolve(res, folder))) {
+    if (
+      file === 'splash.png' ||
+      file === 'ic_launcher_foreground.png' ||
+      file === 'ic_launcher_foreground.xml' ||
+      file === 'ic_launcher_background.xml'
+    )
+      rmSync(resolve(res, folder, file));
+  }
+}
+put(
+  'values',
+  'love_brand.xml',
+  '<resources><color name="love_icon_background">#172E29</color><color name="colorPrimary">#172E29</color><color name="colorPrimaryDark">#172E29</color><color name="colorAccent">#B69A6B</color></resources>',
+);
+for (const variant of ['foreground', 'monochrome'])
+  copyFileSync(
+    resolve(client, 'branding', variant + '.xml'),
+    resolve(res, 'drawable', 'love_icon_' + variant + '.xml'),
+  );
+for (const api of [26, 33]) {
+  const adaptive = `<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/love_icon_background"/><foreground android:drawable="@drawable/love_icon_foreground"/>${api >= 33 ? '<monochrome android:drawable="@drawable/love_icon_monochrome"/>' : ''}</adaptive-icon>`;
+  for (const name of ['ic_launcher', 'ic_launcher_round'])
+    put('mipmap-anydpi-v' + api, name + '.xml', adaptive);
+}
+for (const [density, size] of Object.entries({
+  mdpi: 48,
+  hdpi: 72,
+  xhdpi: 96,
+  xxhdpi: 144,
+  xxxhdpi: 192,
+})) {
+  mkdirSync(resolve(res, 'mipmap-' + density), { recursive: true });
+  const png = await sharp(resolve(client, 'branding/icon.svg')).resize(size, size).png().toBuffer();
+  for (const name of ['ic_launcher', 'ic_launcher_round'])
+    writeFileSync(resolve(res, 'mipmap-' + density, name + '.png'), png);
+}
+put(
+  'drawable',
+  'splash.xml',
+  '<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:drawable="@color/love_icon_background"/><item android:width="180dp" android:height="180dp" android:gravity="center" android:drawable="@drawable/love_icon_foreground"/></layer-list>',
+);
+put(
+  'values',
+  'styles.xml',
+  `<resources>
+<style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar"><item name="colorPrimary">@color/colorPrimary</item><item name="colorPrimaryDark">@color/colorPrimaryDark</item><item name="colorAccent">@color/colorAccent</item></style>
+<style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar"><item name="windowActionBar">false</item><item name="windowNoTitle">true</item><item name="android:background">@null</item></style>
+<style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen"><item name="windowSplashScreenBackground">@color/love_icon_background</item><item name="windowSplashScreenAnimatedIcon">@drawable/love_icon_foreground</item><item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item><item name="android:windowBackground">@drawable/splash</item></style>
+</resources>`,
+);
 const gradle = resolve(app, 'build.gradle');
 let build = readFileSync(gradle, 'utf8')
   .replace(
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "[^\"]*"/, 'versionName "2.2.0"');
+  .replace(/versionName "[^\"]*"/, 'versionName "2.2.1"');
 writeFileSync(gradle, build);
 cap('sync', 'android');

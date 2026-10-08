@@ -62,8 +62,7 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
     data: await invite.json(),
   });
   expect(join.ok()).toBeTruthy();
-  // The administrator test deliberately leaves new-pair quota at zero.
-  // Allocate only this test's space through the real administrator API.
+  // Allocate this test's space through the real administrator API.
   const adminResponse = await request.post('http://127.0.0.1:3000/api/admin/login', {
     data: {
       username: 'admin_master',

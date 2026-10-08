@@ -1,4 +1,4 @@
-# Add with: docker compose -f compose.yml -f compose.postgres.yml up -d --build
+# Add with: docker compose -f compose.yml -f compose.postgres.yml up -d --no-build
 services:
   love:
     environment:
@@ -8,16 +8,30 @@ services:
       PGPORT: '5432'
       PGDATABASE: ${POSTGRES_DB:-love}
       PGUSER: ${POSTGRES_USER:-love}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love setup to configure PostgreSQL}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
     depends_on:
-      postgres:
-        condition: service_healthy
+      database-tools:
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: ${POSTGRES_DB:-love}
+      PGUSER: ${POSTGRES_USER:-love}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
+  postgres:
+    condition: service_healthy
+  database-tools:
+    environment:
+      PGHOST: postgres
+      PGPORT: '5432'
+      PGDATABASE: ${POSTGRES_DB:-love}
+      PGUSER: ${POSTGRES_USER:-love}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
   postgres:
     image: postgres:18-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-love}
       POSTGRES_USER: ${POSTGRES_USER:-love}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./love setup to configure PostgreSQL}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:

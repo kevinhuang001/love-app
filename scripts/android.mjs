@@ -11,6 +11,7 @@ import {
 import { resolve } from 'node:path';
 import sharp from 'sharp';
 const client = resolve('apps/client');
+const appVersion = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version;
 function cap(...args) {
   const result = spawnSync(
     process.execPath,
@@ -115,6 +116,6 @@ let build = readFileSync(gradle, 'utf8')
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "[^\"]*"/, 'versionName "2.2.5"');
+  .replace(/versionName "[^\"]*"/, 'versionName "' + appVersion + '"');
 writeFileSync(gradle, build);
 cap('sync', 'android');

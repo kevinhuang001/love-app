@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction, Express } from 'express';
 import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { randomInt, randomUUID, createHmac } from 'node:crypto';
+import { randomInt, randomUUID, randomBytes, createHmac } from 'node:crypto';
 import sharp from 'sharp';
 import { z } from 'zod';
 import { type DB, transaction } from './db.js';
@@ -30,6 +30,7 @@ const smtpSchema = z.object({
 });
 const settingsSchema = z.object({
   registration: z.enum(['closed', 'email', 'whitelist']),
+  invitationRequired: z.boolean().default(false),
   domains: z
     .array(
       z
@@ -43,9 +44,11 @@ const settingsSchema = z.object({
   retentionDays: z.number().int().min(7).max(90),
   smtp: smtpSchema,
 });
+export const validateControlSettings = (value: unknown) => settingsSchema.parse(value);
 export type ControlSettings = z.infer<typeof settingsSchema>;
 const defaults: ControlSettings = {
   registration: 'closed',
+  invitationRequired: false,
   domains: [],
   defaultQuotaMiB: 1024,
   retentionDays: 30,
@@ -96,7 +99,7 @@ export async function createControl(
   });
   async function readSettings(): Promise<ControlSettings> {
     const row = await db.prepare("SELECT value FROM server_config WHERE key='control'").get();
-    return row ? JSON.parse(String(row.value)) : structuredClone(defaults);
+    return settingsSchema.parse(row ? JSON.parse(String(row.value)) : structuredClone(defaults));
   }
   const readySMTP = async (s?: ControlSettings) => {
     const settings = s || (await readSettings());
@@ -156,6 +159,32 @@ export async function createControl(
       fail(403, '此邮箱不在注册白名单中');
   }
   const digest = (value: string) => createHmac('sha256', secret).update(value).digest('hex');
+  async function checkInvitation(code?: string) {
+    if (!(await readSettings()).invitationRequired) return;
+    if (!code) fail(403, '注册需要邀请码，请向管理员获取');
+    const row = await db
+      .prepare('SELECT * FROM registration_invites WHERE hash=?')
+      .get(hashToken(code!.trim()));
+    if (
+      !row ||
+      row.revoked ||
+      Number(row.uses) >= Number(row.maxUses) ||
+      (Number(row.expires) && Number(row.expires) <= Date.now())
+    )
+      fail(403, '邀请码无效、已过期或已用完');
+    return row;
+  }
+  async function consumeInvitation(code?: string) {
+    const row = await checkInvitation(code);
+    if (!row) return;
+    const result = await db
+      .prepare(
+        'UPDATE registration_invites SET uses=uses+1 WHERE id=? AND revoked=0 AND uses<maxUses AND (expires=0 OR expires>?)',
+      )
+      .run(row.id, Date.now());
+    if (!result.changes) fail(403, '邀请码无效、已过期或已用完');
+  }
+
   async function consumeCaptcha(req: Request, purpose: string) {
     const v = z
       .object({ captchaId: z.string().uuid(), captcha: z.string().trim().min(1).max(10) })
@@ -261,6 +290,7 @@ export async function createControl(
       const s = await readSettings();
       res.json({
         registration: s.registration,
+        invitationRequired: s.invitationRequired,
         registrationAvailable: s.registration !== 'closed' && (await readySMTP(s)),
         mailAvailable: await readySMTP(s),
         captchaRequired: true,
@@ -294,9 +324,18 @@ export async function createControl(
       message: { error: '邮件请求过于频繁，请稍后重试' },
     });
     app.post('/api/auth/email-code', mailLimit, async (req, res) => {
-      const v = z.object({ email, purpose: z.enum(['register', 'reset']) }).parse(req.body);
+      const v = z
+        .object({
+          email,
+          purpose: z.enum(['register', 'reset']),
+          invitationCode: z.string().trim().max(100).optional(),
+        })
+        .parse(req.body);
       await consumeCaptcha(req, v.purpose);
-      if (v.purpose === 'register') await registeredEmailAllowed(v.email);
+      if (v.purpose === 'register') {
+        await registeredEmailAllowed(v.email);
+        await checkInvitation(v.invitationCode);
+      }
       const current = await db
         .prepare(
           'SELECT sentAt FROM email_codes WHERE email=? AND purpose=? ORDER BY sentAt DESC LIMIT 1',
@@ -439,6 +478,55 @@ export async function createControl(
         await db.prepare('UPDATE administrators SET password=? WHERE id=?').run(password, id);
         await db.prepare('DELETE FROM admin_sessions WHERE adminId=?').run(id);
         await audit(id, 'admin.password.changed');
+      });
+      res.sendStatus(204);
+    });
+    router.get('/registration-invites', async (_req, res) => {
+      res.json(
+        await db
+          .prepare(
+            'SELECT id,label,uses,maxUses,expires,revoked,createdAt FROM registration_invites ORDER BY createdAt DESC,id LIMIT 1000',
+          )
+          .all(),
+      );
+    });
+    router.post('/registration-invites', async (req, res) => {
+      const v = z
+        .object({
+          count: z.number().int().min(1).max(200),
+          maxUses: z.number().int().min(1).max(10000).default(1),
+          expiresDays: z.number().int().min(0).max(3650).default(30),
+          label: z.string().trim().max(60).default(''),
+        })
+        .parse(req.body);
+      const expires = v.expiresDays ? Date.now() + v.expiresDays * 86400000 : 0;
+      const codes = await transaction(db, async () => {
+        const result = [];
+        for (let i = 0; i < v.count; i++) {
+          const code = randomBytes(18).toString('base64url'),
+            id = randomUUID();
+          await db
+            .prepare(
+              'INSERT INTO registration_invites(id,hash,label,maxUses,expires,createdAt) VALUES(?,?,?,?,?,?)',
+            )
+            .run(id, hashToken(code), v.label, v.maxUses, expires, new Date().toISOString());
+          result.push({ id, code, expires, maxUses: v.maxUses });
+        }
+        await audit(admin(req), 'registration.invites.created', '', {
+          count: v.count,
+          maxUses: v.maxUses,
+          expires,
+        });
+        return result;
+      });
+      res.set('Cache-Control', 'no-store').status(201).json({ codes });
+    });
+    router.patch('/registration-invites/revoke', async (req, res) => {
+      const { ids } = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }).parse(req.body);
+      await transaction(db, async () => {
+        for (const id of ids)
+          await db.prepare('UPDATE registration_invites SET revoked=1 WHERE id=?').run(id);
+        await audit(admin(req), 'registration.invites.revoked', '', { count: ids.length });
       });
       res.sendStatus(204);
     });
@@ -770,7 +858,7 @@ export async function createControl(
     await db.prepare('DELETE FROM email_codes WHERE expires<?').run(now);
     await db.prepare('DELETE FROM admin_sessions WHERE expires<?').run(now);
   }
-  await log('info', 'server.started', { version: '2.2.5' });
+  await log('info', 'server.started', { version: '2.3.0' });
   return {
     bootstrap,
     installPublic,
@@ -779,6 +867,8 @@ export async function createControl(
     consumeEmail,
     verifyCode,
     registeredEmailAllowed,
+    checkInvitation,
+    consumeInvitation,
     readSettings,
     publicSettings,
     access,

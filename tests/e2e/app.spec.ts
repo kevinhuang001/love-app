@@ -338,7 +338,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await expect(page.locator('.album-grid.is-compact')).toBeVisible();
   // Seed older pages directly; publication above is exercised through the real API and UI.
   const { DatabaseSync } = await import('node:sqlite');
-  const db = new DatabaseSync('data/e2e-admin.sqlite');
+  const db = new DatabaseSync(process.env.E2E_DATABASE_PATH || 'data/e2e-admin.sqlite');
   const user = db.prepare('SELECT id,coupleId FROM users WHERE username=?').get(username)!;
   const insert = db.prepare(
     'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
@@ -555,6 +555,12 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
   ).json();
   await request.patch('http://127.0.0.1:3000/api/admin/settings', {
     headers: adminHeaders,
-    data: { ...current, registration: 'email', domains: [], defaultQuotaMiB: 0 },
+    data: {
+      ...current,
+      registration: 'email',
+      domains: [],
+      invitationRequired: false,
+      defaultQuotaMiB: 1024,
+    },
   });
 });

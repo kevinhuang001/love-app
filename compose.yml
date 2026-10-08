@@ -1,9 +1,6 @@
 services:
   love:
-    image: ${LOVE_IMAGE:-love-app:local}
-    build:
-      context: .
-      dockerfile: ${LOVE_DOCKERFILE:-Dockerfile}
+    image: ${LOVE_IMAGE:-ghcr.io/kevinhuang001/love-app:latest}
     ports:
       - target: 3000
         published: '${LOVE_PORT:-3000}'
@@ -14,6 +11,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       DATABASE_PATH: /app/data/love.sqlite
       INITIAL_QUOTA_MIB: ${INITIAL_QUOTA_MIB:-1024}
+      INITIAL_INVITATION_REQUIRED: ${INITIAL_INVITATION_REQUIRED:-0}
       INITIAL_REGISTRATION: ${INITIAL_REGISTRATION:-closed}
       INITIAL_SMTP_HOST: ${INITIAL_SMTP_HOST:-}
       INITIAL_SMTP_PORT: ${INITIAL_SMTP_PORT:-587}
@@ -24,7 +22,7 @@ services:
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       TZ: Asia/Shanghai
-      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Run ./love up to configure first deployment}
+      MEDIA_SIGNING_SECRET: ${MEDIA_SIGNING_SECRET:?Run ./love to configure first deployment}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://${LOVE_DOMAIN:-localhost},https://localhost,capacitor://localhost}
       AI_ALLOWED_HOSTS: ${AI_ALLOWED_HOSTS:-}
       TRUST_PROXY: ${TRUST_PROXY:-0}
@@ -32,6 +30,12 @@ services:
       - love-data:/app/data
     restart: unless-stopped
     init: true
+  database-tools:
+    image: postgres:18-alpine
+    profiles: [management]
+    environment:
+      PGDATABASE: ${DATABASE_URL:-}
+    entrypoint: []
   proxy:
     image: caddy:2-alpine
     profiles: [https]

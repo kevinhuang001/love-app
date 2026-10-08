@@ -12,8 +12,8 @@ const save = () => writeFileSync(resolve(temp, 'e2e-auth.json'), JSON.stringify(
 save();
 const server = await createApp({
   staticDir: resolve('apps/client/dist'),
-  database: 'data/e2e-admin.sqlite',
-  uploads: 'data/e2e-admin-media',
+  database: process.env.DATABASE_PATH || 'data/e2e-admin.sqlite',
+  uploads: process.env.UPLOADS_PATH || 'data/e2e-admin-media',
   mediaSecret: 'test-key-for-ci-not-for-production-use',
   adminBootstrap: { username: 'admin_master', password: 'admin-test-password-123' },
   origins: [

@@ -4,10 +4,10 @@
 
 | 方法           | 路径                      | 内容                                                                                |
 | -------------- | ------------------------- | ----------------------------------------------------------------------------------- |
-| GET            | /api/health               | 版本、服务状态、notifications: local                                                      |
+| GET            | /api/health               | 版本、服务状态、notifications: local                                                |
 | POST           | /api/auth/register        | username、password、name、email、verificationId、code                               |
 | POST           | /api/auth/login           | username（或邮箱）、password、captchaId、captcha；返回 token、user、partner、couple |
-| POST           | /api/auth/logout          | 撤销会话并关闭对应本地通知连接                                            |
+| POST           | /api/auth/logout          | 撤销会话并关闭对应本地通知连接                                                      |
 | GET / PATCH    | /api/me                   | 查看资料；修改 name、可选 avatarMediaId                                             |
 | POST           | /api/pairing/invite       | 创建邀请码                                                                          |
 | POST           | /api/pairing/join         | code                                                                                |
@@ -34,7 +34,7 @@
 
 | 方法                | 路径                                                    | 内容                                                                      |
 | ------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------- |
-| GET                 | /api/auth/config                                        | 公开注册模式、邮件可用状态                                |
+| GET                 | /api/auth/config                                        | 公开注册模式、邮件可用状态                                                |
 | GET                 | /api/auth/captcha?purpose=login或register或reset或admin | id、PNG data URL、有效秒数；不返回答案                                    |
 | POST                | /api/auth/email-code                                    | email、purpose=register或reset、captchaId、captcha；返回 verificationId   |
 | POST                | /api/auth/reset-password                                | email、verificationId、code、password；成功撤销所有用户会话               |
@@ -46,7 +46,7 @@
 | GET / POST          | /api/admin/users                                        | 搜索分页；创建 username、name、email、password、confirmedEmail=true       |
 | PATCH               | /api/admin/users/:id                                    | disabled、password 或 revokeSessions=true                                 |
 | GET                 | /api/admin/couples                                      | 搜索分页、双方、容量、条目数、配额                                        |
-| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 分配当前默认额度，0 禁止上传                                           |
+| PATCH               | /api/admin/couples/:id/quota                            | quotaMiB；null 分配当前默认额度，0 禁止上传                               |
 | GET / PATCH         | /api/admin/settings                                     | registration、domains、defaultQuotaMiB、retentionDays、smtp；密码响应脱敏 |
 | POST                | /api/admin/smtp/test                                    | email                                                                     |
 | GET / POST / DELETE | /api/admin/allowlist                                    | email、note；DELETE body 传 email                                         |
@@ -99,3 +99,14 @@ curl https://love.example.com/api/ai/tools/publish_moment \
 POST `/api/me/avatar` 为图片 multipart 上传，最大 2 MiB，保存为当前个人头像并清理旧个人头像。POST `/api/media` 必须已配对，按当前配对额度原子核算三个文件的实际大小；超额返回 413 并清理本次文件。`/api/me` 的 couple 包含 `storageBytes` 和 `quotaBytes`。
 
 GET `/api/notifications/stream` 使用 Bearer 认证，返回 SSE。可选 `after` 是上次消息 ID；不传时从当前最新位置开始。事件 `ready` 含 cursor/coupleId，`message` 含 messageId，`cursor` 表示无需提醒的已读或自己的消息，`stop` 表示停止接收。每 15 秒心跳，单用户最多 5 个连接；会话、配对或账号失效时关闭。流不携带聊天正文或附件。安卓原生服务处理重连和本地通知，不存在第三方提供者注册接口。
+
+## 注册邀请码管理
+
+`GET /api/auth/config` 返回 `invitationRequired`。启用时，注册用途的 `POST /api/auth/email-code` 及 `POST /api/auth/register` 都提交 `invitationCode`；找回密码不需要邀请码。
+
+管理员会话接口：
+
+- `GET /api/admin/registration-invites`：最近 1000 个的 ID、备注、用量、有效期及停用状态，不返回哈希或明文。
+- `POST /api/admin/registration-invites`：`{count:10,maxUses:1,expiresDays:30,label:"批次"}`，201 返回 `{codes:[{id,code,expires,maxUses}]}`；代码仅此响应显示。
+- `PATCH /api/admin/registration-invites/revoke`：`{ids:["UUID"]}`，停用指定邀请码，204。
+- `PATCH /api/admin/settings` 的 `invitationRequired` 控制是否要求邀请码。

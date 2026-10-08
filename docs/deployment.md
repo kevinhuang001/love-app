@@ -1,10 +1,10 @@
 # 部署与数据
 
-推荐首次部署运行 `./love up`，通过现代终端向导配置必需选项并自动启动。SQLite 为默认值，也可选择内置或外部 PostgreSQL。见 [数据库与部署向导](database.md)。以下直接 Compose 步骤适用于手动管理 `.env` 的部署。
+推荐首次部署运行 `./love`，通过现代终端向导配置必需选项并自动启动。SQLite 为默认值，也可选择内置或外部 PostgreSQL。见 [数据库与部署向导](database.md)。以下直接 Compose 步骤适用于手动管理 `.env` 的部署。
 
 ## Docker
 
-推荐 `./love setup` 配置 HTTP 或 HTTPS，再运行 `./love up`。以下为手动配置 Caddy 自动 HTTPS 的示例，需要可访问的域名。先 `cp .env.docker.example .env`，再设置 `.env`：
+推荐 `./love` 配置 HTTP 或 HTTPS，再运行 `./love`。以下为手动配置 Caddy 自动 HTTPS 的示例，需要可访问的域名。先 `cp .env.docker.example .env`，再设置 `.env`：
 
 ```dotenv
 MEDIA_SIGNING_SECRET=替换为至少32字符的稳定随机密钥
@@ -22,7 +22,7 @@ ADMIN_PASSWORD=至少12字符的随机密码
 `MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员启动变量仅创建首个账号，创建后移除两个变量；管理员独立访问 `/#admin` 配置 SMTP 和注册政策，用户页面不显示入口。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
 
 ```bash
-docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --build
+docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --no-build
 ```
 
 数据保存于 Docker `love-data` volume。内置 HTTPS 使用 `compose.https.yml`，需要 Docker Compose 2.24.4 或更新版本。代理将宿主机 `LOVE_TLS_PORT` 转发到容器内部 TLS 端口 443；例如以上配置访问 `https://love.example.com:8013`，APK 填同样的完整地址。`LOVE_TLS_BIND_IP` 控制 HTTPS 监听地址，默认 `0.0.0.0`。后端 `love:3000` 仅在容器网络内访问，不发布 HTTP 端口，因此不会与所选 HTTPS 端口冲突。默认 HTTPS 端口仍为 443。
@@ -39,11 +39,11 @@ LOVE_TLS_PROVIDER=none
 TRUST_PROXY=0
 ```
 
-运行 `./love up`（或不加 HTTPS profile 的 Compose），开放所选端口；浏览器和 APK 使用 `http://服务器实际IP:3000`。`0.0.0.0` 只用于监听，不能当手机的服务器地址。已有部署可执行 `./love setup` 修改监听 IP，再 `./love up` 重新创建服务；数据卷保留。HTTP 未加密，公网建议配置 HTTPS。
+运行 `./love`（或不加 HTTPS profile 的 Compose），开放所选端口；浏览器和 APK 使用 `http://服务器实际IP:3000`。`0.0.0.0` 只用于监听，不能当手机的服务器地址。已有部署可执行 `./love` 修改监听 IP，再 `./love` 重新创建服务；数据卷保留。HTTP 未加密，公网建议配置 HTTPS。
 
 HTTP 响应不会发送 `upgrade-insecure-requests`、COOP、Origin-Agent-Cluster 或 HSTS；HTTPS 响应保留这些保护。通过可信代理提供 HTTPS 时设置 `TRUST_PROXY=1`，代理必须传递正确的 `X-Forwarded-Proto`，且应用端口只能由代理访问。直接公开 HTTP 端口必须使用 `TRUST_PROXY=0`。如果旧版本出现 HTTP 页面却请求 `https://域名:HTTP端口/assets/...`，更新后端镜像并重新创建服务，再强制刷新页面；仅更新 APK 无法修复 Web 响应头。
 
-日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `./love up`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
+日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `./love`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
 
 Caddy 示例：
 
@@ -58,7 +58,7 @@ Nginx 需 `client_max_body_size 105m`、`proxy_read_timeout 300s` 以及 WebSock
 
 ## 初始化时选择证书方式
 
-`./love setup` 先询问是否使用 HTTPS。选择“否”不需要域名或证书，支持 `0.0.0.0` 的公网 HTTP；设置 `LOVE_HTTPS=0`、`LOVE_TLS_PROVIDER=none`、`TRUST_PROXY=0`。
+`./love` 先询问是否使用 HTTPS。选择“否”不需要域名或证书，支持 `0.0.0.0` 的公网 HTTP；设置 `LOVE_HTTPS=0`、`LOVE_TLS_PROVIDER=none`、`TRUST_PROXY=0`。
 
 选择 HTTPS 后填写真实域名、证书方式、HTTPS 监听 IP 和访问端口。输入 8013 时，摘要和允许来源都使用 `https://你的域名:8013`；443 时省略端口。再选择：
 
@@ -80,7 +80,7 @@ LOVE_TLS_PORT=8013
 TRUST_PROXY=1
 ```
 
-保存后执行 `./love up`，自动加入 `compose.https.yml` 和 `compose.certbot.yml`，无需安装宿主机 Certbot 或配置 cron。首次申请前代理只提供验证路径，其他请求返回 503，不会把账号密码通过 HTTP 暴露；申请成功后启用 HTTPS，HTTP 跳转到 HTTPS。Certbot 失败会写入日志，15 分钟后重试，启动器等待代理就绪而不会把“尚未取得证书”报告为 HTTPS 成功。检查 `./love logs`；排除 DNS/端口问题后，可在原目录运行以下命令立即重新尝试：
+保存后执行 `./love`，自动加入 `compose.https.yml` 和 `compose.certbot.yml`，无需安装宿主机 Certbot 或配置 cron。首次申请前代理只提供验证路径，其他请求返回 503，不会把账号密码通过 HTTP 暴露；申请成功后启用 HTTPS，HTTP 跳转到 HTTPS。Certbot 失败会写入日志，15 分钟后重试，启动器等待代理就绪而不会把“尚未取得证书”报告为 HTTPS 成功。检查 `./love`；排除 DNS/端口问题后，可在原目录运行以下命令立即重新尝试：
 
 ```sh
 docker compose -p love-v4 -f compose.yml -f compose.https.yml -f compose.certbot.yml --profile https restart certbot

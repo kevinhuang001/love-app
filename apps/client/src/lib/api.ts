@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import type { Session, UploadedMedia } from './types';
 export type AuthConfig = {
   registration: 'closed' | 'email' | 'whitelist';
+  invitationRequired: boolean;
   registrationAvailable: boolean;
   mailAvailable: boolean;
 };

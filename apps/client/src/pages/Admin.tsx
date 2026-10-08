@@ -72,6 +72,7 @@ type SMTP = {
 };
 type Config = {
   registration: 'closed' | 'email' | 'whitelist';
+  invitationRequired: boolean;
   domains: string[];
   defaultQuotaMiB: number;
   retentionDays: number;
@@ -1070,6 +1071,7 @@ function AdminSettings({ api }: { api: Api }) {
     setDraft((v) => (v ? { ...v, smtp: { ...v.smtp, [key]: value } } : v));
   return (
     <>
+      <RegistrationInvites api={api} />
       <form onSubmit={save} className="space-y-5">
         <Panel
           title="注册与存储"
@@ -1092,6 +1094,14 @@ function AdminSettings({ api }: { api: Api }) {
                 ))}
               </select>
             </Field>
+            <label className="flex items-center gap-3 self-center text-sm">
+              <input
+                type="checkbox"
+                checked={draft.invitationRequired}
+                onChange={(e) => setDraft({ ...draft, invitationRequired: e.target.checked })}
+              />
+              注册需要邀请码
+            </label>
             <Field label="新配对默认存储上限（MiB）" id="default-quota">
               <Input
                 id="default-quota"
@@ -1328,5 +1338,173 @@ function AdminSettings({ api }: { api: Api }) {
         )}
       </Panel>
     </>
+  );
+}
+
+type RegistrationInvite = {
+  id: string;
+  label: string;
+  uses: number;
+  maxUses: number;
+  expires: number;
+  revoked: number;
+  createdAt: string;
+};
+function RegistrationInvites({ api }: { api: Api }) {
+  const query = useQuery({
+    queryKey: ['admin', api.session.server, 'registration-invites'],
+    queryFn: () => api.request<RegistrationInvite[]>('/api/admin/registration-invites'),
+  });
+  const [draft, setDraft] = useState({ count: 10, maxUses: 1, expiresDays: 30, label: '' });
+  const [codes, setCodes] = useState<{ id: string; code: string }[]>([]),
+    [busy, setBusy] = useState(false);
+  async function generate(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api.post<{ codes: { id: string; code: string }[] }>(
+        '/api/admin/registration-invites',
+        draft,
+      );
+      setCodes(r.codes);
+      await query.refetch();
+      toast.success(`已生成 ${r.codes.length} 个邀请码`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  function download() {
+    const url = URL.createObjectURL(
+      new Blob(['\uFEFFid,code\n' + codes.map((v) => v.id + ',' + v.code).join('\n') + '\n'], {
+        type: 'text/csv;charset=utf-8',
+      }),
+    );
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Love-invitation-codes.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return (
+    <Panel
+      title="注册邀请码"
+      detail="是否要求邀请码在下方注册设置中控制。邀请码只在生成后显示一次，请及时下载保存；配对邀请与注册邀请码相互独立。"
+    >
+      <form onSubmit={generate} className="grid gap-4 sm:grid-cols-4">
+        <Field label="生成数量" id="invite-count">
+          <Input
+            id="invite-count"
+            type="number"
+            min={1}
+            max={200}
+            required
+            value={draft.count}
+            onChange={(e) => setDraft({ ...draft, count: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label="每码可用次数" id="invite-uses">
+          <Input
+            id="invite-uses"
+            type="number"
+            min={1}
+            max={10000}
+            required
+            value={draft.maxUses}
+            onChange={(e) => setDraft({ ...draft, maxUses: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label="有效天数（0 不过期）" id="invite-days">
+          <Input
+            id="invite-days"
+            type="number"
+            min={0}
+            max={3650}
+            required
+            value={draft.expiresDays}
+            onChange={(e) => setDraft({ ...draft, expiresDays: Number(e.target.value) })}
+          />
+        </Field>
+        <Field label="批次备注" id="invite-label">
+          <Input
+            id="invite-label"
+            maxLength={60}
+            value={draft.label}
+            onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+          />
+        </Field>
+        <Button disabled={busy}>批量生成邀请码</Button>
+      </form>
+      {codes.length > 0 && (
+        <div className="mt-5 space-y-3 rounded-xl border bg-muted/40 p-4">
+          <p className="text-xs">以下邀请码仅显示这一次。下载文件后再离开页面。</p>
+          <textarea
+            aria-label="本次生成的邀请码"
+            readOnly
+            value={codes.map((v) => v.code).join('\n')}
+            className="h-36 w-full rounded-lg border bg-background p-3 font-mono text-xs"
+          />
+          <Button variant="outline" onClick={download}>
+            下载本批邀请码
+          </Button>
+        </div>
+      )}
+      {query.isError ? (
+        <ErrorState error={query.error} retry={() => void query.refetch()} />
+      ) : (
+        <div className="mt-5 max-h-80 space-y-2 overflow-y-auto">
+          {query.data?.map((row) => (
+            <div
+              key={row.id}
+              className="flex items-center justify-between gap-3 border-t py-3 text-xs"
+            >
+              <div>
+                <p>
+                  {row.label || '未备注'} · {row.id.slice(0, 8)}
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  已用 {row.uses}/{row.maxUses} ·{' '}
+                  {row.revoked
+                    ? '已停用'
+                    : row.expires && row.expires <= Date.now()
+                      ? '已过期'
+                      : row.uses >= row.maxUses
+                        ? '已用完'
+                        : row.expires
+                          ? `有效至 ${time(new Date(row.expires).toISOString())}`
+                          : '不过期'}
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || Boolean(row.revoked)}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await api.patch('/api/admin/registration-invites/revoke', { ids: [row.id] });
+                    await query.refetch();
+                    toast.success('邀请码已停用');
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                停用
+              </Button>
+            </div>
+          ))}
+          {query.data?.length === 0 && (
+            <p className="text-xs text-muted-foreground">尚未生成邀请码。</p>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            显示最近 1000 个邀请码；服务端仅保存哈希，不保存完整邀请码。
+          </p>
+        </div>
+      )}
+    </Panel>
   );
 }

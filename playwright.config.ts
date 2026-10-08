@@ -33,8 +33,8 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         AI_ALLOWED_HOSTS: '127.0.0.1',
-        DATABASE_PATH: 'data/e2e-admin.sqlite',
-        UPLOADS_PATH: 'data/e2e-admin-media',
+        DATABASE_PATH: process.env.E2E_DATABASE_PATH || 'data/e2e-admin.sqlite',
+        UPLOADS_PATH: process.env.E2E_UPLOADS_PATH || 'data/e2e-admin-media',
         ALLOWED_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173,https://localhost',
         MEDIA_SIGNING_SECRET: 'test-key-for-ci-not-for-production-use',
       },

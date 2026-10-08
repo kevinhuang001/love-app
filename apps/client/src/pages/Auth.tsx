@@ -13,6 +13,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
     [config, setConfig] = useState<AuthConfig | null>(null);
   const [username, setUsername] = useState(''),
     [name, setName] = useState(''),
+    [invitationCode, setInvitationCode] = useState(''),
     [email, setEmail] = useState(''),
     [password, setPassword] = useState(''),
     [busy, setBusy] = useState(false),
@@ -107,6 +108,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
         '/api/auth/email-code',
         {
           email,
+          ...(mode === 'register' ? { invitationCode } : {}),
           purpose: mode === 'reset' ? 'reset' : 'register',
           captchaId: captcha.id,
           captcha: captcha.code,
@@ -138,7 +140,7 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
         username,
         password,
         ...(mode === 'register'
-          ? { name, email, verificationId, code }
+          ? { name, email, verificationId, code, invitationCode }
           : { captchaId: captcha.id, captcha: captcha.code }),
       });
       localStorage.setItem('love.server', api.session.server);
@@ -236,6 +238,25 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
                     autoComplete="nickname"
                     placeholder={!api ? '请先配置服务器地址' : '你的昵称'}
                   />
+                </div>
+              )}
+              {mode === 'register' && config?.invitationRequired && (
+                <div className="space-y-2">
+                  <Label htmlFor="invitation-code">邀请码</Label>
+                  <Input
+                    id="invitation-code"
+                    value={invitationCode}
+                    onChange={(e) => setInvitationCode(e.target.value.trim())}
+                    required
+                    maxLength={100}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder="填写管理员提供的邀请码"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    邀请码用于加入此服务器，仍需验证你的邮箱。
+                  </p>
                 </div>
               )}
               {mode !== 'login' && (

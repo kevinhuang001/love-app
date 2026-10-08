@@ -20,6 +20,7 @@ const server = await createApp({
   origins: process.env.ALLOWED_ORIGINS?.split(',').map((s) => s.trim()),
   production,
   initialSettings: {
+    invitationRequired: process.env.INITIAL_INVITATION_REQUIRED === '1',
     defaultQuotaMiB: Number(process.env.INITIAL_QUOTA_MIB || 1024),
     registration: (process.env.INITIAL_REGISTRATION || 'closed') as
       'closed' | 'email' | 'whitelist',

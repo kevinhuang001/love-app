@@ -247,7 +247,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.2.5',
+      version: '2.3.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -270,6 +270,7 @@ export async function createApp(options: AppOptions = {}) {
               email: z.string().trim().toLowerCase().email().max(254),
               verificationId: z.string().uuid(),
               code: z.string().regex(/^\d{6}$/),
+              invitationCode: z.string().trim().max(100).optional(),
             })
             .parse(req.body)
         : z
@@ -287,8 +288,10 @@ export async function createApp(options: AppOptions = {}) {
           email: string;
           verificationId: string;
           code: string;
+          invitationCode?: string;
         };
         await control.registeredEmailAllowed(registration.email);
+        await control.checkInvitation(registration.invitationCode);
         if (user) fail(409, '此用户名已存在');
         const password = await hashPassword(value.password),
           id = randomUUID();
@@ -299,6 +302,8 @@ export async function createApp(options: AppOptions = {}) {
           registration.verificationId,
           registration.code,
           async () => {
+            await control.registeredEmailAllowed(registration.email);
+            await control.consumeInvitation(registration.invitationCode);
             try {
               await db
                 .prepare(

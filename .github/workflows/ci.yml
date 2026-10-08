@@ -95,6 +95,8 @@ jobs:
             ffmpeg -version >/dev/null
           '
       - run: node scripts/setup-compose.test.mjs
+      - run: node scripts/manager-smoke.mjs
+      - run: node scripts/manager-compose-smoke.mjs
       - name: Verify HTTPS challenge bootstrap and certificate reload
         if: matrix.dockerfile == 'Dockerfile'
         run: node scripts/certbot-proxy-smoke.mjs

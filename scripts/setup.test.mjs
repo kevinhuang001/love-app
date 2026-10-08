@@ -40,7 +40,9 @@ const fakeUI = (options = {}) => ({
       ? options.https || false
       : p.message === '现在配置 SMTP 和邮箱注册？'
         ? false
-        : options.save !== false,
+        : p.message === '保存配置并继续？'
+          ? options.save !== false
+          : p.initialValue,
 });
 test('setup selects HTTP without certificates, or HTTPS with Certbot, Caddy or existing proxy', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-tls-'));
@@ -135,17 +137,16 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
     output,
     ui: fakeUI({ database: 'postgres' }),
     env: {
-      LOVE_DOCKERFILE: 'Dockerfile.cn',
       LOVE_IMAGE: 'love-app:prebuilt',
-      LOVE_IMAGE_PULL: '0',
+      LOVE_IMAGE_SOURCE: 'release',
     },
   });
   const stored = parseDeploymentEnv(await readFile(output, 'utf8'));
   assert.deepEqual(stored, config);
   assert.equal(stored.LOVE_DATABASE, 'postgres');
-  assert.equal(stored.LOVE_DOCKERFILE, 'Dockerfile.cn');
+  assert.equal(stored.LOVE_DOCKERFILE, undefined);
   assert.equal(stored.LOVE_IMAGE, 'love-app:prebuilt');
-  assert.equal(stored.LOVE_IMAGE_PULL, '0');
+  assert.equal(stored.LOVE_IMAGE_SOURCE, 'release');
   assert.equal(stored.LOVE_BIND_IP, '127.0.0.1');
   assert.equal(stored.POSTGRES_DB, 'love');
   assert.equal(stored.DATABASE_PROVIDER, 'postgres');
@@ -158,9 +159,9 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
   assert.equal(repeat.MEDIA_SIGNING_SECRET, stored.MEDIA_SIGNING_SECRET);
   assert.equal(repeat.POSTGRES_PASSWORD, stored.POSTGRES_PASSWORD);
   assert.equal(repeat.ADMIN_PASSWORD, stored.ADMIN_PASSWORD);
-  assert.equal(repeat.LOVE_DOCKERFILE, 'Dockerfile.cn');
+  assert.equal(repeat.LOVE_DOCKERFILE, undefined);
   assert.equal(repeat.LOVE_IMAGE, 'love-app:prebuilt');
-  assert.equal(repeat.LOVE_IMAGE_PULL, '0');
+  assert.equal(repeat.LOVE_IMAGE_SOURCE, 'release');
 });
 test('public and specific interface bindings persist and cannot inject Compose port syntax', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-bind-'));

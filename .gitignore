@@ -12,3 +12,6 @@ playwright-report/
 test-results/
 coverage/
 *.log
+
+backups/
+.love-rollback

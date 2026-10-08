@@ -1,6 +1,6 @@
 # Love · 我们的日常
 
-首次部署运行 `./love up`，终端向导会配置 SQLite 或 PostgreSQL、HTTP/HTTPS、Certbot 自动续证（可选）、管理员、容量和可选 SMTP。只需 Docker，无需宿主机 Node.js。再次运行复用配置；详细步骤见 [数据库与部署向导](docs/database.md)。
+运行 `./love` 打开管理菜单，选择首次配置，终端向导会配置 SQLite 或 PostgreSQL、HTTP/HTTPS、Certbot 自动续证（可选）、管理员、容量和可选 SMTP。只需 Docker，无需宿主机 Node.js。再次运行可选择配置、更新、启停、备份、恢复和卸载；详细步骤见 [数据库与部署向导](docs/database.md)。
 
 以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite + Socket.IO。
 
@@ -46,30 +46,18 @@ npm run android:prepare
 
 ## Docker 部署
 
-**免构建部署**：`LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up`，自动拉取预构建镜像并保留首次配置向导。也可从 [Docker 镜像 Release](https://github.com/kevinhuang001/love-app/releases/tag/docker-latest) 下载 x86_64 或 ARM64 镜像包后 `docker load`。详细步骤、更新与固定版本见 [预构建镜像部署](docs/container-images.md)。
+从 [Docker 镜像 Release](https://github.com/kevinhuang001/love-app/releases/tag/docker-latest) 下载 `Love-docker-deploy.tar.gz`，解压后运行：
 
-中国大陆部署可用 `LOVE_DOCKERFILE=Dockerfile.cn ./love up`，使用 npmmirror 的 npm 源、中科大的 pip 和 apt 源，保留首次配置向导。已有部署在 `.env` 设置 `LOVE_DOCKERFILE=Dockerfile.cn` 后运行 `./love up`。详见 [国内镜像构建](docs/docker-cn.md)。
-
-推荐执行 `./love setup` 再 `./love up`，向导可选 HTTP、Certbot 自动申请/续期（默认）、Caddy 自动 HTTPS，或已有反向代理。Certbot 模式由启动器自动组合 `compose.https.yml` 与 `compose.certbot.yml`；域名需正确解析并开放 80 和选定的 HTTPS 端口（默认 443，可用 8013），证书持久化且自动加载。
-
-以下为手动配置 Caddy 自动 HTTPS 的方式：
-
-```bash
-cp .env.docker.example .env
-# 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET、LOVE_DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
-# 生成密钥：openssl rand -hex 32
-# 若使用下面的 HTTPS 反代，使用 compose.https.yml 隐藏后端 HTTP；允许 https://你的域名:8013
-# 设置 LOVE_HTTPS=1、LOVE_TLS_PROVIDER=caddy、LOVE_TLS_PORT=8013
-# 将域名解析到服务器，并开放 80/8013；需要 Compose >= 2.24.4
-
-docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --build
+```sh
+chmod +x love
+./love
 ```
 
-若部署过旧版，先停止旧服务。`love-v4` 使用新的数据卷，不删除旧卷。
+直接选择菜单，无需二级指令。只下载已构建镜像：默认自动下载公开 Release 并校验 SHA-256，也可选择 GHCR 或自定义仓库。菜单统一管理初次配置、修改配置、启动、停止、更新、日志、备份、恢复、账号、注册与 SMTP、配对容量、卸载和更新回滚。更新保留配置与数据，卸载默认保留数据。见 [管理菜单](docs/container-images.md)。
 
-Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名:8013`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose -p love-v4 up -d --build`，访问 `http://localhost:3000`。
+向导支持 HTTP（包括 `0.0.0.0` 公网监听）、HTTPS 自定义端口、Certbot 自动申请与续期、Caddy 或外部代理。HTTPS 后端只在容器网络内开放。Dockerfile 和国内镜像 Dockerfile.cn 供开发者及 CI 使用，用户部署不再本地构建。
 
-管理员独立访问 `/#admin`，用户页面没有后台入口；默认关闭自行注册。配置 SMTP 后可启用邮箱注册或白名单，白名单用户自己创建账号并完成邮件验证。
+管理员独立访问 `/#admin`，用户页面没有后台入口；默认关闭自行注册。配置 SMTP 后可启用邮箱注册或白名单，并可要求注册邀请码；后台支持批量生成、下载、次数限制、有效期与停用，白名单用户自己创建账号并完成邮件验证。
 
 CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、管理员权限、账号、配额、日志、聊天、农历待办及重启持久化。此配置不会自动连接或部署到你的服务器。
 

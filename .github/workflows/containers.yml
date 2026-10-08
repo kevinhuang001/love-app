@@ -6,6 +6,7 @@ on:
       - 'Dockerfile'
       - 'love'
       - 'scripts/setup*'
+      - 'scripts/manage-server.mjs'
       - 'compose*.yml'
       - 'deploy/**'
   workflow_run:
@@ -200,11 +201,11 @@ jobs:
           cat > images/NOTES.md <<'NOTES'
           主分支通过 CI 后自动发布的预构建 Docker 镜像，支持 Linux x86_64（amd64）和 ARM64。此滚动发布不会替代 Android 的版本 Release。
 
-          **直接拉取：** `LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up`
+          **部署：** 下载 `Love-docker-deploy.tar.gz`，解压后运行 `chmod +x love && ./love`。从交互菜单选择首次配置及镜像来源。
 
-          **从本页下载导入：** 下载对应架构的 `Love-docker-*.tar.gz`，执行 `docker load -i 文件名`，再运行 `LOVE_IMAGE=love-app:prebuilt LOVE_IMAGE_PULL=0 ./love up`。
+          **镜像来源：** 默认自动下载本页架构对应镜像并检查 SHA-256，也可选择 GHCR 或自定义仓库；只下载镜像，不在用户服务器 build。
 
-          `Love-docker-deploy.tar.gz` 是部署配置包，解压后包含启动器、Compose、Caddy 配置和说明，无需下载源码或本地 build。没有 .env 时仍会启动配置向导；后续沿用配置和数据卷。
+          `Love-docker-deploy.tar.gz` 是部署配置包，解压后包含启动器、Compose、Caddy 配置和说明，无需下载源码或本地 build。菜单管理配置、更新、启停、日志、备份、恢复、账号与 SMTP、容量和卸载；更新沿用配置和数据卷。
 
           `SHA256SUMS` 提供校验，`image-info.json` 记录源码提交和各架构 digest。GHCR 的 latest/main 为滚动标签，可用 sha-完整提交或 digest 固定部署。首次发布后，仓库所有者须将 GHCR 包可见性设为 Public，其他用户才能匿名拉取；本页镜像下载无需登录 GHCR。
 

@@ -1,71 +1,218 @@
 #!/bin/sh
-# Docker-only launcher: configure once, then start with the selected Compose files.
-set -eu
-cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-command -v docker >/dev/null 2>&1 || { echo '请先安装 Docker Engine 和 Compose 插件。' >&2; exit 1; }
-docker compose version >/dev/null
-mode=${1:-up}
-case "$mode" in up|setup|down|logs|ps) ;; *) echo '用法：./love [up|setup|down|logs|ps]' >&2; exit 1 ;; esac
-# Read only fixed enum fields, never evaluate/shell-source secret values from .env.
-setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_.-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
-LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-$(setting LOVE_DOCKERFILE)}
-LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-Dockerfile}
-case "$LOVE_DOCKERFILE" in Dockerfile|Dockerfile.cn) ;; *) echo 'LOVE_DOCKERFILE 只能为 Dockerfile 或 Dockerfile.cn。' >&2; exit 1 ;; esac
-export LOVE_DOCKERFILE
-image_setting() { [ ! -f .env ] || sed -n "s/^LOVE_IMAGE=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
-LOVE_IMAGE=${LOVE_IMAGE:-$(image_setting)}
-LOVE_IMAGE=${LOVE_IMAGE:-love-app:local}
-LOVE_IMAGE_PULL=${LOVE_IMAGE_PULL:-$(setting LOVE_IMAGE_PULL)}
-LOVE_IMAGE_PULL=${LOVE_IMAGE_PULL:-1}
-case "$LOVE_IMAGE_PULL" in 0|1) ;; *) echo 'LOVE_IMAGE_PULL 只能为 0 或 1。' >&2; exit 1 ;; esac
-export LOVE_IMAGE LOVE_IMAGE_PULL
-image_ready=0
-prepare_image() {
-  [ "$image_ready" = 0 ] || return 0
-  if [ "$LOVE_IMAGE" = love-app:local ]; then
-    docker build -f "$LOVE_DOCKERFILE" -t "$LOVE_IMAGE" .
-  elif [ "$LOVE_IMAGE_PULL" = 1 ]; then
-    docker pull "$LOVE_IMAGE"
-  else
-    docker image inspect "$LOVE_IMAGE" >/dev/null || { echo '预构建镜像不存在，请先运行 docker load。' >&2; exit 1; }
-  fi
-  image_ready=1
+# Interactive deployment manager. No build tools or host Node.js are required.
+set -u
+umask 077
+cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)" || exit 1
+[ "$#" -eq 0 ] || { printf '直接运行 ./love，在菜单中选择操作。\n' >&2; exit 1; }
+command -v docker >/dev/null 2>&1 || { printf '请先安装 Docker Engine 和 Compose 插件。\n' >&2; exit 1; }
+docker compose version >/dev/null || exit 1
+work=''
+trap '[ -z "$work" ] || rm -rf -- "$work"' EXIT HUP INT TERM
+setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
+reload() {
+  image=$(setting LOVE_IMAGE); image=${image:-ghcr.io/kevinhuang001/love-app:latest}
+  source=$(setting LOVE_IMAGE_SOURCE); source=${source:-registry}
+  database=$(setting LOVE_DATABASE); database=${database:-sqlite}
+  https=$(setting LOVE_HTTPS); tls=$(setting LOVE_TLS_PROVIDER)
+  project=$(setting COMPOSE_PROJECT_NAME); project=${project:-love-v4}
+  case "$source" in release|registry) ;; *) printf '镜像来源无效，请选择镜像来源。\n' >&2; return 1;; esac
 }
-if [ "$mode" = setup ] || { [ "$mode" = up ] && [ ! -f .env ]; }; then
-  [ -t 0 ] && [ -t 1 ] || { echo '首次部署需要交互终端，请运行 ./love setup。' >&2; exit 1; }
-  prepare_image
-  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_DOCKERFILE -e LOVE_IMAGE -e LOVE_IMAGE_PULL -v "$PWD:/setup" --entrypoint node "$LOVE_IMAGE" /app/scripts/setup.mjs --output /setup/.env
-  [ "$mode" = setup ] && exit 0
-fi
-[ -f .env ] || { echo '配置不存在，请先运行 ./love setup。' >&2; exit 1; }
-database=$(setting LOVE_DATABASE)
-https=$(setting LOVE_HTTPS)
-tls=$(setting LOVE_TLS_PROVIDER)
-project=$(setting COMPOSE_PROJECT_NAME)
-[ -n "$project" ] || project=love-v4
-set -- docker compose --project-name "$project" --env-file .env -f compose.yml
-[ "$database" != postgres ] || set -- "$@" -f compose.postgres.yml
-if [ "$https" = 1 ]; then
-  case "$tls" in
-    certbot) set -- "$@" -f compose.https.yml -f compose.certbot.yml --profile https ;;
-    external) ;;
-    caddy|'') set -- "$@" -f compose.https.yml --profile https ;;
-    *) echo 'HTTPS 证书方式无效，请运行 ./love setup。' >&2; exit 1 ;;
+compose() {
+  # Only fixed filenames enter the intentionally split argument list.
+  files='-f compose.yml'
+  [ "$database" != postgres ] || files="$files -f compose.postgres.yml"
+  if [ "$https" = 1 ]; then
+    case "$tls" in
+      certbot) files="$files -f compose.https.yml -f compose.certbot.yml --profile https";;
+      caddy) files="$files -f compose.https.yml --profile https";;
+      external) ;; *) printf 'HTTPS 方式无效，请重新配置。\n' >&2; return 1;;
+    esac
+  fi
+  docker compose --project-name "$project" --env-file .env $files "$@"
+}
+confirm() { printf '%s [y/N] ' "$1"; IFS= read -r answer || return 1; [ "$answer" = y ] || [ "$answer" = Y ]; }
+set_field() {
+  # Values passed here are restricted image references / fixed enum fields.
+  [ -f .env ] || return 0
+  sed "/^$1=/d" .env > .env.next && printf "%s='%s'\n" "$1" "$2" >> .env.next && chmod 600 .env.next && mv .env.next .env
+}
+get_asset() {
+  command -v curl >/dev/null 2>&1 || { printf '下载需要 curl，请先安装。\n' >&2; return 1; }
+  [ -n "$work" ] || work=$(mktemp -d "${TMPDIR:-/tmp}/love-download.XXXXXXXX") || return 1
+  asset=$1
+  base=https://github.com/kevinhuang001/love-app/releases/download/docker-latest
+  curl --fail --location --retry 3 --connect-timeout 20 --max-time 1800 "$base/$asset" -o "$work/$asset" || return 1
+  [ -f "$work/SHA256SUMS" ] || curl --fail --location --retry 3 --connect-timeout 20 --max-time 120 "$base/SHA256SUMS" -o "$work/SHA256SUMS" || return 1
+  expected=$(awk -v name="$asset" '$2==name {print $1}' "$work/SHA256SUMS")
+  [ "${#expected}" -eq 64 ] || { printf '发布校验清单缺少 %s，稍后重试。\n' "$asset" >&2; return 1; }
+  if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$work/$asset" | cut -d ' ' -f 1)
+  elif command -v shasum >/dev/null 2>&1; then actual=$(shasum -a 256 "$work/$asset" | cut -d ' ' -f 1)
+  else printf '请安装 sha256sum 或 shasum。\n' >&2; return 1; fi
+  [ "$actual" = "$expected" ] || { printf '下载校验失败，未导入或安装。发布可能正在更新，请稍后重试。\n' >&2; return 1; }
+}
+download_image() {
+  if [ "$source" = registry ]; then docker pull "$image" || return 1
+  else
+    case "$(uname -m)" in x86_64|amd64) arch=amd64;; aarch64|arm64) arch=arm64;; *) printf '只提供 Linux amd64 / arm64 镜像。\n' >&2; return 1;; esac
+    get_asset "Love-docker-$arch.tar.gz" || return 1
+    docker load -i "$work/Love-docker-$arch.tar.gz" || return 1
+    image=love-app:prebuilt
+    set_field LOVE_IMAGE "$image" || return 1
+  fi
+}
+ensure_image() { docker image inspect "$image" >/dev/null 2>&1 || download_image; }
+choose_source() {
+  printf '\n镜像来源\n  1  GitHub Release 下载（公开文件，自动识别架构）\n  2  GHCR 拉取\n  3  自定义镜像仓库\n请选择 [1]：'; IFS= read -r option || return 1
+  case "${option:-1}" in
+    1) source=release; image=love-app:prebuilt;;
+    2) source=registry; image=ghcr.io/kevinhuang001/love-app:latest;;
+    3) printf '镜像完整地址：'; IFS= read -r image || return 1; source=registry;
+       case "$image" in ''|*[!a-zA-Z0-9_./:@-]*) printf '镜像地址无效。\n' >&2; return 1;; esac;;
+    *) printf '选择无效。\n' >&2; return 1;;
   esac
+  download_image || return 1
+  set_field LOVE_IMAGE_SOURCE "$source" && set_field LOVE_IMAGE "$image"
+}
+configure() {
+  [ -t 0 ] && [ -t 1 ] || { printf '配置需要交互终端。\n' >&2; return 1; }
+  [ -f .env ] || choose_source || return 1
+  ensure_image || return 1
+  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_IMAGE="$image" -e LOVE_IMAGE_SOURCE="$source" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/setup.mjs --output /setup/.env || return 1
+  reload || return 1
+  printf '部署配置已保存。账号、邀请码和 SMTP 的现有设置请在菜单 10 管理。\n'
+  confirm '立即应用配置并启动？' && start || return 0
+}
+require_config() { [ -f .env ] || configure; [ -f .env ]; }
+start() {
+  require_config && ensure_image || return 1
+  if [ "$https" != 1 ] || [ "$tls" = external ]; then compose --profile https stop proxy >/dev/null 2>&1 || true; fi
+  compose up -d --no-build --pull missing --remove-orphans --wait
+}
+backup() {
+  require_config || return 1
+  ensure_image || return 1
+  backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$backup_dir" || return 1
+  running=$(compose ps --status running -q love) || return 1
+  [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
+  compose stop love || return 1
+  cp .env "$backup_dir/deployment.env" || { [ -z "$running" ] || compose start love; return 1; }
+  if ! docker run --rm --user 0 --mount "type=volume,src=${project}_love-data,dst=/data,readonly" --entrypoint tar "$image" -C /data -czf - . > "$backup_dir/data.tar.gz"; then
+    [ -z "$running" ] || compose start love; return 1
+  fi
+  if [ "$database" != sqlite ] && ! compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_dump --format=custom' > "$backup_dir/database.dump"; then
+    [ -z "$running" ] || compose start love; return 1
+  fi
+  (cd "$backup_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; [ ! -f database.dump ] || sha256sum database.dump; else shasum -a 256 deployment.env data.tar.gz; [ ! -f database.dump ] || shasum -a 256 database.dump; fi; } > SHA256SUMS) || { [ -z "$running" ] || compose start love; return 1; }
+  [ -z "$running" ] || compose start love || return 1
+  printf '备份完成：%s（包含密码和密钥，请妥善保管）。\n' "$backup_dir"
+}
+restore() {
+  require_config || return 1
+  printf '\n可用备份：\n'; find "$PWD/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true
+  printf '输入备份目录的名称（不含路径，回车取消）：'; IFS= read -r name || return 1
+  case "$name" in ''|*[!a-zA-Z0-9_-]*) return 0;; esac
+  restore_dir="$PWD/backups/$name"
+  [ -f "$restore_dir/SHA256SUMS" ] && [ -f "$restore_dir/deployment.env" ] || { printf '备份不存在或不完整。\n' >&2; return 1; }
+  (cd "$restore_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi; }) || return 1
+  saved_project=$(sed -n "s/^COMPOSE_PROJECT_NAME=['\"]\{0,1\}\([a-zA-Z0-9_.-]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env" | tail -1); saved_project=${saved_project:-love-v4}
+  [ "$saved_project" = "$project" ] || { printf '备份属于其他部署，未覆盖当前数据。\n' >&2; return 1; }
+  saved_database=$(sed -n "s/^LOVE_DATABASE=['\"]\{0,1\}\([a-z]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env"); saved_database=${saved_database:-sqlite}
+  [ "$saved_database" = "$database" ] || { printf '数据库类型不匹配，未覆盖当前数据。\n' >&2; return 1; }
+  printf '这会覆盖当前数据和部署配置。输入 RESTORE 确认：'; IFS= read -r answer || return 1
+  [ "$answer" = RESTORE ] || return 0
+  backup || return 1
+  compose stop love || return 1
+  if [ "$database" != sqlite ]; then
+    compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_restore --dbname="$PGDATABASE" --clean --if-exists --no-owner --exit-on-error' < "$restore_dir/database.dump" || return 1
+  fi
+  docker run --rm --user 0 -i --mount "type=volume,src=${project}_love-data,dst=/data" --entrypoint sh "$image" -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /data -xzf - && chown -R node:node /data' < "$restore_dir/data.tar.gz" || return 1
+  cp "$restore_dir/deployment.env" .env && chmod 600 .env && reload && start
+}
+update() {
+  require_config || return 1
+  confirm '下载最新软件和管理工具，并在备份后更新？' || return 0
+  backup || return 1
+  [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
+  get_asset Love-docker-deploy.tar.gz || return 1
+  mkdir "$work/deploy" || return 1
+  # The checksum comes from the same HTTPS release. Install only known deployment files.
+  tar --no-same-owner --no-same-permissions -xzf "$work/Love-docker-deploy.tar.gz" -C "$work/deploy" || return 1
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
+    [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '部署包不完整，未更新。\n' >&2; return 1; }
+  done
+  rollback_image="love-app:rollback-$(date -u +%Y%m%dT%H%M%SZ)"
+  docker tag "$image" "$rollback_image" || return 1
+  download_image || return 1
+  printf '%s\n' "$rollback_image" > .love-rollback
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
+    cp "$work/deploy/$file" "$file.next" && mv "$file.next" "$file" || return 1
+  done
+  cp -R "$work/deploy/deploy" . || return 1
+  chmod 755 love
+  start || { printf '启动失败，可从菜单选择回滚；备份已保留。\n' >&2; return 1; }
+  printf '更新完成，正在重新加载管理菜单。\n'
+  rm -rf -- "$work"; work=''
+  exec sh ./love
+}
+rollback() {
+  [ -f .love-rollback ] || { printf '没有可用的上次更新镜像。\n' >&2; return 1; }
+  rollback_image=$(cat .love-rollback)
+  case "$rollback_image" in love-app:rollback-*[!a-zA-Z0-9_-]*|'') printf '回滚记录无效。\n' >&2; return 1;; love-app:rollback-*) ;; *) return 1;; esac
+  confirm '使用上次更新前的镜像？部署配置和数据不回滚。' || return 0
+  docker image inspect "$rollback_image" >/dev/null || return 1
+  image=$rollback_image; set_field LOVE_IMAGE "$image" && start
+}
+manage_server() {
+  require_config && ensure_image || return 1
+  running=$(compose ps --status running -q love) || return 1
+  compose stop love || return 1
+  compose run --rm --no-deps --interactive --tty --entrypoint node love /app/scripts/manage-server.mjs
+  result=$?
+  [ -z "$running" ] || compose start love || return 1
+  return "$result"
+}
+uninstall() {
+  require_config || return 1
+  printf '卸载当前部署 %s：\n  1  移除容器，保留数据、配置和备份\n  2  移除容器和数据卷（不可恢复）\n请选择 [1]：' "$project"; IFS= read -r option || return 1
+  case "${option:-1}" in
+    1) confirm '移除当前部署的容器？' && compose --profile https down --remove-orphans || return 0;;
+    2) printf '仅删除当前部署的数据卷，备份不删除。输入 DELETE-%s 确认：' "$project"; IFS= read -r answer || return 1
+       [ "$answer" = "DELETE-$project" ] || return 0
+       compose --profile https down --volumes --remove-orphans || return 1;;
+    *) return 0;;
+  esac
+}
+if [ ! -f compose.yml ]; then
+  printf '正在下载并校验部署配置包…\n'
+  get_asset Love-docker-deploy.tar.gz || exit 1
+  tar --no-same-owner --no-same-permissions -xzf "$work/Love-docker-deploy.tar.gz" -C "$PWD" || exit 1
+  chmod +x love
+  rm -rf -- "$work"; work=''
+  exec sh ./love
 fi
-case "$mode" in
- up)
-   # Disable the bundled proxy when switching to plain HTTP or an external proxy.
-   if [ "$https" != 1 ] || [ "$tls" = external ]; then
-     "$@" --profile https stop proxy
-   fi
-   if [ "$LOVE_IMAGE" = love-app:local ]; then
-     exec "$@" up -d --build --remove-orphans --wait
-   else
-     prepare_image
-     exec "$@" up -d --no-build --pull missing --remove-orphans --wait
-   fi ;;
- down) exec "$@" down --remove-orphans ;;
- logs) exec "$@" logs -f ;;
- ps) exec "$@" ps ;;
-esac
+while :; do
+  reload || true
+  printf '\n  LOVE · 部署管理\n  镜像：%s\n\n  1   初次配置 / 修改部署配置\n  2   启动应用\n  3   停止应用\n  4   重启应用\n  5   状态与版本\n  6   查看日志\n  7   更新软件及管理工具\n  8   备份数据与配置\n  9   恢复备份\n  10  管理员密码 / 注册 / SMTP / 容量\n  11  选择来源并下载镜像\n  12  卸载\n  13  回滚上次更新的镜像\n  0   退出\n\n请选择：' "$image"
+  IFS= read -r choice || exit 0
+  result=0
+  case "$choice" in
+    1) configure || result=$?;;
+    2) start || result=$?;;
+    3) require_config && compose --profile https stop || result=$?;;
+    4) require_config && compose restart || result=$?;;
+    5) require_config && compose ps && docker image inspect "$image" --format '{{.Id}} {{.Created}}' || result=$?;;
+    6) require_config && compose logs --tail 200 || result=$?;;
+    7) update || result=$?;;
+    8) backup || result=$?;;
+    9) restore || result=$?;;
+    10) manage_server || result=$?;;
+    11) choose_source || result=$?;;
+    12) uninstall || result=$?;;
+    13) rollback || result=$?;;
+    0) exit 0;;
+    *) printf '请输入菜单中的数字。\n';;
+  esac
+  [ "$result" = 0 ] || printf '操作未完成（退出码 %s），配置和备份仍保留。\n' "$result" >&2
+  [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
+done

@@ -77,10 +77,14 @@ export async function setup(t: TestContext, options: { mailSender?: MailSender }
       },
     })
     .expect(200);
-  const emailCode = async (address: string, purpose: 'register' | 'reset' = 'register') => {
+  const emailCode = async (
+    address: string,
+    purpose: 'register' | 'reset' = 'register',
+    invitationCode?: string,
+  ) => {
     const result = await request(server.app)
       .post('/api/auth/email-code')
-      .send({ email: address, purpose, ...(await captcha(purpose)) })
+      .send({ email: address, purpose, invitationCode, ...(await captcha(purpose)) })
       .expect(200);
     const message = mailbox.findLast((m) => m.to === address && m.text.includes('验证码是'))!;
     return {

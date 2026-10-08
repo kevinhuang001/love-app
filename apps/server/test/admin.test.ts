@@ -388,3 +388,138 @@ test('SMTP delivery is real UTF-8 mail and failed sends do not leave valid verif
     .body.items[0];
   assert.deepEqual(log.details, { code: 'EAUTH' });
 });
+
+test('registration invitations are optional, hashed, batch-generated, expiring and consumed only on successful signup', async (t) => {
+  const s = await setup(t),
+    admin = s.api(s.adminToken);
+  await s.register('without_invitation');
+  await request(s.app).get('/api/admin/registration-invites').expect(401);
+  await admin.post('/api/admin/registration-invites', { count: 201 }).expect(400);
+  const batch = (
+    await admin
+      .post('/api/admin/registration-invites', {
+        count: 3,
+        maxUses: 1,
+        expiresDays: 30,
+        label: '测试批次',
+      })
+      .expect(201)
+  ).body.codes;
+  assert.equal(batch.length, 3);
+  assert.equal(new Set(batch.map((x: { code: string }) => x.code)).size, 3);
+  const list = (await admin.get('/api/admin/registration-invites').expect(200)).body;
+  assert.equal(list.length, 3);
+  assert.ok(!JSON.stringify(list).includes(batch[0].code));
+  assert.equal(list[0].hash, undefined);
+  await admin
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), invitationRequired: true })
+    .expect(200);
+  assert.equal((await request(s.app).get('/api/auth/config')).body.invitationRequired, true);
+  for (const invitationCode of [undefined, 'invalid'])
+    await request(s.app)
+      .post('/api/auth/email-code')
+      .send({
+        email: 'invite_user@example.test',
+        purpose: 'register',
+        invitationCode,
+        ...(await s.captcha('register')),
+      })
+      .expect(403);
+  const proof = await s.emailCode('invite_user@example.test', 'register', batch[0].code);
+  const signup = {
+    username: 'invite_user',
+    email: 'invite_user@example.test',
+    password: 'password123',
+    ...proof,
+    invitationCode: batch[0].code,
+  };
+  await request(s.app)
+    .post('/api/auth/register')
+    .send({ ...signup, code: 'WRONG' })
+    .expect(400);
+  assert.equal(
+    (await s.db.prepare('SELECT uses FROM registration_invites WHERE id=?').get(batch[0].id))!.uses,
+    0,
+  );
+  await request(s.app).post('/api/auth/register').send(signup).expect(201);
+  assert.equal(
+    (await s.db.prepare('SELECT uses FROM registration_invites WHERE id=?').get(batch[0].id))!.uses,
+    1,
+  );
+  await request(s.app)
+    .post('/api/auth/email-code')
+    .send({
+      email: 'invite_second@example.test',
+      purpose: 'register',
+      invitationCode: batch[0].code,
+      ...(await s.captcha('register')),
+    })
+    .expect(403);
+  await s.db.prepare('UPDATE registration_invites SET expires=1 WHERE id=?').run(batch[1].id);
+  await request(s.app)
+    .post('/api/auth/email-code')
+    .send({
+      email: 'expired@example.test',
+      purpose: 'register',
+      invitationCode: batch[1].code,
+      ...(await s.captcha('register')),
+    })
+    .expect(403);
+  const revokeProof = await s.emailCode('revoked@example.test', 'register', batch[2].code);
+  await admin.patch('/api/admin/registration-invites/revoke', { ids: [batch[2].id] }).expect(204);
+  await request(s.app)
+    .post('/api/auth/register')
+    .send({
+      username: 'revoked_user',
+      email: 'revoked@example.test',
+      password: 'password123',
+      invitationCode: batch[2].code,
+      ...revokeProof,
+    })
+    .expect(403);
+  await admin
+    .patch('/api/admin/settings', {
+      ...(await s.control.readSettings()),
+      invitationRequired: false,
+    })
+    .expect(200);
+  await s.register('optional_again');
+  const logs = (await s.db.prepare('SELECT details FROM audit_logs').all())
+    .map((v) => v.details)
+    .join('');
+  assert.ok(batch.every((v: { code: string }) => !logs.includes(v.code)));
+});
+
+test('single-use registration invitation cannot be redeemed by concurrent verified registrations', async (t) => {
+  const s = await setup(t),
+    admin = s.api(s.adminToken);
+  const { code, id } = (
+    await admin.post('/api/admin/registration-invites', { count: 1, expiresDays: 0 }).expect(201)
+  ).body.codes[0];
+  await admin
+    .patch('/api/admin/settings', { ...(await s.control.readSettings()), invitationRequired: true })
+    .expect(200);
+  const a = await s.emailCode('race_a@example.test', 'register', code),
+    b = await s.emailCode('race_b@example.test', 'register', code);
+  const outcomes = await Promise.all(
+    [
+      ['race_a', a],
+      ['race_b', b],
+    ].map(([name, proof]) =>
+      request(s.app)
+        .post('/api/auth/register')
+        .send({
+          username: name,
+          email: name + '@example.test',
+          password: 'password123',
+          invitationCode: code,
+          ...(proof as object),
+        }),
+    ),
+  );
+  assert.deepEqual(outcomes.map((r) => r.status).sort(), [201, 403]);
+  assert.equal(
+    (await s.db.prepare('SELECT uses FROM registration_invites WHERE id=?').get(id))!.uses,
+    1,
+  );
+});

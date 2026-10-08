@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.2.5
+        description: New version tag, for example v2.3.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.2.5' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.3.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,15 +85,15 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          修复公网 HTTP 部署的页面资源加载、聊天和相册上传。
+          新增可选注册邀请码与统一的交互部署管理。
 
-          - HTTP 不再发送 upgrade-insecure-requests、COOP、Origin-Agent-Cluster 和 HSTS，避免将普通 HTTP 端口上的资源强制改成 HTTPS。
-          - HTTPS 和可信反向代理继续使用对应安全响应头；HTTP 保留 CSP、脚本限制、nosniff 等保护。
-          - 聊天和相册使用 getRandomValues 生成 UUID，公网 HTTP 也能发送消息、上传图片。
-          - CI 使用非 localhost HTTP 域名加载实际生产构建，验证 CSS/JS/图标、登录、实时聊天和图片预览；容器测试检查响应头。
-          - 初始化支持 HTTP、Certbot 自动申请/续期、Caddy 自动 HTTPS，以及已有反向代理；无需宿主机安装 Certbot。
-          - HTTPS 支持自定义公网端口（例如 8013），监听地址、访问 URL 和 HTTP 跳转保持一致；后端 HTTP 只在容器网络内开放，避免端口冲突。
-          - 更新保留现有数据卷和 .env。HTTP 直连设置 LOVE_HTTPS=0、TRUST_PROXY=0；HTTPS 反向代理按部署文档配置。
+          - 管理员可开启 / 关闭邀请码要求，批量生成并下载，设置使用次数、有效期、批次备注和停用。
+          - 注册邀请码独立于配对邀请，仍需要邮箱验证和图形验证码；注册成功才原子消耗次数。
+          - 直接运行 ./love 选择菜单，不再提供二级命令或用户本地 build。
+          - 支持公开 Release 自动下载 / 校验 / 导入、GHCR 和自定义镜像仓库。
+          - 菜单统一管理初次配置、修改配置、启停、日志、更新、备份、恢复、管理员及用户账号、SMTP、注册和容量。
+          - 更新先备份，保留 .env 与数据；可回滚上次更新的镜像。卸载默认保留数据，删除卷需部署专属确认。
+          - 保留 HTTP / HTTPS 自定义端口、Certbot 自动续证、SQLite / PostgreSQL 与安卓本地通知。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。

@@ -25,8 +25,8 @@ services:
       proxy:
         condition: service_started
     environment:
-      LOVE_DOMAIN: ${LOVE_DOMAIN:?Configure the HTTPS domain with ./love setup}
-      CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Configure the Certbot email with ./love setup}
+      LOVE_DOMAIN: ${LOVE_DOMAIN:?Configure the HTTPS domain with ./love}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Configure the Certbot email with ./love}
       CERTBOT_PROXY_URL: http://proxy/__love_proxy_health
     volumes:
       - ./deploy/certbot-renew.sh:/opt/love/certbot-renew.sh:ro

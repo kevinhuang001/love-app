@@ -1,4 +1,4 @@
-# Domestic build: docker build -f Dockerfile.cn -t love-app:local .
+# Domestic build: docker build -f Dockerfile.cn -t love-development .
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS base
 ARG NPM_REGISTRY=https://registry.npmmirror.com/

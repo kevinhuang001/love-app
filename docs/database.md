@@ -5,12 +5,12 @@
 ## 首次 Docker 部署
 
 ```sh
-./love up
+./love
 ```
 
-只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。没有 `.env` 时，启动器先构建镜像，用 Docker 的交互终端运行配置向导，再启动并等待服务健康。
+只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。在菜单选择首次配置，下载已构建镜像，用 Docker 交互终端运行配置向导，再按提示启动并等待服务健康。
 
-也可使用 `LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up` 直接拉取镜像；从 Release 导入镜像后的免构建用法见 [预构建镜像部署](container-images.md)。
+菜单支持 GHCR 拉取和公开 Release 自动下载导入；详细管理用法见 [预构建镜像部署](container-images.md)。
 
 向导包含：
 
@@ -18,30 +18,30 @@
 - 访问：可选 HTTP 或 HTTPS；HTTPS 支持 Certbot 自动申请/续期、Caddy 自动证书，或已有反向代理。HTTP 监听 IP 可选 `127.0.0.1`（默认，仅本机）、`0.0.0.0`（全部 IPv4 网卡，用于局域网/公网）或指定宿主机 IPv4/IPv6；端口默认 3000。
 - 管理员：用户名默认 `admin`，密码可输入或留空自动生成。
 - 容量：新配对默认 1024 MiB，0 禁止新增上传。
-- SMTP：可选配置主机、端口、加密、账号、授权码、发件邮箱及初始注册方式。默认仅管理员建号，后续可在后台配置邮件注册。
+- SMTP：可选配置主机、端口、加密、账号、授权码、发件邮箱及初始注册方式。默认仅管理员建号，后续可从 love 服务器管理菜单或后台配置邮件注册与邀请码。
 
 密码与 URL 输入隐藏。媒体签名/加密密钥自动生成；配置写入权限 0600 的 `.env`，不显示密码。自动生成的管理员密码在 `.env` 的 `ADMIN_PASSWORD` 中。保存前显示无密码摘要，取消不会改动已有文件。
 
-再次执行 `./love up` 复用配置。`./love setup` 重新运行向导，空密码保留原值，媒体密钥保持不变。重建容器复用命名卷；`./love down` 停止服务并保留卷。`./love logs` 查看日志，`./love ps` 查看状态。已有手写 `.env` 的部署也可继续使用直接 Compose 命令。
+再次执行 `./love` 打开管理菜单，选择配置、启停、更新、日志、备份、恢复或卸载。空密码保留原值，媒体密钥保持不变；重建容器复用命名卷。详见 [管理菜单](container-images.md)。
 
-公网 HTTP 直连：运行 `./love setup`，HTTPS 选“否”，HTTP 监听地址选 `0.0.0.0`，再运行 `./love up`。开放所选端口后，用 `http://服务器实际IP:端口` 访问 Web 或配置 APK。`0.0.0.0` 是监听地址，不能填进手机服务器 URL；指定 IP 必须是宿主机已有网卡的地址，云服务器通过 NAT 提供公网 IP 时通常选 `0.0.0.0`。HTTP 未加密，公网建议使用 HTTPS。向导保持 Android 所需的跨域来源，并在直接 HTTP 暴露时设置 `TRUST_PROXY=0`。
+公网 HTTP 直连：运行 `./love`，HTTPS 选“否”，HTTP 监听地址选 `0.0.0.0`，再运行 `./love`。开放所选端口后，用 `http://服务器实际IP:端口` 访问 Web 或配置 APK。`0.0.0.0` 是监听地址，不能填进手机服务器 URL；指定 IP 必须是宿主机已有网卡的地址，云服务器通过 NAT 提供公网 IP 时通常选 `0.0.0.0`。HTTP 未加密，公网建议使用 HTTPS。向导保持 Android 所需的跨域来源，并在直接 HTTP 暴露时设置 `TRUST_PROXY=0`。
 
-初始 SMTP、注册方式与默认容量仅在数据库尚无管理配置时写入，之后以后台保存的配置为准。管理入口仍为 `/#admin`，前台不显示入口。
+初始 SMTP、注册方式与默认容量仅在数据库尚无管理配置时写入，之后通过 love 服务器管理菜单或后台修改现有配置。管理入口仍为 `/#admin`，前台不显示入口。
 
 ## 直接配置 Compose
 
 SQLite：
 
-手动 `.env` 可设置 `LOVE_BIND_IP=0.0.0.0`、`LOVE_PORT=3000`、`LOVE_HTTPS=0`、`TRUST_PROXY=0`，无需修改 Compose。使用 `./love up` 会按 `LOVE_HTTPS` 和 `LOVE_TLS_PROVIDER` 自动选择代理及 Certbot 配置；直接 Compose 请自行组合 profile 和文件，见 [部署文档](deployment.md)。
+手动 `.env` 可设置 `LOVE_BIND_IP=0.0.0.0`、`LOVE_PORT=3000`、`LOVE_HTTPS=0`、`TRUST_PROXY=0`，无需修改 Compose。使用 `./love` 会按 `LOVE_HTTPS` 和 `LOVE_TLS_PROVIDER` 自动选择代理及 Certbot 配置；直接 Compose 请自行组合 profile 和文件，见 [部署文档](deployment.md)。
 
 ```sh
-docker compose -p love-v4 --profile https up -d --build --wait
+docker compose -p love-v4 --profile https up -d --no-build --wait
 ```
 
 内置 PostgreSQL：在 `.env` 设置 `POSTGRES_PASSWORD`，可选设置 `POSTGRES_USER=love`、`POSTGRES_DB=love`，然后：
 
 ```sh
-docker compose -p love-v4 -f compose.yml -f compose.postgres.yml --profile https up -d --build --wait
+docker compose -p love-v4 -f compose.yml -f compose.postgres.yml --profile https up -d --no-build --wait
 ```
 
 覆盖文件使用独立 `postgres-data` 卷，挂载 PostgreSQL 18 的 `/var/lib/postgresql`，不会向宿主机发布数据库端口。应用等待数据库健康后启动。图片和视频继续保存在 `love-data` 卷中；PostgreSQL 保存账号、配对、聊天、日期、配置、容量和日志等结构化数据。

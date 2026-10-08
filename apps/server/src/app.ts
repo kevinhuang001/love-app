@@ -778,9 +778,17 @@ export async function createApp(options: AppOptions = {}) {
             media.preview,
             media.thumbnail,
           ]);
-          await mediaRepository.stage([media.original, media.preview, media.thumbnail], sizes);
           const totalBytes = sizes.reduce((a, b) => a + b, 0);
           if (!Number.isSafeInteger(totalBytes)) fail(422, '媒体容量数据无效');
+          // Reject known quota failures before copying large files into PostgreSQL.
+          // The final transaction still rechecks capacity against concurrent uploads.
+          if (
+            db.provider === 'postgres' &&
+            (await control.usage(user.coupleId!)) + totalBytes >
+              (await control.quota(user.coupleId!))
+          )
+            fail(413, '两人空间存储已达到配额，请联系管理员');
+          await mediaRepository.stage([media.original, media.preview, media.thumbnail], sizes);
           await commitMedia(
             db,
             async () =>

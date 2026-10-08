@@ -1,10 +1,20 @@
 // Exercise the real shell menu and actual SQLite / PostgreSQL backup restoration.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, copyFile, writeFile, readdir, readFile, rm } from 'node:fs/promises';
+import {
+  mkdtemp,
+  copyFile,
+  writeFile,
+  readdir,
+  readFile,
+  rm,
+  mkdir,
+  chmod,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { quoteEnv } from './setup.mjs';
+const realDocker = execFileSync('which', ['docker'], { encoding: 'utf8' }).trim();
 for (const database of ['sqlite', 'postgres']) {
   const dir = await mkdtemp(join(tmpdir(), 'love-manager-real-')),
     project = 'love-manager-' + database + '-ci';
@@ -34,13 +44,43 @@ for (const database of ['sqlite', 'postgres']) {
       .join('\n') + '\n',
     { mode: 0o600 },
   );
-  const menu = (input) =>
-    execFileSync('sh', ['love'], {
+  await mkdir(join(dir, 'deploy'));
+  await copyFile('deploy/terminal-ui.mjs', join(dir, 'deploy/terminal-ui.mjs'));
+  await mkdir(join(dir, 'bin'));
+  // Only prompt responses are injected. All actual Compose / image / volume commands run Docker.
+  await writeFile(
+    join(dir, 'bin/docker'),
+    `#!/usr/bin/env node
+const fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),i=a.indexOf('/setup/deploy/terminal-ui.mjs');
+if(i>=0){const answers=fs.readFileSync(process.env.MANAGER_ANSWERS,'utf8').split('\\n');fs.writeFileSync(a[i+2].replace('/setup/',process.cwd()+'/'),answers.shift());fs.writeFileSync(process.env.MANAGER_ANSWERS,answers.join('\\n'));}
+else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});process.exit(r.status??1);}
+`,
+  );
+  await chmod(join(dir, 'bin/docker'), 0o755);
+  const menu = (input) => {
+    const actions = { 2: 'start', 8: 'backup', 9: 'restore', 0: 'exit' };
+    const values = input
+      .trimEnd()
+      .split('\n')
+      .map((value) => actions[value] || value);
+    execFileSync('node', [
+      '-e',
+      'require("node:fs").writeFileSync(process.argv[1],process.argv[2])',
+      join(dir, 'answers'),
+      values.join('\n'),
+    ]);
+    return execFileSync('sh', ['love'], {
       cwd: dir,
-      input,
+      env: {
+        ...process.env,
+        PATH: join(dir, 'bin') + ':' + process.env.PATH,
+        MANAGER_DOCKER: realDocker,
+        MANAGER_ANSWERS: join(dir, 'answers'),
+      },
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
     });
+  };
   const composeArgs = [
     'compose',
     '--project-name',

@@ -10,12 +10,29 @@ async function launch(t, config, input, options = {}) {
   t.after(() => rm(dir, { recursive: true, force: true }));
   await copyFile(new URL('../love', import.meta.url), join(dir, 'love'));
   await writeFile(join(dir, '.env'), config);
+  await writeFile(join(dir, 'answers'), input);
+  await mkdir(join(dir, 'deploy'));
+  await copyFile(
+    new URL('../deploy/terminal-ui.mjs', import.meta.url),
+    join(dir, 'deploy/terminal-ui.mjs'),
+  );
   await writeFile(join(dir, 'compose.yml'), 'services: {}\n');
   await mkdir(join(dir, 'bin'));
   await writeFile(
     join(dir, 'bin/docker'),
     `#!/usr/bin/env node
 const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(process.env.TEST_CALLS,JSON.stringify(a)+'\\n');
+if(a.includes('/setup/deploy/terminal-ui.mjs')){
+ const index=a.indexOf('/setup/deploy/terminal-ui.mjs'),kind=a[index+1],file=a[index+2].replace('/setup/',process.cwd()+'/');
+ const queue=fs.readFileSync('answers','utf8').split('\\n'),next=queue.shift();fs.writeFileSync('answers',queue.join('\\n'));
+ const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',10:'manage',11:'source',12:'uninstall',13:'rollback',0:'exit'};
+ let result=next;
+ if(kind==='menu')result=menus[next];
+ if(kind==='source')result={1:'release',2:'ghcr',3:'custom'}[next||1];
+ if(kind==='confirm')result=next==='y'?'yes':'no';
+ if(kind==='uninstall')result=next==='2'?'volumes':'containers';
+ fs.writeFileSync(file,result||'');process.exit(0);
+}
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
 if(a.includes('ps')&&a.includes('--status'))console.log('test-running-container');
 if(a.includes('exec')&&a.includes('pg_dump'))process.stdout.write('fixture-db-dump');
@@ -42,7 +59,6 @@ fs.writeFileSync(out,url.endsWith('SHA256SUMS')?'${options.corrupt ? '0'.repeat(
       TEST_CALLS: join(dir, 'calls'),
       TEST_IMAGE_MISSING: options.missing ? '1' : '0',
     },
-    input,
     encoding: 'utf8',
   });
   const calls = (

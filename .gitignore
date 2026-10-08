@@ -15,3 +15,5 @@ coverage/
 
 backups/
 .love-rollback
+
+.love-ui.*

@@ -7,11 +7,12 @@ cd "$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)" || exit 1
 command -v docker >/dev/null 2>&1 || { printf '请先安装 Docker Engine 和 Compose 插件。\n' >&2; exit 1; }
 docker compose version >/dev/null || exit 1
 work=''
-trap '[ -z "$work" ] || rm -rf -- "$work"' EXIT HUP INT TERM
+ui_result=''
+trap '[ -z "$work" ] || rm -rf -- "$work"; [ -z "$ui_result" ] || rm -f -- "$ui_result"' EXIT HUP INT TERM
 setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
 reload() {
   image=$(setting LOVE_IMAGE); image=${image:-ghcr.io/kevinhuang001/love-app:latest}
-  source=$(setting LOVE_IMAGE_SOURCE); source=${source:-registry}
+  source=$(setting LOVE_IMAGE_SOURCE); source=${source:-release}
   database=$(setting LOVE_DATABASE); database=${database:-sqlite}
   https=$(setting LOVE_HTTPS); tls=$(setting LOVE_TLS_PROVIDER)
   project=$(setting COMPOSE_PROJECT_NAME); project=${project:-love-v4}
@@ -30,7 +31,19 @@ compose() {
   fi
   docker compose --project-name "$project" --env-file .env $files "$@"
 }
-confirm() { printf '%s [y/N] ' "$1"; IFS= read -r answer || return 1; [ "$answer" = y ] || [ "$answer" = Y ]; }
+ui() {
+  ui_status=1
+  ensure_image || return 1
+  ui_result=$(mktemp "$PWD/.love-ui.XXXXXXXX") || return 1
+  tty_flag=-i
+  if [ -t 0 ] && [ -t 1 ]; then tty_flag=-it; fi
+  docker run --rm "$tty_flag" --user "$(id -u):$(id -g)" -e LOVE_UI_IMAGE="$image" -v "$PWD:/setup" --entrypoint node "$image" /setup/deploy/terminal-ui.mjs "$1" "/setup/$(basename "$ui_result")" "${2:-}" "${3:-}"
+  ui_status=$?
+  answer=$(cat "$ui_result")
+  rm -f -- "$ui_result"; ui_result=''
+  return "$ui_status"
+}
+confirm() { ui confirm "$1" && [ "$answer" = yes ]; }
 set_field() {
   # Values passed here are restricted image references / fixed enum fields.
   [ -f .env ] || return 0
@@ -62,24 +75,23 @@ download_image() {
 }
 ensure_image() { docker image inspect "$image" >/dev/null 2>&1 || download_image; }
 choose_source() {
-  printf '\n镜像来源\n  1  GitHub Release 下载（公开文件，自动识别架构）\n  2  GHCR 拉取\n  3  自定义镜像仓库\n请选择 [1]：'; IFS= read -r option || return 1
-  case "${option:-1}" in
-    1) source=release; image=love-app:prebuilt;;
-    2) source=registry; image=ghcr.io/kevinhuang001/love-app:latest;;
-    3) printf '镜像完整地址：'; IFS= read -r image || return 1; source=registry;
+  ui source || return 1
+  case "$answer" in
+    release) source=release; image=love-app:prebuilt;;
+    ghcr) source=registry; image=ghcr.io/kevinhuang001/love-app:latest;;
+    custom) ui image || return 1; image=$answer; source=registry;
        case "$image" in ''|*[!a-zA-Z0-9_./:@-]*) printf '镜像地址无效。\n' >&2; return 1;; esac;;
-    *) printf '选择无效。\n' >&2; return 1;;
+    *) return 0;;
   esac
   download_image || return 1
   set_field LOVE_IMAGE_SOURCE "$source" && set_field LOVE_IMAGE "$image"
 }
 configure() {
   [ -t 0 ] && [ -t 1 ] || { printf '配置需要交互终端。\n' >&2; return 1; }
-  [ -f .env ] || choose_source || return 1
   ensure_image || return 1
   docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_IMAGE="$image" -e LOVE_IMAGE_SOURCE="$source" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/setup.mjs --output /setup/.env || return 1
   reload || return 1
-  printf '部署配置已保存。账号、邀请码和 SMTP 的现有设置请在菜单 10 管理。\n'
+  printf '部署配置已保存。账号、邀请码和 SMTP 的现有设置请在“服务器管理”菜单管理。\n'
   confirm '立即应用配置并启动？' && start || return 0
 }
 require_config() { [ -f .env ] || configure; [ -f .env ]; }
@@ -109,8 +121,8 @@ backup() {
 }
 restore() {
   require_config || return 1
-  printf '\n可用备份：\n'; find "$PWD/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null || true
-  printf '输入备份目录的名称（不含路径，回车取消）：'; IFS= read -r name || return 1
+  ui backup || return 1
+  name=$answer
   case "$name" in ''|*[!a-zA-Z0-9_-]*) return 0;; esac
   restore_dir="$PWD/backups/$name"
   [ -f "$restore_dir/SHA256SUMS" ] && [ -f "$restore_dir/deployment.env" ] || { printf '备份不存在或不完整。\n' >&2; return 1; }
@@ -119,7 +131,7 @@ restore() {
   [ "$saved_project" = "$project" ] || { printf '备份属于其他部署，未覆盖当前数据。\n' >&2; return 1; }
   saved_database=$(sed -n "s/^LOVE_DATABASE=['\"]\{0,1\}\([a-z]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env"); saved_database=${saved_database:-sqlite}
   [ "$saved_database" = "$database" ] || { printf '数据库类型不匹配，未覆盖当前数据。\n' >&2; return 1; }
-  printf '这会覆盖当前数据和部署配置。输入 RESTORE 确认：'; IFS= read -r answer || return 1
+  ui text '这会覆盖当前数据和部署配置。输入 RESTORE 确认' RESTORE || return 1
   [ "$answer" = RESTORE ] || return 0
   backup || return 1
   compose stop love || return 1
@@ -138,7 +150,7 @@ update() {
   mkdir "$work/deploy" || return 1
   # The checksum comes from the same HTTPS release. Install only known deployment files.
   tar --no-same-owner --no-same-permissions -xzf "$work/Love-docker-deploy.tar.gz" -C "$work/deploy" || return 1
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs; do
     [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '部署包不完整，未更新。\n' >&2; return 1; }
   done
   rollback_image="love-app:rollback-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -174,10 +186,10 @@ manage_server() {
 }
 uninstall() {
   require_config || return 1
-  printf '卸载当前部署 %s：\n  1  移除容器，保留数据、配置和备份\n  2  移除容器和数据卷（不可恢复）\n请选择 [1]：' "$project"; IFS= read -r option || return 1
-  case "${option:-1}" in
-    1) confirm '移除当前部署的容器？' && compose --profile https down --remove-orphans || return 0;;
-    2) printf '仅删除当前部署的数据卷，备份不删除。输入 DELETE-%s 确认：' "$project"; IFS= read -r answer || return 1
+  ui uninstall "$project" || return 1
+  case "$answer" in
+    containers) confirm '移除当前部署的容器？' && compose --profile https down --remove-orphans || return 0;;
+    volumes) ui text '仅删除当前部署的数据卷，备份不删除。输入确认文字' "DELETE-$project" || return 1
        [ "$answer" = "DELETE-$project" ] || return 0
        compose --profile https down --volumes --remove-orphans || return 1;;
     *) return 0;;
@@ -193,25 +205,25 @@ if [ ! -f compose.yml ]; then
 fi
 while :; do
   reload || true
-  printf '\n  LOVE · 部署管理\n  镜像：%s\n\n  1   初次配置 / 修改部署配置\n  2   启动应用\n  3   停止应用\n  4   重启应用\n  5   状态与版本\n  6   查看日志\n  7   更新软件及管理工具\n  8   备份数据与配置\n  9   恢复备份\n  10  管理员密码 / 注册 / SMTP / 容量\n  11  选择来源并下载镜像\n  12  卸载\n  13  回滚上次更新的镜像\n  0   退出\n\n请选择：' "$image"
-  IFS= read -r choice || exit 0
+  ui menu || { [ "$ui_status" = 130 ] && exit 0; exit 1; }
+  choice=$answer
   result=0
   case "$choice" in
-    1) configure || result=$?;;
-    2) start || result=$?;;
-    3) require_config && compose --profile https stop || result=$?;;
-    4) require_config && compose restart || result=$?;;
-    5) require_config && compose ps && docker image inspect "$image" --format '{{.Id}} {{.Created}}' || result=$?;;
-    6) require_config && compose logs --tail 200 || result=$?;;
-    7) update || result=$?;;
-    8) backup || result=$?;;
-    9) restore || result=$?;;
-    10) manage_server || result=$?;;
-    11) choose_source || result=$?;;
-    12) uninstall || result=$?;;
-    13) rollback || result=$?;;
-    0) exit 0;;
-    *) printf '请输入菜单中的数字。\n';;
+    configure) configure || result=$?;;
+    start) start || result=$?;;
+    stop) require_config && compose --profile https stop || result=$?;;
+    restart) require_config && compose restart || result=$?;;
+    status) require_config && compose ps && docker image inspect "$image" --format '{{.Id}} {{.Created}}' || result=$?;;
+    logs) require_config && compose logs --tail 200 || result=$?;;
+    update) update || result=$?;;
+    backup) backup || result=$?;;
+    restore) restore || result=$?;;
+    manage) manage_server || result=$?;;
+    source) choose_source || result=$?;;
+    uninstall) uninstall || result=$?;;
+    rollback) rollback || result=$?;;
+    exit) exit 0;;
+    *) exit 1;;
   esac
   [ "$result" = 0 ] || printf '操作未完成（退出码 %s），配置和备份仍保留。\n' "$result" >&2
   [ -z "$work" ] || { rm -rf -- "$work"; work=''; }

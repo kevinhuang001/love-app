@@ -1,10 +1,11 @@
 // CI uses local certificate fixtures, never a real domain or production ACME account.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import https from 'node:https';
+import http from 'node:http';
 const dir = await mkdtemp(join(tmpdir(), 'love-tls-ci-'));
 const network = 'love-tls-ci',
   proxy = 'love-tls-proxy',
@@ -74,12 +75,26 @@ try {
   const [container] = JSON.parse(docker('inspect', proxy));
   const httpPort = Number(container.NetworkSettings.Ports['80/tcp'][0].HostPort);
   const tlsPort = Number(container.NetworkSettings.Ports['443/tcp'][0].HostPort);
+  const plain = (path = '/') =>
+    new Promise((resolve, reject) => {
+      const req = http.get(
+        { hostname: '127.0.0.1', port: httpPort, path, headers: { Host: domain }, timeout: 5000 },
+        (res) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => (body += chunk));
+          res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
+        },
+      );
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy(new Error('HTTP timeout')));
+    });
   const pending = await until(async () => {
-    const response = await fetch(`http://127.0.0.1:${httpPort}`, { headers: { Host: domain } });
+    const response = await plain();
     assert.equal(response.status, 503);
     return response;
   });
-  assert.match(await pending.text(), /certificate pending/);
+  assert.match(pending.body, /certificate pending/);
   // Verify HTTP-01 routing before issuing any certificate.
   docker(
     'run',
@@ -92,12 +107,9 @@ try {
     '-c',
     'mkdir -p /webroot/.well-known/acme-challenge; echo fixture-proof > /webroot/.well-known/acme-challenge/test-token',
   );
-  const challenge = await fetch(
-    `http://127.0.0.1:${httpPort}/.well-known/acme-challenge/test-token`,
-    { headers: { Host: domain } },
-  );
+  const challenge = await plain('/.well-known/acme-challenge/test-token');
   assert.equal(challenge.status, 200);
-  assert.equal((await challenge.text()).trim(), 'fixture-proof');
+  assert.equal(challenge.body.trim(), 'fixture-proof');
   const issue = async (serial) => {
     execFileSync(
       'openssl',
@@ -176,12 +188,9 @@ try {
       return response;
     });
   await check(await issue(1), '01');
-  const redirect = await fetch(`http://127.0.0.1:${httpPort}/`, {
-    headers: { Host: domain },
-    redirect: 'manual',
-  });
+  const redirect = await plain();
   assert.equal(redirect.status, 308);
-  assert.equal(redirect.headers.get('location'), `https://${domain}/`);
+  assert.equal(redirect.headers.location, `https://${domain}/`);
   await check(await issue(2), '02');
   docker('exec', proxy, 'test', '-f', '/tmp/love-tls-ready');
   docker('run', '--rm', '--entrypoint', 'certbot', 'certbot/certbot:v5.8.0', '--version');
@@ -191,7 +200,8 @@ try {
 } catch (error) {
   for (const name of [proxy, backend]) {
     try {
-      console.error(docker('logs', name));
+      const logs = spawnSync('docker', ['logs', name], { encoding: 'utf8' });
+      console.error(logs.stdout + logs.stderr);
     } catch {}
   }
   throw error;

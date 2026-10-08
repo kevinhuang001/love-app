@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
-import { register, solveCaptcha } from './auth-helper';
+import { register, solveCaptcha, captcha } from './auth-helper';
 
 test('production Web on a non-localhost HTTP origin loads assets, chats and uploads photos', async ({
   page,
@@ -56,6 +56,27 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
     data: await invite.json(),
   });
   expect(join.ok()).toBeTruthy();
+  // The administrator test deliberately leaves new-pair quota at zero.
+  // Allocate only this test's space through the real administrator API.
+  const adminResponse = await request.post('http://127.0.0.1:3000/api/admin/login', {
+    data: {
+      username: 'admin_master',
+      password: 'admin-test-password-123',
+      ...(await captcha(request, 'admin')),
+    },
+  });
+  expect(adminResponse.ok()).toBeTruthy();
+  const me = await request.get('http://127.0.0.1:3000/api/me', {
+    headers: { Authorization: `Bearer ${a.token}` },
+  });
+  const quota = await request.patch(
+    `http://127.0.0.1:3000/api/admin/couples/${(await me.json()).user.coupleId}/quota`,
+    {
+      headers: { Authorization: `Bearer ${(await adminResponse.json()).token}` },
+      data: { quotaMiB: 128 },
+    },
+  );
+  expect(quota.ok()).toBeTruthy();
   await page.getByText('服务器设置', { exact: true }).click();
   await page.getByLabel('服务器地址').fill(origin);
   await page.getByLabel('用户名', { exact: true }).fill(username);

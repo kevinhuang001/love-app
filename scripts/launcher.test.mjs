@@ -16,6 +16,8 @@ async function launch(t, config, input, options = {}) {
     join(dir, 'deploy/terminal-ui.mjs'),
   );
   await writeFile(join(dir, 'compose.yml'), 'services: {}\n');
+  await writeFile(join(dir, 'Caddyfile'), 'request_body {\n max_size 105MB\n}\n');
+  await writeFile(join(dir, 'deploy/certbot-proxy.sh'), 'max_size 105MB\n');
   await mkdir(join(dir, 'bin'));
   await writeFile(
     join(dir, 'bin/docker'),
@@ -51,6 +53,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
     'compose.certbot.yml',
     'Caddyfile',
     'deploy/terminal-ui.mjs',
+    'deploy/certbot-proxy.sh',
   ])
     await copyFile(new URL('../' + file, import.meta.url), join(dir, 'bundle', file));
   execFileSync('tar', [
@@ -232,9 +235,10 @@ test('new deployment starts from the management script and retrieves all tools f
   assert.match(await readFile(join(dir, 'compose.yml'), 'utf8'), /services:/);
   assert.ok(calls.every((args) => !['load', 'build', 'curl'].includes(args[0])));
 });
-test('a confirmed new GHCR version backs up before pulling its digest and updates only manager scripts and image reference', async (t) => {
+test('a confirmed GHCR update preserves deployment values, refreshes bundled scripts and removes proxy upload caps', async (t) => {
   const secret = "ADMIN_PASSWORD='$(touch injected)'\n",
-    original = base + secret;
+    original =
+      base.replace("LOVE_HTTPS='0'", "LOVE_HTTPS='1'\nLOVE_TLS_PROVIDER='certbot'") + secret;
   const { calls, result, config, dir } = await launch(t, original, '7\ny\n0\n', { update: true });
   assert.equal(result.status, 0);
   const stop = calls.findIndex((a) => a.includes('stop') && a.at(-1) === 'love'),
@@ -243,6 +247,16 @@ test('a confirmed new GHCR version backs up before pulling its digest and update
   assert.ok(stop >= 0 && pull > stop && start > pull);
   assert.equal(calls[pull][1], 'ghcr.io/kevinhuang001/love-app@sha256:' + 'a'.repeat(64));
   assert.equal(await readFile(join(dir, 'compose.yml'), 'utf8'), 'services: {}\n');
+  for (const path of ['Caddyfile', 'deploy/certbot-proxy.sh']) {
+    assert.equal(
+      await readFile(join(dir, path), 'utf8'),
+      await readFile(new URL('../' + path, import.meta.url), 'utf8'),
+    );
+    assert.doesNotMatch(await readFile(join(dir, path), 'utf8'), /max_size/);
+  }
+  assert.ok(
+    calls.some((args, i) => i > start && args.includes('restart') && args.at(-1) === 'proxy'),
+  );
   assert.ok(config.includes(secret));
   assert.match(config, /LOVE_IMAGE='ghcr.io\/kevinhuang001\/love-app@sha256:/);
   assert.ok(calls.every((a) => !['build', 'load', 'curl'].includes(a[0])));

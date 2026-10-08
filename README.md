@@ -10,7 +10,7 @@ chmod +x love
 
 脚本只从 GHCR 拉取官方应用镜像，首次自动取出部署工具；使用方向键选择配置、启动、更新、备份恢复或卸载。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。更新先检查 GHCR，仅有新版本时才备份并更新管理脚本和 Docker 镜像，保留部署配置与数据。
 
-以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite + Socket.IO。
+以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite / PostgreSQL + Socket.IO。
 
 - **聊天**：实时文字、图片和视频，已读、输入提示、重连补取、持久化待发送消息和幂等重试。
 - **回忆**：批量上传照片／视频，描述搜索、类型／上传者／日期筛选、日期与上传排序；网格、紧凑网格和月度时间轴，全屏连续浏览、照片放大与视频播放；JPEG 照片 ZIP、含视频与元数据的完整相册 ZIP 导出及导入。
@@ -48,7 +48,7 @@ npm run android:prepare
 
 ## Android APK
 
-每次 push／PR 的 GitHub Actions 会先运行 API 集成测试、前端单元测试和手机端 E2E，再生成可安装的 **love-android-apk** artifact。下载解压后安装 `app-debug.apk`。调试包用于自用和验证；发布签名步骤见 [Android 文档](docs/android.md)。
+从 [Releases](https://github.com/kevinhuang001/love-app/releases/latest) 下载 APK 安装。主分支的 API、前端、手机端 E2E、PostgreSQL 和 Docker 测试全部通过后，CI 自动构建 APK 并发布版本 Release；push／PR 也提供 **love-android-apk** artifact。调试包用于自用和验证；发布签名步骤见 [Android 文档](docs/android.md)。
 
 配对后在“我们 → 聊天通知”开启本地通知并允许后台运行。APK 直连自己的 HTTP/HTTPS 后端，无需推送密钥。服务有常驻状态通知；以应用进程存活为前提，系统休眠仍可能造成延迟。
 

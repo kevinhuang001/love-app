@@ -62,7 +62,7 @@ jobs:
             for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android'])
               assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `${name} must pass`);
             writeFileSync('sha.txt', run.head_sha);
-            JS
+          JS
             source_sha=$(cat sha.txt)
             main_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
             if [ "$source_sha" != "$main_sha" ]; then

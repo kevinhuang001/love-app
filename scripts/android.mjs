@@ -125,10 +125,10 @@ if (loveSigningPath) {
     android {
         signingConfigs {
             love {
-                storeFile file(loveSigningPath)
-                storePassword System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("LOVE_ANDROID_KEY_ALIAS") ?: "love"
-                keyPassword System.getenv("LOVE_ANDROID_KEY_PASSWORD") ?: System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
+                storeFile = file(loveSigningPath)
+                storePassword = System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("LOVE_ANDROID_KEY_ALIAS") ?: "love"
+                keyPassword = System.getenv("LOVE_ANDROID_KEY_PASSWORD") ?: System.getenv("LOVE_ANDROID_KEYSTORE_PASSWORD")
             }
         }
         buildTypes { release { signingConfig signingConfigs.love } }

@@ -171,6 +171,25 @@ jobs:
         env:
           LOVE_APK_PATH: ${{ steps.signing.outputs.apk }}
           LOVE_APK_SIGNING_METADATA: ${{ steps.signing.outputs.metadata }}
+      - name: Verify release signing even without repository credentials
+        if: steps.signing.outputs.mode == 'debug'
+        run: |
+          set -euo pipefail
+          export RUNNER_TEMP="$RUNNER_TEMP/android-signing-fixture"
+          mkdir -p "$RUNNER_TEMP"
+          export LOVE_ANDROID_KEYSTORE_PASSWORD=ci-fixture-password
+          export LOVE_ANDROID_KEY_PASSWORD=ci-fixture-password
+          export LOVE_ANDROID_KEY_ALIAS=love
+          keytool -genkeypair -keystore "$RUNNER_TEMP/source.jks" \
+            -storepass:env LOVE_ANDROID_KEYSTORE_PASSWORD -keypass:env LOVE_ANDROID_KEY_PASSWORD \
+            -alias love -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=CI signing fixture'
+          export LOVE_ANDROID_KEYSTORE_BASE64=$(base64 -w0 "$RUNNER_TEMP/source.jks")
+          GITHUB_ENV= GITHUB_OUTPUT= node scripts/android-key.mjs
+          export LOVE_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/love-signing.jks"
+          (cd apps/client/android && ./gradlew assembleRelease --no-daemon)
+          LOVE_APK_PATH=apps/client/android/app/build/outputs/apk/release/app-release.apk \
+            LOVE_APK_SIGNING_METADATA="$RUNNER_TEMP/love-signing.json" python scripts/verify-android-push.py
+          # This fixture APK/key never becomes a downloadable artifact or public release.
       - name: Prepare verified Android artifact
         run: |
           mkdir -p android-artifact

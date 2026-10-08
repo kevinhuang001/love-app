@@ -32,21 +32,22 @@ const server = await createApp({
   },
 });
 await server.control.bootstrap;
-if (!(await server.db.prepare("SELECT value FROM server_config WHERE key='control'").get()))
-  await server.db.prepare("INSERT INTO server_config VALUES('control',?)").run(
-    JSON.stringify({
-      ...(await server.control.readSettings()),
-      registration: 'email',
-      smtp: {
-        host: 'smtp.example.test',
-        port: 587,
-        security: 'starttls',
-        user: '',
-        from: 'noreply@example.test',
-        senderName: 'Love',
-      },
-    }),
-  );
+// Bootstrap creates production defaults (closed registration). Set the mail fixture
+// explicitly so a fresh database exercises the email registration flow.
+await server.db.prepare("UPDATE server_config SET value=? WHERE key='control'").run(
+  JSON.stringify({
+    ...(await server.control.readSettings()),
+    registration: 'email',
+    smtp: {
+      host: 'smtp.example.test',
+      port: 587,
+      security: 'starttls',
+      user: '',
+      from: 'noreply@example.test',
+      senderName: 'Love',
+    },
+  }),
+);
 server.http.listen(3000, '127.0.0.1');
 for (const signal of ['SIGTERM', 'SIGINT'])
   process.once(signal, async () => {

@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkUpdate } from './check-update.mjs';
+import { readFile } from 'node:fs/promises';
+const source = (await readFile(new URL('../love', import.meta.url), 'utf8')).match(
+  /<<'GHCR_CHECK'\n([\s\S]+?)\nGHCR_CHECK/,
+)[1];
+const { checkUpdate } = await import(
+  'data:text/javascript;base64,' + Buffer.from(source).toString('base64')
+);
 const digest = 'sha256:' + 'a'.repeat(64),
   config = 'sha256:' + 'b'.repeat(64),
   child = 'sha256:' + 'c'.repeat(64);

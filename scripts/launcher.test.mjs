@@ -33,7 +33,7 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  fs.writeFileSync(file,result||'');process.exit(0);
 }
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
-if(a.includes('/app/scripts/check-update.mjs')){if(process.env.TEST_HAS_UPDATE==='1')console.log('ghcr.io/kevinhuang001/love-app@sha256:'+'a'.repeat(64));process.exit(process.env.TEST_CHECK_FAIL==='1'?1:0);}
+if(a.includes('--input-type=module')&&a.includes('-')){if(process.env.TEST_HAS_UPDATE==='1')console.log('ghcr.io/kevinhuang001/love-app@sha256:'+'a'.repeat(64));process.exit(process.env.TEST_CHECK_FAIL==='1'?1:0);}
 if(a.includes('--format'))console.log('fixture-status-output');
 if(a.includes('ps')&&a.includes('--status'))console.log('test-running-container');
 if(a.includes('exec')&&a.includes('pg_dump'))process.stdout.write('fixture-db-dump');
@@ -153,7 +153,7 @@ test('up-to-date GHCR metadata does not pull layers, stop application or create 
     '7\n0\n',
   );
   assert.equal(result.status, 0);
-  assert.ok(calls.some((x) => x.includes('/app/scripts/check-update.mjs')));
+  assert.ok(calls.some((x) => x.includes('--input-type=module') && x.includes('-')));
   assert.ok(
     calls.every(
       (x) => x[0] !== 'pull' && !x.includes('stop') && !x.includes('tar') && x[0] !== 'build',

@@ -6,7 +6,6 @@ on:
       - 'Dockerfile'
       - 'love'
       - 'scripts/setup*'
-      - 'scripts/check-update.mjs'
       - 'compose*.yml'
       - 'deploy/**'
   workflow_run:

@@ -1,18 +1,39 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
-import { register } from './auth-helper';
+import { captcha, login } from './auth-helper';
 test('mobile album exports both ZIP formats and imports a full backup with dates and descriptions', async ({
   page,
   request,
 }) => {
-  const suffix = Date.now().toString().slice(-8),
-    first = await (
-      await register(request, { username: 'zipa' + suffix, password: 'password123', name: '小林' })
-    ).json(),
-    second = await (
-      await register(request, { username: 'zipb' + suffix, password: 'password123', name: '小舟' })
-    ).json();
+  const suffix = Date.now().toString().slice(-8);
+  const admin = await request.post('http://127.0.0.1:3000/api/admin/login', {
+    data: {
+      username: 'admin_master',
+      password: 'admin-test-password-123',
+      ...(await captcha(request, 'admin')),
+    },
+  });
+  expect(admin.ok()).toBeTruthy();
+  const headers = { Authorization: `Bearer ${(await admin.json()).token}` };
+  const account = async (username: string, name: string) => {
+    const created = await request.post('http://127.0.0.1:3000/api/admin/users', {
+      headers,
+      data: {
+        username,
+        name,
+        email: username + '@example.test',
+        password: 'password123',
+        confirmedEmail: true,
+      },
+    });
+    expect(created.status()).toBe(201);
+    const response = await login(request, { username, password: 'password123' });
+    expect(response.ok()).toBeTruthy();
+    return response.json();
+  };
+  const first = await account('zipa' + suffix, '小林'),
+    second = await account('zipb' + suffix, '小舟');
   const invite = await request.post('http://127.0.0.1:3000/api/pairing/invite', {
     headers: { Authorization: `Bearer ${first.token}` },
     data: {},

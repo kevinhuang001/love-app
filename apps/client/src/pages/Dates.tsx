@@ -66,7 +66,7 @@ export function Dates() {
     <section className="page-scroll page-enter p-5 sm:p-8">
       <Card className="together-card relative mb-8 gap-0 overflow-hidden border-0 bg-primary p-6 text-primary-foreground">
         <div className="flex justify-between">
-          <p className="text-xs tracking-widest opacity-80">在一起的日子</p>
+          <p className="text-base font-medium tracking-wide opacity-90">在一起的日子</p>
           <Button
             variant="ghost"
             size="icon"
@@ -81,10 +81,11 @@ export function Dates() {
           <>
             <div className="my-4 text-primary-foreground">
               <Duration
+                variant="featured"
                 seconds={elapsedSeconds(profile.couple.startDate, profile.couple.startTime, now)}
               />
             </div>
-            <p className="text-xs opacity-80">
+            <p className="text-[11px] opacity-75">
               {profile.couple.startDate} {profile.couple.startTime} 起
             </p>
           </>

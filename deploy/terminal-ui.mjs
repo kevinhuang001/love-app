@@ -24,6 +24,7 @@ export const menuOptions = [
   { value: 'source', label: '镜像来源', hint: '公开 Release、GHCR 或自定义仓库' },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
+  { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
   { value: 'exit', label: '退出' },
 ];
 export async function prompt({
@@ -62,12 +63,20 @@ export async function prompt({
         message: '选择操作',
         options: menuOptions,
         initialValue: existsSync(resolve(directory, '.env')) ? 'status' : 'configure',
-        maxItems: 14,
+        maxItems: 15,
       }),
     );
     if (result === 'exit') ui.outro('已退出部署管理');
     return result;
   }
+  if (kind === 'continue')
+    return ask(
+      ui.select({
+        message: '查看完操作结果后，按回车返回',
+        options: [{ value: 'continue', label: '返回主菜单' }],
+        showInstructions: false,
+      }),
+    );
   if (kind === 'source')
     return ask(
       select({

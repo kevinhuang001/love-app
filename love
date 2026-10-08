@@ -9,6 +9,11 @@ docker compose version >/dev/null || exit 1
 work=''
 ui_result=''
 trap '[ -z "$work" ] || rm -rf -- "$work"; [ -z "$ui_result" ] || rm -f -- "$ui_result"' EXIT HUP INT TERM
+refresh_screen() {
+  if [ -t 0 ] && [ -t 1 ] && [ "${TERM:-dumb}" != dumb ]; then
+    printf '\033[H\033[2J\033[3J'
+  fi
+}
 setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_./:@-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
 reload() {
   image=$(setting LOVE_IMAGE); image=${image:-ghcr.io/kevinhuang001/love-app:latest}
@@ -44,6 +49,7 @@ ui() {
   return "$ui_status"
 }
 confirm() { ui confirm "$1" && [ "$answer" = yes ]; }
+return_to_menu() { ui continue || { [ "$ui_status" = 130 ] && exit 0; exit 1; }; }
 set_field() {
   # Values passed here are restricted image references / fixed enum fields.
   [ -f .env ] || return 0
@@ -164,6 +170,7 @@ update() {
   chmod 755 love
   start || { printf '启动失败，可从菜单选择回滚；备份已保留。\n' >&2; return 1; }
   printf '更新完成，正在重新加载管理菜单。\n'
+  return_to_menu
   rm -rf -- "$work"; work=''
   exec sh ./love
 }
@@ -205,8 +212,14 @@ if [ ! -f compose.yml ]; then
 fi
 while :; do
   reload || true
+  refresh_screen
   ui menu || { [ "$ui_status" = 130 ] && exit 0; exit 1; }
   choice=$answer
+  case "$choice" in
+    refresh) continue;;
+    exit) exit 0;;
+  esac
+  refresh_screen
   result=0
   case "$choice" in
     configure) configure || result=$?;;
@@ -222,9 +235,9 @@ while :; do
     source) choose_source || result=$?;;
     uninstall) uninstall || result=$?;;
     rollback) rollback || result=$?;;
-    exit) exit 0;;
     *) exit 1;;
   esac
   [ "$result" = 0 ] || printf '操作未完成（退出码 %s），配置和备份仍保留。\n' "$result" >&2
   [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
+  return_to_menu
 done

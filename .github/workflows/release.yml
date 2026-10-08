@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.5.0
+        description: New version tag, for example v2.5.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.5.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.5.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,14 +85,13 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          心跳在线状态、秒级纪念日与 To Do、折叠设置。
+          更清晰的累计天数与可刷新的现代管理菜单。
 
-          - 前台客户端每 10 秒主动报告，服务器使用收到报告的时间判断在线，超过 30 秒无报告即视为离线；进入后台立即报告离线。
-          - 首次状态查询 3 秒无结果结束等待，聊天右上角设置入口已删除。
-          - 纪念日、在一起时间和 To Do 支持 HH:mm:ss，累计时间和倒计时逐秒刷新，公历 / 农历循环保留具体时间。
-          - 设置各区域可折叠，服务器地址与退出登录置于同一独立卡片；移除多余页面描述与底部标语。
-          - SQLite / PostgreSQL 自动升级至 schema 6，已有日期补为 00:00:00，配对共享 AI 与用户内容保留。
-          - 继续支持平滑相册切换、HTTP / HTTPS、现代管理菜单与下载镜像部署。
+          - “在一起的日子”标题和天数放大，时分秒及起始时间缩小，突出累计天数。
+          - 时间显示组件统一管理主卡片与列表样式，移除旧的专用字号样式。
+          - 管理脚本切换页面时清理屏幕及滚动历史，刷新页面重新读取部署状态。
+          - 操作结果保留至按回车返回，日志、错误与一次性邀请码可以读完再清屏。
+          - 继续支持心跳在线状态、秒级公农历日程、配对共享 AI、HTTP / HTTPS、SQLite / PostgreSQL。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。

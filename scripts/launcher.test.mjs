@@ -24,8 +24,9 @@ async function launch(t, config, input, options = {}) {
 const fs=require('node:fs'),a=process.argv.slice(2);fs.appendFileSync(process.env.TEST_CALLS,JSON.stringify(a)+'\\n');
 if(a.includes('/setup/deploy/terminal-ui.mjs')){
  const index=a.indexOf('/setup/deploy/terminal-ui.mjs'),kind=a[index+1],file=a[index+2].replace('/setup/',process.cwd()+'/');
+ if(kind==='continue'){fs.writeFileSync(file,'continue');process.exit(0);}
  const queue=fs.readFileSync('answers','utf8').split('\\n'),next=queue.shift();fs.writeFileSync('answers',queue.join('\\n'));
- const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',10:'manage',11:'source',12:'uninstall',13:'rollback',0:'exit'};
+ const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',10:'manage',11:'source',12:'uninstall',13:'rollback',14:'refresh',0:'exit'};
  let result=next;
  if(kind==='menu')result=menus[next];
  if(kind==='source')result={1:'release',2:'ghcr',3:'custom'}[next||1];
@@ -34,6 +35,7 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  fs.writeFileSync(file,result||'');process.exit(0);
 }
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
+if(a.includes('--format'))console.log('fixture-status-output');
 if(a.includes('ps')&&a.includes('--status'))console.log('test-running-container');
 if(a.includes('exec')&&a.includes('pg_dump'))process.stdout.write('fixture-db-dump');
 if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-backup');
@@ -51,16 +53,21 @@ fs.writeFileSync(out,url.endsWith('SHA256SUMS')?'${options.corrupt ? '0'.repeat(
 `,
   );
   await chmod(join(dir, 'bin/curl'), 0o755);
-  const result = spawnSync('sh', ['love', ...(options.args || [])], {
-    cwd: dir,
-    env: {
-      ...process.env,
-      PATH: join(dir, 'bin') + ':' + process.env.PATH,
-      TEST_CALLS: join(dir, 'calls'),
-      TEST_IMAGE_MISSING: options.missing ? '1' : '0',
+  const result = spawnSync(
+    options.tty ? 'script' : 'sh',
+    options.tty ? ['-q', '-e', '-c', 'sh love', '/dev/null'] : ['love', ...(options.args || [])],
+    {
+      cwd: dir,
+      env: {
+        ...process.env,
+        PATH: join(dir, 'bin') + ':' + process.env.PATH,
+        TEST_CALLS: join(dir, 'calls'),
+        TEST_IMAGE_MISSING: options.missing ? '1' : '0',
+        TERM: 'xterm-256color',
+      },
+      encoding: 'utf8',
     },
-    encoding: 'utf8',
-  });
+  );
   const calls = (
     await readFile(join(dir, 'calls'), 'utf8').catch((e) => {
       if (e.code === 'ENOENT') return '';
@@ -92,6 +99,27 @@ test('interactive start never builds, preserves PostgreSQL / HTTPS order, and re
   assert.ok(up.includes('love-test'));
   assert.ok(calls.some((x) => x.includes('ps')));
   assert.ok(calls.every((x) => !x.includes('--build') && x[0] !== 'build'));
+});
+test('refresh clears an interactive screen; action results remain until returning; redirected output has no escapes', async (t) => {
+  const interactive = await launch(t, base, '14\n5\n0\n', { tty: true });
+  assert.equal(interactive.result.status, 0);
+  const clear = '\u001b[H\u001b[2J\u001b[3J';
+  assert.ok(interactive.result.stdout.split(clear).length >= 5);
+  const status = interactive.result.stdout.indexOf('fixture-status-output');
+  assert.ok(status >= 0);
+  assert.ok(interactive.result.stdout.indexOf(clear, status) > status);
+  const prompts = interactive.calls.filter((args) =>
+    args.includes('/setup/deploy/terminal-ui.mjs'),
+  );
+  assert.deepEqual(
+    prompts.map((args) => args[args.indexOf('/setup/deploy/terminal-ui.mjs') + 1]),
+    ['menu', 'menu', 'continue', 'menu'],
+  );
+  assert.ok(!interactive.calls.some((args) => args.includes('restart') || args.includes('up')));
+  assert.equal(interactive.config, base);
+  const redirected = await launch(t, base, '5\n0\n');
+  assert.equal(redirected.result.status, 0);
+  assert.ok(!redirected.result.stdout.includes('\u001b'));
 });
 test('menu downloads public Release image, verifies checksum, loads and saves source without evaluating secrets', async (t) => {
   const { calls, result, config } = await launch(

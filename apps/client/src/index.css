@@ -243,10 +243,6 @@ h3 {
   min-height: 205px;
   border-radius: 18px;
 }
-.together-number {
-  letter-spacing: -3px;
-  font-family: 'Helvetica Neue', Arial, sans-serif;
-}
 .together-card::after {
   content: '';
   position: absolute;

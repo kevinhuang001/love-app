@@ -52,7 +52,7 @@ for (const database of ['sqlite', 'postgres']) {
     join(dir, 'bin/docker'),
     `#!/usr/bin/env node
 const fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),i=a.indexOf('/setup/deploy/terminal-ui.mjs');
-if(i>=0){const answers=fs.readFileSync(process.env.MANAGER_ANSWERS,'utf8').split('\\n');fs.writeFileSync(a[i+2].replace('/setup/',process.cwd()+'/'),answers.shift());fs.writeFileSync(process.env.MANAGER_ANSWERS,answers.join('\\n'));}
+if(i>=0){const file=a[i+2].replace('/setup/',process.cwd()+'/');if(a[i+1]==='continue')fs.writeFileSync(file,'continue');else{const answers=fs.readFileSync(process.env.MANAGER_ANSWERS,'utf8').split('\\n');fs.writeFileSync(file,answers.shift());fs.writeFileSync(process.env.MANAGER_ANSWERS,answers.join('\\n'));}}
 else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});process.exit(r.status??1);}
 `,
   );

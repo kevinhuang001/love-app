@@ -3,7 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, CalendarDays, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
-import { daysTogether, today } from '@/lib/dates';
+import { elapsedSeconds, clockTime, today } from '@/lib/dates';
+import { useClock } from '@/lib/useClock';
+import { Duration } from '@/components/Duration';
 import type { Anniversary } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -19,26 +21,30 @@ export function Dates() {
     queryFn: () => api.request<Anniversary[]>('/api/anniversaries'),
     enabled: Boolean(profile.couple),
   });
+  const now = useClock();
   const [open, setOpen] = useState(false),
     [edit, setEdit] = useState<Anniversary | null>(null),
     [title, setTitle] = useState(''),
     [date, setDate] = useState(today()),
+    [time, setTime] = useState(clockTime()),
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState<Anniversary | null>(null),
     [startOpen, setStartOpen] = useState(false),
-    [start, setStart] = useState(profile.couple?.startDate || today());
+    [start, setStart] = useState(profile.couple?.startDate || today()),
+    [startTime, setStartTime] = useState(profile.couple?.startTime || clockTime());
   function begin(item?: Anniversary) {
     setEdit(item || null);
     setTitle(item?.title || '');
     setDate(item?.date || today());
+    setTime(item?.time || clockTime());
     setOpen(true);
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      if (edit) await api.patch(`/api/anniversaries/${edit.id}`, { title, date });
-      else await api.post('/api/anniversaries', { title, date });
+      if (edit) await api.patch(`/api/anniversaries/${edit.id}`, { title, date, time });
+      else await api.post('/api/anniversaries', { title, date, time });
       await cache.invalidateQueries({ queryKey: ['anniversaries'] });
       setOpen(false);
       toast.success('纪念日已保存');
@@ -73,11 +79,14 @@ export function Dates() {
         </div>
         {profile.couple.startDate ? (
           <>
-            <p className="together-number my-4 text-6xl font-normal tabular-nums">
-              {daysTogether(profile.couple.startDate)}
-              <span className="ml-2 text-sm">天</span>
+            <div className="my-4 text-primary-foreground">
+              <Duration
+                seconds={elapsedSeconds(profile.couple.startDate, profile.couple.startTime, now)}
+              />
+            </div>
+            <p className="text-xs opacity-80">
+              {profile.couple.startDate} {profile.couple.startTime} 起
             </p>
-            <p className="text-xs opacity-80">{profile.couple.startDate} 起</p>
           </>
         ) : (
           <Button
@@ -92,7 +101,6 @@ export function Dates() {
       <div className="mb-6 flex items-start justify-between">
         <div>
           <h2 className="text-2xl font-medium">纪念日</h2>
-          <p className="mt-2 text-xs text-muted-foreground">记录已经发生的日子，累计至今天。</p>
         </div>
         <Button
           size="icon"
@@ -108,7 +116,7 @@ export function Dates() {
       ) : query.isError ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
       ) : !query.data?.length ? (
-        <Empty title="记录第一个重要的日子" detail="未来的安排和节日倒计时，在 To Do 中添加。" />
+        <Empty title="记录第一个重要的日子" />
       ) : (
         <div className="date-list space-y-0">
           {query.data.map((item) => (
@@ -121,13 +129,13 @@ export function Dates() {
               </span>
               <div className="min-w-0 flex-1">
                 <h3 className="break-words text-sm font-medium">{item.title}</h3>
-                <p className="mt-1 text-xs text-muted-foreground">{item.date}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {item.date} {item.time}
+                </p>
               </div>
               <div className="text-right">
-                <p className="text-2xl font-normal tabular-nums text-primary">
-                  {daysTogether(item.date)}
-                </p>
-                <p className="text-[10px] text-muted-foreground">第几天 · 累计</p>
+                <Duration seconds={elapsedSeconds(item.date, item.time, now)} />
+                <p className="mt-1 text-[10px] text-muted-foreground">已累计</p>
               </div>
               <div className="flex flex-col">
                 <Button
@@ -161,7 +169,7 @@ export function Dates() {
       >
         <DialogContent>
           <DialogTitle>{edit ? '编辑纪念日' : '添加一个纪念日'}</DialogTitle>
-          <DialogDescription>纪念日从当天开始累计；未来日期请添加为 To Do。</DialogDescription>
+          <DialogDescription className="sr-only">设置纪念日的日期与时间。</DialogDescription>
           <form onSubmit={save} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="date-title">名称</Label>
@@ -185,6 +193,19 @@ export function Dates() {
                 required
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="date-time">时间</Label>
+              <Input
+                id="date-time"
+                type="time"
+                step="1"
+                value={time}
+                onChange={(e) =>
+                  setTime(e.target.value.length === 5 ? e.target.value + ':00' : e.target.value)
+                }
+                required
+              />
+            </div>
             <Button type="submit" className="w-full" disabled={busy}>
               {busy ? '保存中…' : '保存纪念日'}
             </Button>
@@ -200,7 +221,7 @@ export function Dates() {
             onSubmit={async (e) => {
               e.preventDefault();
               try {
-                await api.patch('/api/couple', { startDate: start });
+                await api.patch('/api/couple', { startDate: start, startTime });
                 await cache.invalidateQueries({ queryKey: ['profile'] });
                 setStartOpen(false);
                 toast.success('开始日期已保存');
@@ -217,6 +238,17 @@ export function Dates() {
               onChange={(e) => setStart(e.target.value)}
               min="1900-01-01"
               max={today()}
+              required
+            />
+            <Label htmlFor="start-time">开始时间</Label>
+            <Input
+              id="start-time"
+              type="time"
+              step="1"
+              value={startTime}
+              onChange={(e) =>
+                setStartTime(e.target.value.length === 5 ? e.target.value + ':00' : e.target.value)
+              }
               required
             />
             <Button type="submit" className="w-full">

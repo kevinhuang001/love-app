@@ -72,3 +72,38 @@ export function lunarLabel(input) {
   const lunar = Lunar.fromYmd(y, input.leapMonth ? -m : m, d);
   return `农历${input.leapMonth ? '闰' : ''}${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
 }
+
+export function clockTime(current = Date.now()) {
+  return new Date(current + 8 * 3600000).toISOString().slice(11, 19);
+}
+export function validTime(time) {
+  return /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(time);
+}
+export function scheduleInstant(date, time = '00:00:00') {
+  if (!validSolarDate(date) || !validTime(time)) throw new Error('日期或时间无效');
+  return Date.parse(`${date}T${time}+08:00`);
+}
+export function elapsedSeconds(date, time, current = Date.now()) {
+  return Math.max(0, Math.floor((current - scheduleInstant(date, time)) / 1000));
+}
+export function durationParts(seconds) {
+  const total = Math.max(0, Math.floor(Math.abs(seconds)));
+  return {
+    days: Math.floor(total / 86400),
+    hours: Math.floor(total / 3600) % 24,
+    minutes: Math.floor(total / 60) % 60,
+    seconds: total % 60,
+  };
+}
+export function nextTodoInstant(input, current = Date.now()) {
+  const currentDate = new Date(current + 8 * 3600000).toISOString().slice(0, 10);
+  let next = nextTodo(input, currentDate);
+  if (!next) return null;
+  const time = input.time || '00:00:00';
+  if (input.repeat === 'yearly' && scheduleInstant(next.date, time) < current) {
+    next = nextTodo({ ...input, completedDate: next.date }, currentDate);
+    if (!next) return null;
+  }
+  const timestamp = scheduleInstant(next.date, time);
+  return { date: next.date, time, timestamp, seconds: Math.ceil((timestamp - current) / 1000) };
+}

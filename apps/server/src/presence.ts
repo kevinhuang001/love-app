@@ -17,6 +17,7 @@ export function presence(io: Server, db: DB) {
           return (
             socket?.connected &&
             socket.data.active === true &&
+            Date.now() - Number(socket.data.lastReportedAt || 0) <= 30000 &&
             socket.rooms.has(`couple:${coupleId}`)
           );
         });

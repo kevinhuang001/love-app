@@ -30,6 +30,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     [socket, setSocket] = useState<Socket | null>(null),
     [connected, setConnected] = useState(false),
     [presence, setPresence] = useState<Presence | null>(null),
+    [presenceTimedOut, setPresenceTimedOut] = useState(false),
     [unread, setUnread] = useState(0);
   const api = useMemo(
     () =>
@@ -60,6 +61,9 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       connection.emit('presence:set', {
         active: document.visibilityState === 'visible' && nativeActive,
       });
+    const activityTimer = window.setInterval(() => {
+      if (connection.connected) reportActivity();
+    }, 10000);
     const reconnect = () => {
       setConnected(true);
       reportActivity();
@@ -114,11 +118,25 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
         };
       });
     return () => {
+      window.clearInterval(activityTimer);
       connection.disconnect();
       document.removeEventListener('visibilitychange', visible);
       cleanupNative?.();
     };
   }, [session, cache, end, profile.data?.user.id]);
+  useEffect(() => {
+    setPresenceTimedOut(false);
+    const timer = window.setTimeout(() => setPresenceTimedOut(true), 3000);
+    const request = () => {
+      if (socket?.connected && document.visibilityState === 'visible') socket.emit('presence:get');
+    };
+    request();
+    const refresh = window.setInterval(request, 15000);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(refresh);
+    };
+  }, [connected, socket, profile.data?.user.coupleId, profile.data?.partner?.id]);
   useEffect(() => {
     if (tab === 'chat') setUnread(0);
   }, [tab, unread]);
@@ -177,8 +195,11 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
         connected,
         partnerOnline:
           connected && presence?.coupleId === profile.data.user.coupleId
-            ? (presence.users.find((user) => user.id === profile.data.partner?.id)?.online ?? null)
-            : null,
+            ? (presence.users.find((user) => user.id === profile.data.partner?.id)?.online ??
+              (presenceTimedOut ? false : null))
+            : presenceTimedOut
+              ? false
+              : null,
         openUs: () => setTab('us'),
       }}
     >

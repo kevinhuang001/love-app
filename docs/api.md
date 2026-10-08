@@ -12,7 +12,7 @@
 | POST           | /api/pairing/invite       | 创建邀请码                                                                          |
 | POST           | /api/pairing/join         | code                                                                                |
 | DELETE         | /api/pairing              | 断开当前关系                                                                        |
-| PATCH          | /api/couple               | startDate，YYYY-MM-DD                                                               |
+| PATCH          | /api/couple               | startDate（YYYY-MM-DD）、startTime（HH:mm:ss）                                      |
 | GET            | /api/messages?before=ID   | 最近 50 条升序 items、hasMore                                                       |
 | POST           | /api/messages             | clientId（UUID）、content、可选 mediaId                                             |
 | POST           | /api/messages/read        | throughId（已看过的最新 ID）                                                        |
@@ -20,9 +20,9 @@
 | GET            | /api/media/:id/:variant   | 签名 thumbnail / preview，支持 Range                                                |
 | GET / POST     | /api/moments              | 分页查看／新增 title、date、mediaId                                                 |
 | PATCH / DELETE | /api/moments/:id          | 仅发布者可编辑、删除                                                                |
-| GET / POST     | /api/anniversaries        | 查看／新增 title、date（今天或过去，累计天数）                                      |
+| GET / POST     | /api/anniversaries        | 查看／新增 title、date、time（当前或过去，秒级累计）                                |
 | PATCH / DELETE | /api/anniversaries/:id    | 当前情侣可修改、删除                                                                |
-| GET / POST     | /api/todos                | title、date、calendar、leapMonth、repeat；支持农历                                  |
+| GET / POST     | /api/todos                | title、date、time、calendar、leapMonth、repeat；支持农历                            |
 | PATCH / DELETE | /api/todos/:id            | 编辑或删除当前情侣的待办                                                            |
 | POST           | /api/todos/:id/completion | completed；完成循环事项跳到下一次                                                   |
 | PATCH          | /api/ai/profile           | name、可选 avatarMediaId（null 清空）                                               |
@@ -58,7 +58,7 @@
 
 `POST /api/media` 在压缩前读取原文件元数据，返回 `capturedDate: "YYYY-MM-DD" | null`。照片优先 EXIF `DateTimeOriginal`，其次 `CreateDate`；保留相机记录的当地日期，不用服务器时区转换。视频优先 QuickTime 原始带时区的创建日期，其次 `creation_time`（UTC 转为应用日期时区 Asia/Shanghai）。不使用 EXIF 文件修改时间、文件名、文件修改时间或上传时间；缺失、损坏或无效的拍摄日期返回 null，媒体仍可上传。界面选择文件后先上传和识别，未识别时逐个文件补填日期，最后为每个文件分别调用 `POST /api/moments`，其 `date` 必填。提交相册失败时保留已上传的媒体 ID 与用户填写的日期，重试不会重新上传已成功的文件。数据库结构不变，拍摄日期保存于各条 moments.date。
 
-Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。连接认证支持 `auth: {token, active: true}`。服务端 `presence:changed` 返回 `{coupleId, users:[{id,online}]}`，仅发往当前配对；客户端发送 `presence:set {active:boolean}` 汇报页面可见性 / 安卓前后台状态。任一有效前台连接存活即为在线，关闭、登出或全部进入后台即离线；丢失网络在 Socket.IO 心跳超时后变为离线。后台通知流不计为在线。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
+Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。连接认证支持 `auth: {token, active: true}`。服务端 `presence:changed` 返回 `{coupleId, users:[{id,online}]}`，仅发往当前配对；客户端发送 `presence:set {active:boolean}` 汇报页面可见性 / 安卓前后台状态。前台客户端每 10 秒发送一次 presence:set，服务器记录收到报告的时间（不采信客户端时间戳）；最近 30 秒内任一有效前台报告即在线，服务端每 5 秒复核，关闭、登出或全部进入后台立即离线。presence:get 主动查询当前配对状态；客户端首次等待超过 3 秒显示离线，后续报告正常恢复。后台通知流不计为在线。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
 
 ## 命名助手用法
 
@@ -112,3 +112,5 @@ GET `/api/notifications/stream` 使用 Bearer 认证，返回 SSE。可选 `afte
 - `PATCH /api/admin/settings` 的 `invitationRequired` 控制是否要求邀请码。
 
 AI 地址、模型、密钥、启用状态、名称与头像以 `coupleId` 为单位保存，配对双方均可 GET/POST 设置及 PATCH 助手身份，修改向双方发送 `profile:changed`。响应只包含 `hasKey`，不包含密钥；同地址下省略 `apiKey` 保留密钥，切换地址会清空旧密钥。助手头像可引用当前配对任一方上传的图片。解除后不能访问原配置，重新配对不继承原空间设置。
+
+所有纪念日 / To Do 的 time 和配对 startTime 使用 HH:mm:ss，默认 00:00:00；日期与时间按 UTC+8 解释。每年重复保留所设时间，包括农历节日与闰年调整。客户端逐秒计算显示，不向服务器逐秒请求。AI 创建 / 编辑日程的工具同样提供 time 参数，set_relationship_date 提供 startTime。

@@ -3,7 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, CalendarClock, Check, Pencil, Trash2, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
-import { today, nextTodo, lunarLabel } from '@/lib/dates';
+import { today, clockTime, nextTodoInstant, lunarLabel } from '@/lib/dates';
+import { useClock } from '@/lib/useClock';
+import { Duration } from '@/components/Duration';
 import type { Todo } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -21,10 +23,12 @@ export function Todos() {
     queryFn: () => api.request<Todo[]>('/api/todos'),
     enabled: Boolean(profile.couple),
   });
+  const now = useClock();
   const [open, setOpen] = useState(false),
     [edit, setEdit] = useState<Todo | null>(null),
     [title, setTitle] = useState(''),
     [date, setDate] = useState(today()),
+    [time, setTime] = useState(clockTime()),
     [calendar, setCalendar] = useState<'solar' | 'lunar'>('solar'),
     [leapMonth, setLeapMonth] = useState(false),
     [repeat, setRepeat] = useState<'none' | 'yearly'>('none'),
@@ -34,16 +38,17 @@ export function Todos() {
     setEdit(item || null);
     setTitle(item?.title || '');
     setDate(item?.date || today());
+    setTime(item?.time || clockTime());
     setCalendar(item?.calendar || 'solar');
     setLeapMonth(Boolean(item?.leapMonth));
     setRepeat(item?.repeat || 'none');
     setOpen(true);
   }
-  const value = { title, date, calendar, leapMonth, repeat };
-  let preview: ReturnType<typeof nextTodo> = null,
+  const value = { title, date, time, calendar, leapMonth, repeat };
+  let preview: ReturnType<typeof nextTodoInstant> = null,
     error = '';
   try {
-    preview = nextTodo(value);
+    preview = nextTodoInstant(value, now);
   } catch (e) {
     error = (e as Error).message;
   }
@@ -69,11 +74,11 @@ export function Todos() {
     }
   }
   const items = (query.data || [])
-    .map((item) => ({ item, next: nextTodo(item) }))
+    .map((item) => ({ item, next: nextTodoInstant(item, now) }))
     .sort(
       (a, b) =>
         Number(a.item.completed) - Number(b.item.completed) ||
-        (a.next?.days ?? Infinity) - (b.next?.days ?? Infinity),
+        (a.next?.seconds ?? Infinity) - (b.next?.seconds ?? Infinity),
     );
   if (!profile.couple)
     return (
@@ -88,7 +93,6 @@ export function Todos() {
       <div className="mb-5 flex justify-between">
         <div>
           <h2 className="text-2xl font-medium">待办与倒计时</h2>
-          <p className="mt-2 text-sm text-muted-foreground">设置日期，倒数到下一次。</p>
         </div>
         <Button
           size="icon"
@@ -104,7 +108,7 @@ export function Todos() {
       ) : query.isError ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
       ) : !items.length ? (
-        <Empty title="下一件想一起做的事" detail="具体日期、每年重复、农历节日，都可以记在这里。" />
+        <Empty title="下一件想一起做的事" />
       ) : (
         <div className="todo-list space-y-3">
           {items.map(({ item, next }) => (
@@ -123,7 +127,7 @@ export function Todos() {
                     {item.title}
                   </h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {lunarLabel(item)}
+                    {lunarLabel(item)} {item.time}
                     {item.repeat === 'yearly' ? ' · 每年重复' : ''}
                   </p>
                   {item.calendar === 'lunar' && next && (
@@ -131,25 +135,21 @@ export function Todos() {
                   )}
                 </div>
                 <div className="shrink-0 text-right">
-                  <p className="text-2xl font-medium tabular-nums text-primary">
-                    {item.completed
-                      ? '完成'
-                      : !next
-                        ? '—'
-                        : next.days === 0
-                          ? '今天'
-                          : Math.abs(next.days)}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
+                  {item.completed ? (
+                    <span className="text-sm">完成</span>
+                  ) : !next ? (
+                    '—'
+                  ) : (
+                    <Duration seconds={next.seconds} />
+                  )}
+                  <p className="mt-1 text-[10px] text-muted-foreground">
                     {item.completed
                       ? '已完成'
                       : !next
                         ? '超出日期范围'
-                        : next.days < 0
-                          ? '天 · 已逾期'
-                          : next.days === 0
-                            ? '就是今天'
-                            : '天后'}
+                        : next.seconds < 0
+                          ? '已逾期'
+                          : '倒计时'}
                   </p>
                 </div>
               </div>
@@ -215,7 +215,9 @@ export function Todos() {
       >
         <DialogContent>
           <DialogTitle>{edit ? '编辑 To Do' : '添加 To Do'}</DialogTitle>
-          <DialogDescription>设置安排或节日的日期。农历重复每年按农历换算。</DialogDescription>
+          <DialogDescription className="sr-only">
+            设置待办的日期、时间与重复规则。
+          </DialogDescription>
           <form
             className="space-y-4"
             onSubmit={async (e) => {
@@ -330,16 +332,37 @@ export function Todos() {
                 </p>
               </>
             )}
+            <div className="space-y-2">
+              <Label htmlFor="todo-time">待办时间</Label>
+              <Input
+                id="todo-time"
+                type="time"
+                step="1"
+                value={time}
+                onChange={(e) =>
+                  setTime(e.target.value.length === 5 ? e.target.value + ':00' : e.target.value)
+                }
+                required
+              />
+            </div>
             {error ? (
               <p role="alert" className="text-xs text-destructive">
                 {error}
               </p>
             ) : (
-              <p className="rounded-full bg-secondary p-3 text-xs leading-6">
-                {preview
-                  ? `${calendar === 'lunar' ? `对应公历 ${preview.date} · ` : ''}${preview.days < 0 ? `已逾期 ${-preview.days} 天` : preview.days === 0 ? '就是今天' : `还有 ${preview.days} 天`}`
-                  : '已超过 2100 年支持范围'}
-              </p>
+              <div className="rounded-xl bg-secondary p-3 text-xs leading-6">
+                {preview ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span>
+                      {calendar === 'lunar' ? `对应公历 ${preview.date} ${time}` : ''}
+                      <span className="block">{preview.seconds < 0 ? '已逾期' : '倒计时'}</span>
+                    </span>
+                    <Duration seconds={preview.seconds} />
+                  </div>
+                ) : (
+                  '已超过 2100 年支持范围'
+                )}
+              </div>
             )}
             <Button type="submit" className="w-full" disabled={busy || !!error}>
               {busy ? '保存中…' : '保存 To Do'}

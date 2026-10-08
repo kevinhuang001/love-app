@@ -1,7 +1,13 @@
 import { presence } from './presence.js';
 import { today } from '@love/calendar';
 import { readAlbum } from './album.js';
-import { anniversarySchema, todoSchema, aiProfileSchema, mentionsAI } from './schedules.js';
+import {
+  anniversarySchema,
+  todoSchema,
+  relationshipSchema,
+  aiProfileSchema,
+  mentionsAI,
+} from './schedules.js';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -249,7 +255,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.4.0',
+      version: '2.5.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -468,12 +474,12 @@ export async function createApp(options: AppOptions = {}) {
     res.sendStatus(204);
   });
   route('patch', '/api/couple', async (req, res) => {
-    const { startDate } = z
-      .object({ startDate: date.refine((v) => v <= today(), '开始日期不能晚于今天') })
-      .parse(req.body);
-    await db.prepare('UPDATE couples SET startDate=? WHERE id=?').run(startDate, await couple(req));
+    const { startDate, startTime } = relationshipSchema.parse(req.body);
+    await db
+      .prepare('UPDATE couples SET startDate=?,startTime=? WHERE id=?')
+      .run(startDate, startTime, await couple(req));
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
-    res.json({ startDate });
+    res.json({ startDate, startTime });
   });
   const avatarUpload = multer({
     dest: join(uploads, 'tmp'),
@@ -777,7 +783,7 @@ export async function createApp(options: AppOptions = {}) {
   route('get', '/api/anniversaries', async (req, res) =>
     res.json(
       await db
-        .prepare('SELECT * FROM anniversaries WHERE coupleId=? ORDER BY date')
+        .prepare('SELECT * FROM anniversaries WHERE coupleId=? ORDER BY date,time')
         .all(await couple(req)),
     ),
   );
@@ -786,8 +792,8 @@ export async function createApp(options: AppOptions = {}) {
     const id = randomUUID(),
       coupleId = await couple(req);
     await db
-      .prepare('INSERT INTO anniversaries VALUES(?,?,?,?)')
-      .run(id, coupleId, value.title, value.date);
+      .prepare('INSERT INTO anniversaries(id,coupleId,title,date,time) VALUES(?,?,?,?,?)')
+      .run(id, coupleId, value.title, value.date, value.time);
     io.to(`couple:${coupleId}`).emit('anniversaries:changed');
     res.status(201).json({ id });
   });
@@ -801,7 +807,9 @@ export async function createApp(options: AppOptions = {}) {
   });
   route('get', '/api/todos', async (req, res) =>
     res.json(
-      await db.prepare('SELECT * FROM todos WHERE coupleId=? ORDER BY date').all(await couple(req)),
+      await db
+        .prepare('SELECT * FROM todos WHERE coupleId=? ORDER BY date,time')
+        .all(await couple(req)),
     ),
   );
   const changeTodo = async (
@@ -970,6 +978,7 @@ export async function createApp(options: AppOptions = {}) {
         hash: found.hash,
         expires: found.expires,
         active: socket.handshake.auth.active !== false,
+        lastReportedAt: Date.now(),
       };
       next();
     } catch {
@@ -1001,10 +1010,19 @@ export async function createApp(options: AppOptions = {}) {
           .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
           .get(hash, Date.now());
       }
+      socket.on('presence:get', async () => {
+        try {
+          const current = await db.prepare('SELECT coupleId FROM users WHERE id=?').get(user.id);
+          await broadcastPresence(current?.coupleId as string | null);
+        } catch {
+          socket.disconnect(true);
+        }
+      });
       socket.on('presence:set', async (value) => {
         if (typeof value?.active !== 'boolean') return;
         try {
           socket.data.active = value.active;
+          socket.data.lastReportedAt = Date.now();
           const current = await db.prepare('SELECT coupleId FROM users WHERE id=?').get(user.id);
           await broadcastPresence(current?.coupleId as string | null);
         } catch {
@@ -1055,6 +1073,13 @@ export async function createApp(options: AppOptions = {}) {
         io.to(`couple:${id}`).emit(event);
     },
   });
+  const presenceTimer = setInterval(() => {
+    const pairs = new Set<string>();
+    for (const room of io.sockets.adapter.rooms.keys())
+      if (room.startsWith('couple:')) pairs.add(room.slice(7));
+    for (const id of pairs) void broadcastPresence(id).catch(() => {});
+  }, 5000);
+  presenceTimer.unref();
   const pending = new Set<Promise<unknown>>();
   let closing = false;
   function track<T>(task: Promise<T>): Promise<T> {
@@ -1088,6 +1113,7 @@ export async function createApp(options: AppOptions = {}) {
     runAI,
     close: async () => {
       closing = true;
+      clearInterval(presenceTimer);
       clearInterval(timer);
       await control.bootstrap.catch(() => {});
       streams.close();

@@ -1,7 +1,7 @@
 // Shared schema; driver supplies PostgreSQL identity and timestamp definitions.
 export const schema = `
   
-    CREATE TABLE IF NOT EXISTS couples(id TEXT PRIMARY KEY, startDate TEXT);
+    CREATE TABLE IF NOT EXISTS couples(id TEXT PRIMARY KEY, startDate TEXT, startTime TEXT NOT NULL DEFAULT '00:00:00');
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, coupleId TEXT REFERENCES couples(id), avatarMediaId TEXT REFERENCES media(id), email TEXT UNIQUE NOT NULL, verifiedAt TEXT, disabled INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), lastLoginAt TEXT);
     CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY, userId TEXT NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS invites(hash TEXT PRIMARY KEY, userId TEXT REFERENCES users(id), expires INTEGER NOT NULL);
@@ -11,11 +11,11 @@ export const schema = `
     CREATE TABLE IF NOT EXISTS moments(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), ownerId TEXT REFERENCES users(id), title TEXT NOT NULL, mediaId TEXT NOT NULL REFERENCES media(id), date TEXT NOT NULL, createdAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')));
     CREATE INDEX IF NOT EXISTS moments_couple_date ON moments(coupleId,date,id);
     CREATE INDEX IF NOT EXISTS moments_couple_uploaded ON moments(coupleId,createdAt,id);
-    CREATE TABLE IF NOT EXISTS anniversaries(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), title TEXT NOT NULL, date TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS anniversaries(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), title TEXT NOT NULL, date TEXT NOT NULL, time TEXT NOT NULL DEFAULT '00:00:00');
     
 CREATE TABLE IF NOT EXISTS todos(
     id TEXT PRIMARY KEY, coupleId TEXT NOT NULL REFERENCES couples(id), title TEXT NOT NULL,
-    date TEXT NOT NULL, calendar TEXT NOT NULL DEFAULT 'solar', leapMonth INTEGER NOT NULL DEFAULT 0,
+    date TEXT NOT NULL, time TEXT NOT NULL DEFAULT '00:00:00', calendar TEXT NOT NULL DEFAULT 'solar', leapMonth INTEGER NOT NULL DEFAULT 0,
     repeat TEXT NOT NULL DEFAULT 'none', completed INTEGER NOT NULL DEFAULT 0, completedDate TEXT);
     CREATE INDEX IF NOT EXISTS todos_couple ON todos(coupleId);
 CREATE TABLE IF NOT EXISTS couple_ai_settings(coupleId TEXT PRIMARY KEY REFERENCES couples(id), baseUrl TEXT NOT NULL, model TEXT NOT NULL, secret TEXT NOT NULL, enabled INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '小爱', avatarMediaId TEXT REFERENCES media(id));

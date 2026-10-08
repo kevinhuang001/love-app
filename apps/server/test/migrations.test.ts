@@ -33,7 +33,10 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
         .prepare('INSERT INTO users(id,username,name,password,email,coupleId) VALUES(?,?,?,?,?,?)')
         .run(id, id, id, 'hash', id + '@example.test', id === 'unpaired' ? null : 'our-pair');
     }
-    await db.exec(`DROP TABLE couple_ai_settings;
+    await db.exec(`ALTER TABLE couples DROP COLUMN startTime;
+      ALTER TABLE anniversaries DROP COLUMN time;
+      ALTER TABLE todos DROP COLUMN time;
+      DROP TABLE couple_ai_settings;
       CREATE TABLE ai_settings(userId TEXT PRIMARY KEY REFERENCES users(id),baseUrl TEXT NOT NULL,model TEXT NOT NULL,secret TEXT NOT NULL,enabled INTEGER NOT NULL,name TEXT NOT NULL,avatarMediaId TEXT REFERENCES media(id));`);
     await db
       .prepare('INSERT INTO ai_settings VALUES(?,?,?,?,?,?,?)')
@@ -72,6 +75,65 @@ test('schema 4 upgrades AI to pair storage once, retaining the configured partne
   db = await openDatabase(options);
   try {
     assert.equal((await db.prepare('SELECT name FROM couple_ai_settings').get())!.name, '松子');
+  } finally {
+    await db.close();
+  }
+});
+
+test('schema 5 adds second-precision fields without changing pair configuration or existing dates', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-time-upgrade-'));
+  const schema = process.env.TEST_DATABASE_URL
+    ? 'test_' + randomUUID().replaceAll('-', '')
+    : undefined;
+  const options = { path: process.env.TEST_DATABASE_URL || join(dir, 'old.sqlite'), schema };
+  t.after(async () => {
+    if (schema) {
+      const client = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
+      await client.connect();
+      try {
+        await client.query(`DROP SCHEMA "${schema}" CASCADE`);
+      } finally {
+        await client.end();
+      }
+    }
+    await rm(dir, { recursive: true, force: true });
+  });
+  let db = await openDatabase(options);
+  try {
+    await db.exec(`ALTER TABLE couples DROP COLUMN startTime;
+      ALTER TABLE anniversaries DROP COLUMN time;
+      ALTER TABLE todos DROP COLUMN time;`);
+    await db.prepare('INSERT INTO couples(id,startDate) VALUES(?,?)').run('pair', '2025-01-02');
+    await db
+      .prepare('INSERT INTO anniversaries(id,coupleId,title,date) VALUES(?,?,?,?)')
+      .run('anniversary', 'pair', '旅行', '2025-06-07');
+    await db
+      .prepare('INSERT INTO todos(id,coupleId,title,date) VALUES(?,?,?,?)')
+      .run('todo', 'pair', '下次旅行', '2026-10-10');
+    await db
+      .prepare(
+        'INSERT INTO couple_ai_settings(coupleId,baseUrl,model,secret,enabled) VALUES(?,?,?,?,?)',
+      )
+      .run('pair', 'https://api.example.com/v1', 'model', 'encrypted', 1);
+    await db.exec(
+      db.provider === 'sqlite' ? 'PRAGMA user_version=5' : 'UPDATE database_meta SET version=5',
+    );
+  } finally {
+    await db.close();
+  }
+  db = await openDatabase(options);
+  try {
+    assert.equal((await db.prepare('SELECT * FROM couples').get())!.startTime, '00:00:00');
+    assert.equal((await db.prepare('SELECT * FROM anniversaries').get())!.time, '00:00:00');
+    assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '00:00:00');
+    assert.equal((await db.prepare('SELECT * FROM couple_ai_settings').get())!.secret, 'encrypted');
+    await db.prepare('UPDATE todos SET time=?').run('12:34:56');
+  } finally {
+    await db.close();
+  }
+  db = await openDatabase(options);
+  try {
+    assert.equal((await db.prepare('SELECT * FROM todos').get())!.time, '12:34:56');
   } finally {
     await db.close();
   }

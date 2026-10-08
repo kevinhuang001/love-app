@@ -10,7 +10,13 @@ export type Profile = {
   ai: AIIdentity;
   user: User;
   partner: User | null;
-  couple: { id: string; startDate: string | null; storageBytes: number; quotaBytes: number } | null;
+  couple: {
+    id: string;
+    startDate: string | null;
+    startTime: string;
+    storageBytes: number;
+    quotaBytes: number;
+  } | null;
 };
 export type Media = {
   id: string;
@@ -41,13 +47,14 @@ export type Moment = {
   createdAt: string;
   media: Media;
 };
-export type Anniversary = { id: string; title: string; date: string };
+export type Anniversary = { id: string; title: string; date: string; time: string };
 export type Session = { server: string; token: string };
 
 export type Todo = {
   id: string;
   title: string;
   date: string;
+  time: string;
   calendar: 'solar' | 'lunar';
   leapMonth: number;
   repeat: 'none' | 'yearly';

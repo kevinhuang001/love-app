@@ -1,5 +1,5 @@
-import { anniversarySchema, todoSchema, aiProfileSchema } from './schedules.js';
-import { nextTodo, today } from '@love/calendar';
+import { anniversarySchema, todoSchema, relationshipSchema, aiProfileSchema } from './schedules.js';
+import { nextTodoInstant, today } from '@love/calendar';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import https from 'node:https';
 import http from 'node:http';
@@ -169,6 +169,7 @@ export const toolDefinitions = [
     {
       title: { type: 'string' },
       date: { type: 'string', description: 'YYYY-MM-DD' },
+      time: { type: 'string', description: 'HH:mm:ss，北京时间' },
     },
   ],
   [
@@ -178,6 +179,7 @@ export const toolDefinitions = [
       id: { type: 'string' },
       title: { type: 'string' },
       date: { type: 'string' },
+      time: { type: 'string', description: 'HH:mm:ss，北京时间' },
     },
   ],
   ['delete_anniversary', '仅当用户明确要求删除时删除指定纪念日', { id: { type: 'string' } }],
@@ -191,7 +193,7 @@ export const toolDefinitions = [
   ],
   [
     'update_ai_profile',
-    '修改你（AI 助手）自己的名称和头像。不是用户的个人资料。头像只能使用请求者上传的图片',
+    '修改你（AI 助手）自己的名称和头像。不是用户的个人资料。头像可使用当前配对任一方上传的图片',
     { name: { type: 'string' }, avatarMediaId: { type: 'string' } },
   ],
   ['list_todos', '列出当前情侣的待办事项与倒计时', {}],
@@ -201,6 +203,7 @@ export const toolDefinitions = [
     {
       title: { type: 'string' },
       date: { type: 'string', description: 'YYYY-MM-DD，农历时表示农历年月日，不是转换后的公历' },
+      time: { type: 'string', description: 'HH:mm:ss，北京时间' },
       calendar: { type: 'string', enum: ['solar', 'lunar'] },
       leapMonth: { type: 'boolean' },
       repeat: { type: 'string', enum: ['none', 'yearly'] },
@@ -213,6 +216,7 @@ export const toolDefinitions = [
       id: { type: 'string' },
       title: { type: 'string' },
       date: { type: 'string' },
+      time: { type: 'string', description: 'HH:mm:ss，北京时间' },
       calendar: { type: 'string', enum: ['solar', 'lunar'] },
       leapMonth: { type: 'boolean' },
       repeat: { type: 'string', enum: ['none', 'yearly'] },
@@ -230,7 +234,14 @@ export const toolDefinitions = [
     '把请求者已上传的图片或视频保存到回忆相册',
     { mediaId: { type: 'string' }, title: { type: 'string' }, date: { type: 'string' } },
   ],
-  ['set_relationship_date', '设置在一起的日期', { startDate: { type: 'string' } }],
+  [
+    'set_relationship_date',
+    '设置在一起的日期',
+    {
+      startDate: { type: 'string' },
+      startTime: { type: 'string', description: 'HH:mm:ss，北京时间' },
+    },
+  ],
 ] as const;
 export const tools = toolDefinitions.map(([name, description, properties]) => ({
   type: 'function',
@@ -260,17 +271,17 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
       const v = anniversarySchema.parse(input),
         id = randomUUID();
       await db
-        .prepare('INSERT INTO anniversaries VALUES(?,?,?,?)')
-        .run(id, coupleId!, v.title, v.date);
+        .prepare('INSERT INTO anniversaries(id,coupleId,title,date,time) VALUES(?,?,?,?,?)')
+        .run(id, coupleId!, v.title, v.date, v.time);
       return { id, ...v };
     }
     case 'update_anniversary': {
-      const v = anniversarySchema.extend({ id: z.string().uuid() }).parse(input);
+      const v = anniversarySchema.safeExtend({ id: z.string().uuid() }).parse(input);
       if (
         !(
           await db
-            .prepare('UPDATE anniversaries SET title=?,date=? WHERE id=? AND coupleId=?')
-            .run(v.title, v.date, v.id, coupleId!)
+            .prepare('UPDATE anniversaries SET title=?,date=?,time=? WHERE id=? AND coupleId=?')
+            .run(v.title, v.date, v.time, v.id, coupleId!)
         ).changes
       )
         throw new Error('纪念日不存在');
@@ -342,9 +353,9 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
         id = randomUUID();
       await db
         .prepare(
-          'INSERT INTO todos(id,coupleId,title,date,calendar,leapMonth,repeat) VALUES(?,?,?,?,?,?,?)',
+          'INSERT INTO todos(id,coupleId,title,date,time,calendar,leapMonth,repeat) VALUES(?,?,?,?,?,?,?,?)',
         )
-        .run(id, coupleId!, v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat);
+        .run(id, coupleId!, v.title, v.date, v.time, v.calendar, Number(v.leapMonth), v.repeat);
       return { id, ...v };
     }
     case 'update_todo': {
@@ -353,9 +364,18 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
         !(
           await db
             .prepare(
-              'UPDATE todos SET title=?,date=?,calendar=?,leapMonth=?,repeat=?,completed=0,completedDate=NULL WHERE id=? AND coupleId=?',
+              'UPDATE todos SET title=?,date=?,time=?,calendar=?,leapMonth=?,repeat=?,completed=0,completedDate=NULL WHERE id=? AND coupleId=?',
             )
-            .run(v.title, v.date, v.calendar, Number(v.leapMonth), v.repeat, v.id, coupleId!)
+            .run(
+              v.title,
+              v.date,
+              v.time,
+              v.calendar,
+              Number(v.leapMonth),
+              v.repeat,
+              v.id,
+              coupleId!,
+            )
         ).changes
       )
         throw new Error('待办不存在');
@@ -365,9 +385,9 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
       const v = z.object({ id: z.string().uuid(), completed: z.boolean() }).parse(input);
       const row = (await db
         .prepare('SELECT * FROM todos WHERE id=? AND coupleId=?')
-        .get(v.id, coupleId!)) as unknown as Parameters<typeof nextTodo>[0] | undefined;
+        .get(v.id, coupleId!)) as unknown as Parameters<typeof nextTodoInstant>[0] | undefined;
       if (!row) throw new Error('待办不存在');
-      const next = nextTodo(row);
+      const next = nextTodoInstant(row);
       if (v.completed && !next) throw new Error('已超过支持的日期范围');
       await db
         .prepare('UPDATE todos SET completed=?,completedDate=? WHERE id=?')
@@ -376,7 +396,7 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
         completed: v.completed,
         next:
           v.completed && row.repeat === 'yearly'
-            ? nextTodo({ ...row, completedDate: next!.date })
+            ? nextTodoInstant({ ...row, completedDate: next!.date })
             : null,
       };
     }
@@ -412,11 +432,11 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
       return { id, published: true };
     }
     case 'set_relationship_date': {
-      const v = z
-        .object({ startDate: date.refine((v) => v <= today(), '开始日期不能晚于今天') })
-        .parse(input);
-      await db.prepare('UPDATE couples SET startDate=? WHERE id=?').run(v.startDate, coupleId!);
-      return { startDate: v.startDate };
+      const v = relationshipSchema.parse(input);
+      await db
+        .prepare('UPDATE couples SET startDate=?,startTime=? WHERE id=?')
+        .run(v.startDate, v.startTime, coupleId!);
+      return v;
     }
     default:
       throw new Error('未授权的工具');

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Copy, Link2, Bell, Moon, LogOut, Sparkles, Camera, Server, Check } from 'lucide-react';
+import { Copy, Bell, Moon, LogOut, Sparkles, Camera, Server, Check } from 'lucide-react';
 import { Capacitor } from '@capacitor/core';
 import { useApp } from '@/lib/context';
 import {
@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Card } from '@/components/ui/card';
+import { SettingsSection } from '@/components/SettingsSection';
 import {
   Dialog,
   DialogContent,
@@ -106,62 +106,83 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
   }
   return (
     <section className="page-scroll page-enter settings-page space-y-5 p-5 sm:p-8">
-      <div className="profile-heading flex items-center gap-5 py-2">
-        <button
-          aria-label="修改头像"
-          className="relative shrink-0"
-          disabled={busy}
-          onClick={() => avatarFile.current?.click()}
-        >
-          {profile.user.avatar ? (
-            <img
-              alt="你的头像"
-              src={api.url(profile.user.avatar.thumbnailUrl)}
-              className="size-20 rounded-full object-cover"
-            />
-          ) : (
-            <Avatar name={profile.user.name} large />
-          )}
-          <span className="absolute right-0 bottom-0 grid size-7 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground">
-            <Camera size={13} />
-          </span>
-        </button>
-        <input
-          type="file"
-          hidden
-          ref={avatarFile}
-          accept="image/jpeg,image/png,image/webp,image/avif"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file)
-              void action(async () => {
-                const media = await api.upload(file, () => {}, '/api/me/avatar');
-                void media;
-              }, '头像已更新');
-            e.target.value = '';
-          }}
-        />
-        <div>
-          <p className="text-[11px] text-muted-foreground">个人资料</p>
-          <h2 className="mt-1 text-2xl font-medium">{profile.user.name}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">@{profile.user.username}</p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
+      <SettingsSection title="个人资料" defaultOpen>
+        <div className="profile-heading flex items-center gap-5 py-2">
+          <button
+            aria-label="修改头像"
+            className="relative shrink-0"
             disabled={busy}
-            className="mt-2 h-7 px-0 text-xs text-primary"
             onClick={() => avatarFile.current?.click()}
           >
-            {busy ? '保存中…' : '更换头像'}
+            {profile.user.avatar ? (
+              <img
+                alt="你的头像"
+                src={api.url(profile.user.avatar.thumbnailUrl)}
+                className="size-20 rounded-full object-cover"
+              />
+            ) : (
+              <Avatar name={profile.user.name} large />
+            )}
+            <span className="absolute right-0 bottom-0 grid size-7 place-items-center rounded-full border-2 border-background bg-primary text-primary-foreground">
+              <Camera size={13} />
+            </span>
+          </button>
+          <input
+            type="file"
+            hidden
+            ref={avatarFile}
+            accept="image/jpeg,image/png,image/webp,image/avif"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file)
+                void action(async () => {
+                  const media = await api.upload(file, () => {}, '/api/me/avatar');
+                  void media;
+                }, '头像已更新');
+              e.target.value = '';
+            }}
+          />
+          <div>
+            <h2 className="mt-1 text-2xl font-medium">{profile.user.name}</h2>
+            <p className="mt-1 text-xs text-muted-foreground">@{profile.user.username}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              className="mt-2 h-7 px-0 text-xs text-primary"
+              onClick={() => avatarFile.current?.click()}
+            >
+              {busy ? '保存中…' : '更换头像'}
+            </Button>
+          </div>
+        </div>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void action(() => api.patch('/api/me', { name }), '昵称已更新');
+          }}
+          className="flex items-end gap-2"
+        >
+          <div className="flex-1 space-y-2">
+            <Label htmlFor="profile-name">昵称</Label>
+            <Input
+              id="profile-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={40}
+              required
+            />
+          </div>
+          <Button variant="outline" type="submit" disabled={busy}>
+            保存
           </Button>
-        </div>
-      </div>
-      <Card className="gap-4 p-5">
-        <div className="flex items-center gap-2 font-medium">
-          <Link2 size={18} className="text-primary" />
-          {profile.partner ? '已经找到你' : '连接另一半'}
-        </div>
+        </form>
+      </SettingsSection>
+      <SettingsSection
+        title={profile.partner ? '已经找到你' : '连接另一半'}
+        defaultOpen={!profile.partner}
+      >
         {profile.partner ? (
           <>
             <div className="flex items-center gap-3">
@@ -261,10 +282,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             </form>
           </>
         )}
-      </Card>
+      </SettingsSection>
       {profile.couple && (
-        <Card className="gap-3 p-5">
-          <h3 className="font-medium">两人空间</h3>
+        <SettingsSection title="两人空间">
           <p className="text-sm">
             已用 {(profile.couple.storageBytes / 1048576).toFixed(1)} MiB /{' '}
             {(profile.couple.quotaBytes / 1048576).toFixed(0)} MiB
@@ -272,31 +292,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           <p className="text-xs text-muted-foreground">
             额度由管理员分配，两人共用；图片和视频的原文件、预览及缩略图均计入。
           </p>
-        </Card>
+        </SettingsSection>
       )}
-      <Card className="gap-4 p-5">
-        <h3 className="font-medium">个人资料</h3>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void action(() => api.patch('/api/me', { name }), '昵称已更新');
-          }}
-          className="flex items-end gap-2"
-        >
-          <div className="flex-1 space-y-2">
-            <Label htmlFor="profile-name">昵称</Label>
-            <Input
-              id="profile-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              maxLength={40}
-              required
-            />
-          </div>
-          <Button variant="outline" type="submit" disabled={busy}>
-            保存
-          </Button>
-        </form>
+      <SettingsSection title="外观与通知">
         <div className="flex items-center justify-between border-t pt-4">
           <Label htmlFor="dark">
             <Moon size={16} />
@@ -350,13 +348,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             )}
           </>
         )}
-      </Card>
+      </SettingsSection>
       {profile.couple && profile.partner && (
-        <Card className="gap-4 p-5">
-          <div className="flex items-center gap-2 font-medium">
-            <Sparkles size={18} className="text-primary" />
-            AI 助手
-          </div>
+        <SettingsSection title="AI 助手">
           <p className="text-xs leading-6 text-muted-foreground">
             在聊天中 @{profile.ai.name}，管理日期、待办和相册。消息及附件 ID 会发送给你配置的 AI
             服务。
@@ -503,9 +497,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               AI 配置加载失败，请刷新后重试
             </p>
           )}
-        </Card>
+        </SettingsSection>
       )}
-      <div className="px-1">
+      <SettingsSection title="服务器与账号">
         <p className="flex items-center gap-2 text-xs text-muted-foreground">
           <Server size={14} />
           <span className="truncate">{api.session.server}</span>
@@ -518,10 +512,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           <LogOut size={15} />
           退出登录 / 切换服务器
         </Button>
-      </div>
-      <p className="pb-4 text-center text-[10px] tracking-widest text-muted-foreground">
-        love · 两个人的生活
-      </p>
+      </SettingsSection>
       <Dialog open={unpair} onOpenChange={setUnpair}>
         <DialogContent>
           <DialogTitle>解除配对？</DialogTitle>

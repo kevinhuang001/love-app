@@ -1,6 +1,73 @@
 import { describe, it, expect } from 'vitest';
 import { daysTogether, nextTodo, solarDate, lunarLabel } from './dates';
 import { normalizeServer } from './api';
+import {
+  clockTime,
+  durationParts,
+  elapsedSeconds,
+  nextTodoInstant,
+  scheduleInstant,
+  validTime,
+} from '@love/calendar';
+describe('second-precision schedules in Shanghai time', () => {
+  it('retains selected seconds and uses a fixed shared timezone', () => {
+    expect(clockTime(Date.parse('2026-10-08T04:05:06Z'))).toBe('12:05:06');
+    expect(scheduleInstant('2026-10-08', '12:05:06')).toBe(Date.parse('2026-10-08T04:05:06Z'));
+    for (const time of ['24:00:00', '12:60:00', '12:00:60', '12:00', 'bad'])
+      expect(validTime(time)).toBe(false);
+    expect(() => scheduleInstant('2026-02-31', '00:00:00')).toThrow();
+  });
+  it('counts elapsed and remaining seconds accurately across midnight', () => {
+    const current = scheduleInstant('2026-10-09', '00:00:05');
+    expect(elapsedSeconds('2026-10-08', '23:59:55', current)).toBe(10);
+    expect(
+      nextTodoInstant(
+        {
+          date: '2026-10-09',
+          time: '00:00:15',
+          calendar: 'solar',
+          leapMonth: false,
+          repeat: 'none',
+        },
+        current,
+      )?.seconds,
+    ).toBe(10);
+    expect(durationParts(90061)).toEqual({ days: 1, hours: 1, minutes: 1, seconds: 1 });
+  });
+  it('rolls annual solar dates only after the selected time, preserving leap-year rules', () => {
+    const todo = {
+      date: '2024-02-29',
+      time: '20:30:40',
+      calendar: 'solar' as const,
+      leapMonth: false,
+      repeat: 'yearly' as const,
+    };
+    expect(nextTodoInstant(todo, scheduleInstant('2026-02-28', '20:30:39'))?.seconds).toBe(1);
+    expect(nextTodoInstant(todo, scheduleInstant('2026-02-28', '20:30:40'))?.seconds).toBe(0);
+    expect(nextTodoInstant(todo, scheduleInstant('2026-02-28', '20:30:41'))?.date).toBe(
+      '2027-02-28',
+    );
+  });
+  it('preserves the time through lunar recurrence and early completion', () => {
+    const todo = {
+      date: '2026-07-07',
+      time: '20:30:40',
+      calendar: 'lunar' as const,
+      leapMonth: false,
+      repeat: 'yearly' as const,
+    };
+    expect(nextTodoInstant(todo, scheduleInstant('2026-08-19', '20:30:39'))?.seconds).toBe(1);
+    const next = nextTodoInstant(todo, scheduleInstant('2026-08-19', '20:30:41'));
+    expect(next?.date).toBe('2027-08-08');
+    expect(next?.time).toBe('20:30:40');
+    expect(
+      nextTodoInstant(
+        { ...todo, completedDate: '2026-08-19' },
+        scheduleInstant('2026-08-01', '00:00:00'),
+      )?.date,
+    ).toBe('2027-08-08');
+  });
+});
 describe('calendar days', () => {
   it('counts inclusive relationship days', () => {
     expect(daysTogether('2026-10-01', '2026-10-05')).toBe(5);

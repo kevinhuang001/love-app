@@ -94,14 +94,17 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByRole('button', { name: '关闭' }).click();
   await page.getByRole('tab', { name: '纪念日', exact: true }).click();
   await page.getByRole('button', { name: '新增纪念日' }).click();
+  await expect(page.getByRole('button', { name: '打开空间设置' })).toHaveCount(0);
   await page.getByLabel('名称', { exact: true }).fill('第一次旅行');
+  await page.getByLabel('时间', { exact: true }).fill('09:10:11');
   await page.getByRole('button', { name: '保存纪念日' }).click();
   await expect(page.getByText('第一次旅行', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '编辑第一次旅行' }).click();
   await page.getByLabel('名称', { exact: true }).fill('旅行纪念日');
   await page.getByRole('button', { name: '保存纪念日' }).click();
   await expect(page.getByText('旅行纪念日', { exact: true })).toBeVisible();
-  await expect(page.getByText('第几天 · 累计')).toBeVisible();
+  await expect(page.getByText('已累计')).toBeVisible();
+  await expect(page.locator('.date-row [data-testid=duration]')).toBeVisible();
   await page.getByRole('tab', { name: 'To Do', exact: true }).click();
   await expect(page.getByRole('button', { name: '七夕 · 农历七月初七' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: '情人节 · 2 月 14 日' })).toHaveCount(0);
@@ -112,8 +115,9 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByLabel('农历月份').fill('7');
   await page.getByLabel('农历日期').fill('7');
   await page.getByLabel('重复规则').selectOption('yearly');
+  await page.getByLabel('待办时间').fill('20:21:22');
   await expect(page.getByRole('dialog')).toContainText('对应公历');
-  await expect(page.getByRole('dialog')).toContainText('农历重复每年按农历换算');
+  await expect(page.getByRole('dialog')).toContainText('待办时间');
   const font = await page.getByRole('dialog').evaluate((el) => getComputedStyle(el).fontFamily);
   expect(font).toContain('Noto Sans SC');
   await page.evaluate(() => document.fonts.ready);
@@ -122,7 +126,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   );
   await page.getByRole('button', { name: '保存 To Do', exact: true }).click();
   await expect(page.getByText('七夕', { exact: true })).toBeVisible();
-  await expect(page.getByText('农历七月初七 · 每年重复', { exact: true })).toBeVisible();
+  await expect(page.getByText('农历七月初七 20:21:22 · 每年重复', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '完成七夕', exact: true }).click();
   await expect(page.getByText('本次已完成，已更新到下一次', { exact: true })).toBeVisible();
   const toastFont = await page
@@ -154,6 +158,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     page.locator('.message-row[data-own="true"] img[alt="你的聊天头像"]').first(),
   ).toBeVisible();
   await page.getByRole('tab', { name: '我们', exact: true }).click();
+  await page.locator('details[data-section="外观与通知"] summary').click();
   await page.getByLabel('深色模式').click();
   await expect(page.locator('html')).toHaveClass(/dark/);
   const provider = createServer((_req, res) => {
@@ -166,6 +171,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   });
   await new Promise<void>((r) => provider.listen(0, '127.0.0.1', r));
   try {
+    await page.locator('details[data-section="AI 助手"] summary').click();
     await page.getByLabel('AI 名称').fill('星星');
     await page.getByRole('button', { name: '保存 AI 名称', exact: true }).click();
     await expect(page.getByText('AI 名称已更新', { exact: true })).toBeVisible();
@@ -183,6 +189,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     await page.getByRole('button', { name: '保存 AI 配置' }).click();
     await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
     await other.getByRole('tab', { name: '我们', exact: true }).click();
+    await other.locator('details[data-section="AI 助手"] summary').click();
     await expect(other.getByLabel('AI 服务 URL')).toHaveValue(
       await page.getByLabel('AI 服务 URL').inputValue(),
     );

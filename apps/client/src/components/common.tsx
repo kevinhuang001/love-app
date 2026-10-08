@@ -44,7 +44,7 @@ export function Empty({
   action,
 }: {
   title: string;
-  detail: string;
+  detail?: string;
   action?: React.ReactNode;
 }) {
   return (
@@ -53,7 +53,7 @@ export function Empty({
         <MessageCircle size={21} strokeWidth={1.5} />
       </div>
       <h2 className="text-base font-medium">{title}</h2>
-      <p className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">{detail}</p>
+      {detail && <p className="mt-2 max-w-xs text-xs leading-6 text-muted-foreground">{detail}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
   );

@@ -146,6 +146,14 @@ test('presence reflects foreground activity, multiple connections, disconnects a
   const back = event(aSocket, 'presence:changed', online(b.user.id, true));
   bSocket.emit('presence:set', { active: true });
   await back;
+  const wallTime = Date.now();
+  t.mock.method(Date, 'now', () => wallTime + 31000);
+  const stale = event(aSocket, 'presence:changed', online(b.user.id, false));
+  aSocket.emit('presence:get');
+  await stale;
+  const reported = event(aSocket, 'presence:changed', online(b.user.id, true));
+  bSocket.emit('presence:set', { active: true, lastReportedAt: 0 });
+  await reported;
   const loggedOut = event(aSocket, 'presence:changed', online(b.user.id, false));
   await s.api(b.token).post('/api/auth/logout', {}).expect(204);
   await loggedOut;

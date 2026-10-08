@@ -171,29 +171,15 @@ export function Chat() {
             data-testid="partner-presence"
             className="text-xs text-muted-foreground"
           >
-            {!connected
-              ? '连接中…'
-              : partnerOnline === null
-                ? '正在确认状态…'
-                : typing && partnerOnline
-                  ? '正在输入…'
-                  : partnerOnline
-                    ? '在线'
-                    : '离线'}
+            {partnerOnline === null
+              ? '正在确认状态…'
+              : typing && partnerOnline
+                ? '正在输入…'
+                : partnerOnline
+                  ? '在线'
+                  : '离线'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openUs}
-          aria-label="打开空间设置"
-          className="ml-auto flex flex-col items-end gap-2"
-        >
-          <span className="wordmark text-lg">
-            love
-            <span className="brand-dot" />
-          </span>
-          <span className="text-[10px] text-muted-foreground">空间设置</span>
-        </button>
       </div>
       {!connected && (
         <div className="flex items-center justify-center gap-2 bg-secondary py-2 text-xs text-muted-foreground">

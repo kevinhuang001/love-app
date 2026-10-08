@@ -10,3 +10,9 @@ SELECT coupleId,baseUrl,model,secret,enabled,name,avatarMediaId FROM (
 ) chosen WHERE rank=1;
 DROP TABLE ai_settings;
 `;
+
+export const scheduleTimeUpgrade = `
+ALTER TABLE couples ADD COLUMN startTime TEXT NOT NULL DEFAULT '00:00:00';
+ALTER TABLE anniversaries ADD COLUMN time TEXT NOT NULL DEFAULT '00:00:00';
+ALTER TABLE todos ADD COLUMN time TEXT NOT NULL DEFAULT '00:00:00';
+`;

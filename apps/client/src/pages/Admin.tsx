@@ -161,11 +161,14 @@ export function AdminPortal() {
     [captcha, setCaptcha] = useState<CaptchaValue>({ id: '', code: '' }),
     [refreshToken, setRefreshToken] = useState(0),
     [configured, setConfigured] = useState<boolean | null>(null);
-  const publicApi = useMemo(() => {
+  const { publicApi, serverError } = useMemo(() => {
     try {
-      return new Api({ server: normalizeServer(server), token: '' });
-    } catch {
-      return null;
+      return {
+        publicApi: new Api({ server: normalizeServer(server), token: '' }),
+        serverError: '',
+      };
+    } catch (error) {
+      return { publicApi: null, serverError: (error as Error).message };
     }
   }, [server]);
   const end = () => {
@@ -175,12 +178,15 @@ export function AdminPortal() {
   };
   const api = useMemo(() => (session ? new Api(session, end) : null), [session]);
   useEffect(() => {
+    setConfigured(null);
     if (!publicApi) return;
     const abort = new AbortController();
     void publicApi
       .request<{ adminConfigured: boolean }>('/api/admin/status', { signal: abort.signal })
       .then((r) => setConfigured(r.adminConfigured))
-      .catch(() => setConfigured(null));
+      .catch(() => {
+        if (!abort.signal.aborted) setConfigured(null);
+      });
     return () => abort.abort();
   }, [publicApi]);
   async function login(e: React.FormEvent) {
@@ -258,12 +264,15 @@ export function AdminPortal() {
                 refreshToken={refreshToken}
               />
             )}{' '}
-            {error && (
+            {(serverError || error) && (
               <p role="alert" className="text-sm text-destructive">
-                {error}
+                {serverError || error}
               </p>
             )}
-            <Button className="h-12 w-full" disabled={busy || !captcha.id || configured === false}>
+            <Button
+              className="h-12 w-full"
+              disabled={busy || !publicApi || !captcha.id || configured === false}
+            >
               {busy ? '登录中…' : '进入管理后台'}
             </Button>
           </form>
@@ -280,6 +289,9 @@ export function AdminPortal() {
                 placeholder="https://love.example.com"
               />
             </Field>
+            <p className="mt-2 text-xs leading-6 text-muted-foreground">
+              支持 http://IP:端口 或 https://域名。HTTP 连接未加密，公网建议使用 HTTPS。
+            </p>
           </details>
         </div>
       </main>

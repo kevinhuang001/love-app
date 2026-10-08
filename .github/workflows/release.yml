@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.2.1
+        description: New version tag, for example v2.2.2
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.2.1' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.2.2' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,19 +85,13 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          新增原创双拱应用图标：深墨绿、暖白与铜色，统一 Android 桌面图标、启动画面和 Web favicon。
+          修复 Android 输入非 localhost 服务器地址后无法登录、按钮无法点击的问题。
 
-          - 支持圆形/圆角等自适应图标，以及 Android 13 单色主题图标。
-          - CI 检查实际 APK 中的图标与启动资源，避免打包回默认 Capacitor 图标。
-
-          后端继续支持 SQLite 和 PostgreSQL，Docker 部署方式不变。
-
-          - ./love up 首次自动启动现代终端向导，提供默认值与隐藏密码输入；后续启动复用配置。
-          - 支持 SQLite、Compose 内置 PostgreSQL 18 和外部 PostgreSQL URL。
-          - 向导配置域名/HTTPS、端口、管理员、初始配对容量及可选 SMTP；自动生成密钥并保存为权限 0600 的 .env。
-          - 统一异步数据库接口、连接池与事务；两种数据库运行同一套权限、媒体、容量、聊天及通知测试。
-          - PostgreSQL Compose 容器重建后的账号、配对、容量与内容持久化通过 CI。
-          - 现有 SQLite schema 4 可继续使用。选择 PostgreSQL 使用独立数据库；切换后端不自动搬迁数据。
+          - 支持 HTTP/HTTPS 域名、IPv4、IPv6 和自定义端口；填写完整服务器根地址，不加 /api。
+          - 同步开启 Android 与 WebView 的 HTTP 访问，聊天、媒体和本地通知使用相同的地址规则。
+          - 无效地址显示明确的中文提示；验证码和配置请求保留超时，网络错误可以重试。
+          - HTTP 连接未加密，公网建议使用 HTTPS。HTTPS 证书校验保持开启。
+          - 新增非 localhost HTTP 登录及地址/网络错误回归测试，并检查实际 APK 网络配置。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。

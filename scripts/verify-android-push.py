@@ -4,8 +4,13 @@ from zipfile import ZipFile
 import subprocess
 import os
 import re
+import json
 apk=Path('apps/client/android/app/build/outputs/apk/debug/app-debug.apk')
 with ZipFile(apk) as archive:
+    config=json.loads(archive.read('assets/capacitor.config.json'))
+    assert config['server']['androidScheme']=='https', 'Changed the app origin'
+    assert config['server']['cleartext'] is True, 'HTTP backend access disabled'
+    assert config['android']['allowMixedContent'] is True, 'WebView blocks HTTP API/media requests'
     dex=b'\n'.join(archive.read(n) for n in archive.namelist() if n.endswith('.dex'))
     for name in ['LocalNotificationsPlugin','LocalNotificationService','MainActivity']:
         assert ('Lcom/kevinhuang/love/'+name+';').encode() in dex, name
@@ -15,6 +20,7 @@ with ZipFile(apk) as archive:
 aapt=Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0/aapt'
 manifest=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),'AndroidManifest.xml'],text=True)
 assert 'LocalNotificationService' in manifest
+assert re.search(r'usesCleartextTraffic[^\n]*\(type 0x12\)0xffffffff\b', manifest), 'Android blocks HTTP servers'
 # aapt renders enum flags as integers rather than their source XML names.
 assert re.search(r'foregroundServiceType[^\n]*\(type 0x11\)0x40000000\b', manifest), 'Missing specialUse service type'
 assert 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' in manifest

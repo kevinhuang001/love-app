@@ -39,6 +39,7 @@ try {
     '-v',
     `${resolve('Caddyfile')}:/etc/caddy/Caddyfile:ro`,
     'caddy:2-alpine',
+    'caddy',
     'validate',
     '--config',
     '/etc/caddy/Caddyfile',

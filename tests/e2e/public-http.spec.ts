@@ -10,9 +10,15 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
   const failures: string[] = [],
     assetResponses: { url: string; status: number }[] = [];
   page.on('pageerror', (error) => failures.push(error.message));
-  page.on('requestfailed', (request) =>
-    failures.push(request.url() + ': ' + request.failure()?.errorText),
-  );
+  page.on('requestfailed', (request) => {
+    // API requests may be cancelled as views change; static assets must all load.
+    if (
+      request.failure()?.errorText === 'net::ERR_ABORTED' &&
+      new URL(request.url()).pathname.startsWith('/api/')
+    )
+      return;
+    failures.push(request.url() + ': ' + request.failure()?.errorText);
+  });
   page.on('console', (message) => {
     if (
       /Cross-Origin-Opener-Policy|Origin-Agent-Cluster|Content Security Policy|Refused to|Mixed Content/.test(

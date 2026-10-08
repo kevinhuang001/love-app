@@ -60,7 +60,8 @@ while kill -0 "$pid" 2>/dev/null; do
   sleep 30 & wait "$!"
   next=$(fingerprint)
   if [ -n "$next" ] && [ "$next" != "$current" ]; then
-    if render "$next" && caddy reload --config "$runtime" --adapter caddyfile; then
+    # Certificate paths stay unchanged after renewal; force reload of their content.
+    if render "$next" && caddy reload --force --config "$runtime" --adapter caddyfile; then
       current=$next
       touch /tmp/love-tls-ready
       echo 'HTTPS proxy: renewed certificate loaded.'

@@ -29,12 +29,18 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
   const config = await setup({
     output,
     ui: fakeUI({ database: 'postgres' }),
-    env: { LOVE_DOCKERFILE: 'Dockerfile.cn' },
+    env: {
+      LOVE_DOCKERFILE: 'Dockerfile.cn',
+      LOVE_IMAGE: 'love-app:prebuilt',
+      LOVE_IMAGE_PULL: '0',
+    },
   });
   const stored = parseDeploymentEnv(await readFile(output, 'utf8'));
   assert.deepEqual(stored, config);
   assert.equal(stored.LOVE_DATABASE, 'postgres');
   assert.equal(stored.LOVE_DOCKERFILE, 'Dockerfile.cn');
+  assert.equal(stored.LOVE_IMAGE, 'love-app:prebuilt');
+  assert.equal(stored.LOVE_IMAGE_PULL, '0');
   assert.equal(stored.POSTGRES_DB, 'love');
   assert.equal(stored.DATABASE_PROVIDER, 'postgres');
   assert.equal(stored.ADMIN_USERNAME, 'admin');
@@ -47,6 +53,8 @@ test('first setup creates usable defaults, private secrets and PostgreSQL select
   assert.equal(repeat.POSTGRES_PASSWORD, stored.POSTGRES_PASSWORD);
   assert.equal(repeat.ADMIN_PASSWORD, stored.ADMIN_PASSWORD);
   assert.equal(repeat.LOVE_DOCKERFILE, 'Dockerfile.cn');
+  assert.equal(repeat.LOVE_IMAGE, 'love-app:prebuilt');
+  assert.equal(repeat.LOVE_IMAGE_PULL, '0');
 });
 test('cancelled reconfiguration leaves existing config intact', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-'));

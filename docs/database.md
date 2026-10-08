@@ -10,6 +10,8 @@
 
 只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。没有 `.env` 时，启动器先构建镜像，用 Docker 的交互终端运行配置向导，再启动并等待服务健康。
 
+也可使用 `LOVE_IMAGE=ghcr.io/kevinhuang001/love-app:latest ./love up` 直接拉取镜像；从 Release 导入镜像后的免构建用法见 [预构建镜像部署](container-images.md)。
+
 向导包含：
 
 - 数据库：SQLite（默认）、Compose 内置 PostgreSQL 18、外部 PostgreSQL。

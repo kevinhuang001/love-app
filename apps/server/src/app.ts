@@ -237,7 +237,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.2.0',
+      version: '2.2.1',
       notifications: 'local',
       database: db.provider,
     }),

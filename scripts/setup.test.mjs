@@ -10,6 +10,10 @@ const fakeUI = (options = {}) => ({
   outro() {},
   isCancel: (value) => typeof value === 'symbol',
   text: async (p) => {
+    if (p.message === 'HTTPS 访问端口' && options.tlsPort) {
+      assert.equal(p.validate?.(options.tlsPort), undefined);
+      return options.tlsPort;
+    }
     if (p.message === '访问域名' && options.domain) {
       assert.equal(p.validate?.(options.domain), undefined);
       return options.domain;
@@ -26,7 +30,7 @@ const fakeUI = (options = {}) => ({
   select: async (p) =>
     p.message === '选择数据库'
       ? options.database || 'sqlite'
-      : p.message === 'HTTP 监听地址（宿主机）'
+      : /^(HTTP|HTTPS) 监听地址（宿主机）$/.test(p.message)
         ? options.bind || p.initialValue
         : p.message === 'HTTPS 证书方式'
           ? options.tls || p.initialValue
@@ -60,7 +64,7 @@ test('setup selects HTTP without certificates, or HTTPS with Certbot, Caddy or e
     }
   }
 });
-test('proxy trust is enabled only for HTTPS with loopback HTTP binding', async (t) => {
+test('bundled HTTPS trusts its private proxy; externally exposed HTTP does not trust proxy headers', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-proxy-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
   for (const bind of ['127.0.0.1', '0.0.0.0']) {
@@ -69,8 +73,40 @@ test('proxy trust is enabled only for HTTPS with loopback HTTP binding', async (
       ui: fakeUI({ bind, https: true }),
       env: { LOVE_DOMAIN: 'love.example.test' },
     });
-    assert.equal(config.TRUST_PROXY, bind === '127.0.0.1' ? '1' : '0');
+    assert.equal(config.TRUST_PROXY, '1');
+    const external = await setup({
+      output: join(dir, 'external-' + bind + '.env'),
+      ui: fakeUI({ bind, https: true, tls: 'external' }),
+      env: { LOVE_DOMAIN: 'love.example.test' },
+    });
+    assert.equal(external.TRUST_PROXY, bind === '127.0.0.1' ? '1' : '0');
   }
+});
+test('custom HTTPS port appears in access URL and allowed origin and survives setup', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-setup-tls-port-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = join(dir, '.env'),
+    notes = [];
+  const ui = {
+    ...fakeUI({ https: true, tlsPort: '8013', bind: '0.0.0.0' }),
+    note: (value) => notes.push(value),
+  };
+  const config = await setup({ output, ui, env: { LOVE_DOMAIN: 'kevinhuang.top' } });
+  assert.equal(config.LOVE_TLS_PORT, '8013');
+  assert.equal(config.LOVE_TLS_BIND_IP, '0.0.0.0');
+  assert.equal(config.LOVE_BIND_IP, '127.0.0.1');
+  assert.match(config.ALLOWED_ORIGINS, /^https:\/\/kevinhuang.top:8013,/);
+  assert.ok(
+    notes.some(
+      (text) =>
+        text.includes('HTTPS 监听：0.0.0.0:8013') &&
+        text.includes('访问：https://kevinhuang.top:8013'),
+    ),
+  );
+  const repeated = await setup({ output, ui: fakeUI({ https: true }), env: {} });
+  assert.equal(repeated.LOVE_TLS_PORT, '8013');
+  assert.equal(repeated.LOVE_TLS_BIND_IP, '0.0.0.0');
+  assert.throws(() => validateConfig({ ...config, LOVE_TLS_PORT: '80' }), /80 端口冲突/);
 });
 test('existing HTTP deployment switches to Certbot HTTPS and back while retaining credentials', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-switch-'));

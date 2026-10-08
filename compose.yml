@@ -40,6 +40,7 @@ services:
         condition: service_healthy
     environment:
       LOVE_DOMAIN: ${LOVE_DOMAIN:-localhost}
+      LOVE_TLS_PORT: ${LOVE_TLS_PORT:-443}
     ports:
       - '80:80'
       - '443:443'

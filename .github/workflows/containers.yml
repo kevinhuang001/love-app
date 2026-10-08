@@ -195,7 +195,7 @@ jobs:
           rm images/manifest.json
       - name: Prepare deployment bundle and checksums
         run: |
-          tar -czf images/Love-docker-deploy.tar.gz love compose.yml compose.postgres.yml compose.certbot.yml deploy Caddyfile .env.docker.example docs/container-images.md docs/database.md docs/deployment.md
+          tar -czf images/Love-docker-deploy.tar.gz love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml deploy Caddyfile .env.docker.example docs/container-images.md docs/database.md docs/deployment.md
           (cd images && sha256sum *.tar.gz image-info.json > SHA256SUMS)
           cat > images/NOTES.md <<'NOTES'
           主分支通过 CI 后自动发布的预构建 Docker 镜像，支持 Linux x86_64（amd64）和 ARM64。此滚动发布不会替代 Android 的版本 Release。

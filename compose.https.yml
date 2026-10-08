@@ -1,0 +1,20 @@
+# Docker Compose >= 2.24.4. TLS uses its own public port; backend HTTP stays private.
+services:
+  love:
+    ports: !reset []
+    environment:
+      TRUST_PROXY: '1'
+  proxy:
+    environment:
+      LOVE_TLS_PORT: ${LOVE_TLS_PORT:-443}
+    ports: !override
+      - target: 80
+        published: '80'
+        host_ip: '${LOVE_TLS_BIND_IP:-0.0.0.0}'
+      - target: 443
+        published: '${LOVE_TLS_PORT:-443}'
+        host_ip: '${LOVE_TLS_BIND_IP:-0.0.0.0}'
+      - target: 443
+        published: '${LOVE_TLS_PORT:-443}'
+        host_ip: '${LOVE_TLS_BIND_IP:-0.0.0.0}'
+        protocol: udp

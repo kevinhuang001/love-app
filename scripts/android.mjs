@@ -115,6 +115,6 @@ let build = readFileSync(gradle, 'utf8')
     /^\s*versionCode(?:\s*=)?\s+.*$/m,
     '        versionCode = (System.getenv("LOVE_VERSION_CODE") ?: "1").toInteger()',
   )
-  .replace(/versionName "[^\"]*"/, 'versionName "2.2.4"');
+  .replace(/versionName "[^\"]*"/, 'versionName "2.2.5"');
 writeFileSync(gradle, build);
 cap('sync', 'android');

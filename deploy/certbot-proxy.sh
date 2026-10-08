@@ -4,7 +4,13 @@ set -eu
 # The setup validator also enforces a real domain; reject Caddy config injection here.
 case "$LOVE_DOMAIN" in *[!a-zA-Z0-9.-]*|'') echo 'Invalid HTTPS domain' >&2; exit 1;; esac
 cert="/etc/letsencrypt/live/$LOVE_DOMAIN"
+tls_port=${LOVE_TLS_PORT:-443}
+case "$tls_port" in *[!0-9]*|'') echo 'Invalid HTTPS port' >&2; exit 1;; esac
+[ "$tls_port" -ge 1 ] && [ "$tls_port" -le 65535 ] && [ "$tls_port" -ne 80 ] || { echo 'HTTPS port must be 1-65535 and different from HTTP-01 port 80' >&2; exit 1; }
+public="https://$LOVE_DOMAIN"
+[ "$tls_port" = 443 ] || public="$public:$tls_port"
 runtime=/etc/caddy/love-runtime.Caddyfile
+rm -f /tmp/love-tls-ready
 fingerprint() {
   [ -s "$cert/fullchain.pem" ] && [ -s "$cert/privkey.pem" ] || return 0
   sha256sum "$cert/fullchain.pem" "$cert/privkey.pem"
@@ -26,7 +32,7 @@ http://$LOVE_DOMAIN {
   handle {
 EOF
   if [ -n "$1" ]; then
-    echo "    redir https://$LOVE_DOMAIN{uri} 308" >> "$runtime.next"
+    echo "    redir $public{uri} 308" >> "$runtime.next"
   else
     echo '    respond "HTTPS certificate pending; check Certbot logs" 503' >> "$runtime.next"
   fi
@@ -39,6 +45,7 @@ EOF
 https://$LOVE_DOMAIN {
   tls $cert/fullchain.pem $cert/privkey.pem
   encode zstd gzip
+  header -Alt-Svc
   request_body {
     max_size 105MB
   }

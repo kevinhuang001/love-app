@@ -52,21 +52,23 @@ LOVE_IMAGE=love-app:prebuilt LOVE_IMAGE_PULL=0 ./love up
 
 ARM64 替换导入的文件名，其余相同。导入的应用镜像统一命名为 `love-app:prebuilt`；`LOVE_IMAGE_PULL=0` 禁止从 registry 拉取该镜像。配置向导保存这些设置，后续直接运行 `./love up`。Caddy、Certbot（选择时）和 PostgreSQL（选择时）仍需首次拉取自身镜像，完整离线部署还需单独准备这些镜像。
 
-已有部署只需 `docker load` 新镜像，将 `.env` 设置为 `LOVE_IMAGE=love-app:prebuilt`、`LOVE_IMAGE_PULL=0`，然后在原项目目录运行 `./love up`。无需清空数据卷。
+已有部署先将新部署包解压到原项目目录，更新启动器、Compose 和证书脚本（保留原 `.env`）。然后 `docker load` 新镜像，将 `.env` 设置为 `LOVE_IMAGE=love-app:prebuilt`、`LOVE_IMAGE_PULL=0`，然后在原项目目录运行 `./love up`。无需清空数据卷。
 
 ## 直接使用 Compose
 
 设置好 `.env` 后，GHCR 方式：
 
 ```sh
-docker compose -p love-v4 --profile https up -d --no-build --pull always --wait
+docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --no-build --pull always --wait
 ```
 
 从 Release 导入方式：
 
 ```sh
-docker compose -p love-v4 --profile https up -d --no-build --pull missing --wait
+docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --no-build --pull missing --wait
 ```
+
+以上为 Caddy 自动 HTTPS；Certbot 还需加 `-f compose.certbot.yml`，HTTP 则去掉 `compose.https.yml` 和 `--profile https`。内置 HTTPS 需要 Compose >= 2.24.4，`LOVE_TLS_PORT` 设置公网端口，`LOVE_TLS_BIND_IP` 设置监听 IP。推荐使用 `./love up` 自动选择组合。
 
 内置 PostgreSQL 在命令中加入 `-f compose.yml -f compose.postgres.yml`，保持原有项目名。这里的 `--no-build` 明确禁止 Compose 从源码构建。
 

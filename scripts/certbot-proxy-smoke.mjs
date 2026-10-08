@@ -28,6 +28,23 @@ const until = async (fn) => {
   throw error;
 };
 try {
+  // Validate the separate Caddy-managed certificate path without contacting a CA.
+  docker(
+    'run',
+    '--rm',
+    '-e',
+    `LOVE_DOMAIN=${domain}`,
+    '-e',
+    'LOVE_TLS_PORT=8013',
+    '-v',
+    `${resolve('Caddyfile')}:/etc/caddy/Caddyfile:ro`,
+    'caddy:2-alpine',
+    'validate',
+    '--config',
+    '/etc/caddy/Caddyfile',
+    '--adapter',
+    'caddyfile',
+  );
   docker('network', 'create', network);
   docker(
     'run',
@@ -61,6 +78,8 @@ try {
     '127.0.0.1::443',
     '-e',
     `LOVE_DOMAIN=${domain}`,
+    '-e',
+    'LOVE_TLS_PORT=8013',
     '-v',
     `${certs}:/etc/letsencrypt:ro`,
     '-v',
@@ -157,7 +176,7 @@ try {
           port: tlsPort,
           servername: domain,
           path: '/api/health',
-          headers: { Host: domain },
+          headers: { Host: `${domain}:8013` },
           ca,
           agent: false,
           timeout: 5000,
@@ -185,12 +204,13 @@ try {
       assert.equal(response.headers['cross-origin-opener-policy'], 'same-origin');
       assert.equal(response.headers['origin-agent-cluster'], '?1');
       assert.match(response.headers['strict-transport-security'], /max-age=/);
+      assert.equal(response.headers['alt-svc'], undefined);
       return response;
     });
   await check(await issue(1), '01');
   const redirect = await plain();
   assert.equal(redirect.status, 308);
-  assert.equal(redirect.headers.location, `https://${domain}/`);
+  assert.equal(redirect.headers.location, `https://${domain}:8013/`);
   await check(await issue(2), '02');
   docker('exec', proxy, 'test', '-f', '/tmp/love-tls-ready');
   docker('run', '--rm', '--entrypoint', 'certbot', 'certbot/certbot:v5.8.0', '--version');

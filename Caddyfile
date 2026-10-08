@@ -1,5 +1,12 @@
-{$LOVE_DOMAIN} {
+{
+    auto_https disable_redirects
+}
+http://{$LOVE_DOMAIN} {
+    redir https://{$LOVE_DOMAIN}:{$LOVE_TLS_PORT:443}{uri} 308
+}
+https://{$LOVE_DOMAIN} {
     encode zstd gzip
+    header -Alt-Svc
     request_body {
         max_size 105MB
     }

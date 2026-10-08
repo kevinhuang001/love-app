@@ -770,7 +770,7 @@ export async function createControl(
     await db.prepare('DELETE FROM email_codes WHERE expires<?').run(now);
     await db.prepare('DELETE FROM admin_sessions WHERE expires<?').run(now);
   }
-  await log('info', 'server.started', { version: '2.2.4' });
+  await log('info', 'server.started', { version: '2.2.5' });
   return {
     bootstrap,
     installPublic,

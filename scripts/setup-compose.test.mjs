@@ -20,6 +20,8 @@ try {
     ADMIN_PASSWORD: special,
     LOVE_DOMAIN: 'love.example.test',
     CERTBOT_EMAIL: 'admin@example.test',
+    LOVE_TLS_PORT: '8013',
+    LOVE_TLS_BIND_IP: '0.0.0.0',
   };
   const file = join(dir, '.env');
   await writeFile(
@@ -79,6 +81,8 @@ try {
         '-f',
         'compose.yml',
         '-f',
+        'compose.https.yml',
+        '-f',
         'compose.certbot.yml',
         '--profile',
         'https',
@@ -102,6 +106,18 @@ try {
     ),
   );
   assert.ok(tls.services.proxy.healthcheck.test[1].includes('love-tls-ready'));
+  assert.equal(tls.services.love.ports?.length || 0, 0);
+  assert.equal(tls.services.love.environment.TRUST_PROXY, '1');
+  assert.equal(tls.services.proxy.ports.filter((entry) => entry.target === 443).length, 2);
+  for (const entry of tls.services.proxy.ports.filter((entry) => entry.target === 443)) {
+    assert.equal(String(entry.published), '8013');
+    assert.equal(entry.host_ip, '0.0.0.0');
+  }
+  assert.ok(
+    tls.services.proxy.ports.some(
+      (entry) => entry.target === 80 && String(entry.published) === '80',
+    ),
+  );
   execFileSync(
     'docker',
     [

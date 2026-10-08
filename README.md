@@ -50,7 +50,7 @@ npm run android:prepare
 
 中国大陆部署可用 `LOVE_DOCKERFILE=Dockerfile.cn ./love up`，使用 npmmirror 的 npm 源、中科大的 pip 和 apt 源，保留首次配置向导。已有部署在 `.env` 设置 `LOVE_DOCKERFILE=Dockerfile.cn` 后运行 `./love up`。详见 [国内镜像构建](docs/docker-cn.md)。
 
-推荐执行 `./love setup` 再 `./love up`，向导可选 HTTP、Certbot 自动申请/续期（默认）、Caddy 自动 HTTPS，或已有反向代理。Certbot 模式由启动器自动组合 `compose.certbot.yml`；域名需正确解析并开放 80/443，证书持久化且自动加载。
+推荐执行 `./love setup` 再 `./love up`，向导可选 HTTP、Certbot 自动申请/续期（默认）、Caddy 自动 HTTPS，或已有反向代理。Certbot 模式由启动器自动组合 `compose.https.yml` 与 `compose.certbot.yml`；域名需正确解析并开放 80 和选定的 HTTPS 端口（默认 443，可用 8013），证书持久化且自动加载。
 
 以下为手动配置 Caddy 自动 HTTPS 的方式：
 
@@ -58,15 +58,16 @@ npm run android:prepare
 cp .env.docker.example .env
 # 编辑 .env，填写稳定的 MEDIA_SIGNING_SECRET、LOVE_DOMAIN、ADMIN_USERNAME、ADMIN_PASSWORD
 # 生成密钥：openssl rand -hex 32
-# 若使用下面的 HTTPS 反代，将 TRUST_PROXY=1，并允许 https://你的域名
-# 设置 LOVE_TLS_PROVIDER=caddy；将域名解析到服务器，并开放 80/443
+# 若使用下面的 HTTPS 反代，使用 compose.https.yml 隐藏后端 HTTP；允许 https://你的域名:8013
+# 设置 LOVE_HTTPS=1、LOVE_TLS_PROVIDER=caddy、LOVE_TLS_PORT=8013
+# 将域名解析到服务器，并开放 80/8013；需要 Compose >= 2.24.4
 
-docker compose -p love-v4 --profile https up -d --build
+docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --build
 ```
 
 若部署过旧版，先停止旧服务。`love-v4` 使用新的数据卷，不删除旧卷。
 
-Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose -p love-v4 up -d --build`，访问 `http://localhost:3000`。
+Caddy 自动申请 HTTPS 证书并转发 WebSocket，数据库／原始上传／证书持久化到 named volumes。浏览器打开 `https://你的域名:8013`，APK 的服务器 URL 填相同地址。仅本机调试可运行 `docker compose -p love-v4 up -d --build`，访问 `http://localhost:3000`。
 
 管理员独立访问 `/#admin`，用户页面没有后台入口；默认关闭自行注册。配置 SMTP 后可启用邮箱注册或白名单，白名单用户自己创建账号并完成邮件验证。
 

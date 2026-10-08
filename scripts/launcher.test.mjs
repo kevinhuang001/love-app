@@ -65,6 +65,7 @@ test('HTTPS chooses Certbot overlay, Caddy profile or an existing proxy; HTTP st
     );
     const args = calls.at(-1).args;
     assert.equal(args.includes('compose.certbot.yml'), tls === 'certbot');
+    assert.equal(args.includes('compose.https.yml'), ['certbot', 'caddy'].includes(tls));
     assert.equal(args.includes('--profile'), ['certbot', 'caddy'].includes(tls));
   }
 });

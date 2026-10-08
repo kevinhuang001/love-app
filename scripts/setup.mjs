@@ -56,6 +56,12 @@ export function validateConfig(config) {
       throw new Error('证书方式无效');
     if (config.LOVE_TLS_PROVIDER === 'certbot' && email(config.CERTBOT_EMAIL || ''))
       throw new Error('Certbot 邮箱无效');
+    if (port(config.LOVE_TLS_PORT || '')) throw new Error('HTTPS 访问端口无效');
+    if (
+      config.LOVE_TLS_PROVIDER !== 'external' &&
+      (bindIP(config.LOVE_TLS_BIND_IP || '') || Number(config.LOVE_TLS_PORT) === 80)
+    )
+      throw new Error('HTTPS 监听 IP 无效或访问端口与 HTTP-01 的 80 端口冲突');
   }
   if (config.LOVE_DOCKERFILE && !['Dockerfile', 'Dockerfile.cn'].includes(config.LOVE_DOCKERFILE))
     throw new Error('构建文件只能为 Dockerfile 或 Dockerfile.cn');
@@ -181,7 +187,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
             {
               value: 'certbot',
               label: 'Certbot · 自动申请和续期',
-              hint: '默认 · Let’s Encrypt，需要域名及公网 80/443',
+              hint: '默认 · Let’s Encrypt，需要域名及公网 80，HTTPS 端口可自定义',
             },
             {
               value: 'caddy',
@@ -199,28 +205,29 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     : 'none';
   if (config.LOVE_TLS_PROVIDER === 'certbot')
     config.CERTBOT_EMAIL = await text('Certbot 联系邮箱', prior('CERTBOT_EMAIL') || '', email);
-  if (config.LOVE_TLS_PROVIDER === 'certbot')
-    ui.note(
-      '域名需解析到本服务器，公网开放 80/443。首次申请成功后启用 HTTPS，每 12 小时检查续期并自动加载新证书。',
-      'Certbot',
-    );
-  const previousIP = prior('LOVE_BIND_IP') || '127.0.0.1';
+  const bundledTLS = https && config.LOVE_TLS_PROVIDER !== 'external';
+  const bindingKey = bundledTLS ? 'LOVE_TLS_BIND_IP' : 'LOVE_BIND_IP';
+  const previousIP = prior(bindingKey) || (bundledTLS ? '0.0.0.0' : '127.0.0.1');
   const address = await ask(
     ui.select({
-      message: 'HTTP 监听地址（宿主机）',
+      message: `${bundledTLS ? 'HTTPS' : 'HTTP'} 监听地址（宿主机）`,
       initialValue: ['127.0.0.1', '0.0.0.0'].includes(previousIP) ? previousIP : 'custom',
       options: [
-        { value: '127.0.0.1', label: '127.0.0.1 · 仅本机', hint: '默认 · 适合 HTTPS 反向代理' },
+        {
+          value: '127.0.0.1',
+          label: '127.0.0.1 · 仅本机',
+          hint: bundledTLS ? '仅本机访问 HTTPS' : '默认 · 适合已有反向代理',
+        },
         {
           value: '0.0.0.0',
           label: '0.0.0.0 · 全部 IPv4 网卡',
-          hint: '允许局域网或公网直接访问 HTTP',
+          hint: `允许局域网或公网访问 ${bundledTLS ? 'HTTPS' : 'HTTP'}`,
         },
         { value: 'custom', label: '指定宿主机 IP', hint: '绑定一张网卡，支持 IPv4 / IPv6' },
       ],
     }),
   );
-  config.LOVE_BIND_IP =
+  config[bindingKey] =
     address === 'custom'
       ? await text(
           '宿主机 IP（例如 192.168.1.10 或 ::1）',
@@ -228,11 +235,30 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
           bindIP,
         )
       : address;
-  config.LOVE_PORT = await text('HTTP 端口', prior('LOVE_PORT') || '3000', port);
+  config.LOVE_BIND_IP ||= '127.0.0.1';
+  config.LOVE_PORT = bundledTLS
+    ? prior('LOVE_PORT') || '3000'
+    : await text('HTTP 端口', prior('LOVE_PORT') || '3000', port);
+  if (https)
+    config.LOVE_TLS_PORT = await text(
+      'HTTPS 访问端口',
+      prior('LOVE_TLS_PORT') || prior('LOVE_PORT') || '443',
+      (value) =>
+        port(value) ||
+        (bundledTLS && Number(value) === 80
+          ? '80 端口用于证书 HTTP-01 验证，请选择其他 HTTPS 端口'
+          : undefined),
+    );
+  if (config.LOVE_TLS_PROVIDER === 'certbot')
+    ui.note(
+      `域名需解析到本服务器，公网开放 TCP 80 和 HTTPS 端口 ${config.LOVE_TLS_PORT}。证书每 12 小时检查续期并自动加载。`,
+      'Certbot',
+    );
   const loopback = config.LOVE_BIND_IP.startsWith('127.') || config.LOVE_BIND_IP === '::1';
-  config.TRUST_PROXY = https && loopback ? '1' : '0';
+  config.TRUST_PROXY = https && (bundledTLS || loopback) ? '1' : '0';
+  const httpsAccess = `https://${config.LOVE_DOMAIN}${config.LOVE_TLS_PORT === '443' ? '' : ':' + config.LOVE_TLS_PORT}`;
   config.ALLOWED_ORIGINS = https
-    ? `https://${config.LOVE_DOMAIN},https://localhost,capacitor://localhost`
+    ? `${httpsAccess},https://localhost,capacitor://localhost`
     : 'http://localhost:' +
       config.LOVE_PORT +
       ',http://127.0.0.1:' +
@@ -309,17 +335,18 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   }
   config.LOVE_SETUP_COMPLETE = '1';
   validateConfig(config);
+  const ip = config[bindingKey];
   const binding =
-    (isIP(config.LOVE_BIND_IP) === 6 ? '[' + config.LOVE_BIND_IP + ']' : config.LOVE_BIND_IP) +
+    (isIP(ip) === 6 ? '[' + ip + ']' : ip) +
     ':' +
-    config.LOVE_PORT;
+    (bundledTLS ? config.LOVE_TLS_PORT : config.LOVE_PORT);
   const access = https
-    ? 'https://' + config.LOVE_DOMAIN
+    ? httpsAccess
     : ['0.0.0.0', '::'].includes(config.LOVE_BIND_IP)
       ? 'http://服务器实际IP:' + config.LOVE_PORT
       : 'http://' + binding;
   ui.note(
-    `数据库：${config.LOVE_DATABASE}\nHTTP 监听：${binding}\n访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
+    `数据库：${config.LOVE_DATABASE}\n${bundledTLS ? 'HTTPS' : 'HTTP'} 监听：${binding}\n${bundledTLS ? '后端 HTTP：仅容器网络，不占宿主机端口\n' : ''}访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
     '即将保存',
   );
   if (!(await ask(ui.confirm({ message: '保存配置并继续？', initialValue: true }))))

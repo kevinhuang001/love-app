@@ -11,7 +11,10 @@ MEDIA_SIGNING_SECRET=替换为至少32字符的稳定随机密钥
 ALLOWED_ORIGINS=https://love.example.com,https://localhost,capacitor://localhost
 TRUST_PROXY=1
 LOVE_DOMAIN=love.example.com
+LOVE_HTTPS=1
 LOVE_TLS_PROVIDER=caddy
+LOVE_TLS_PORT=8013
+LOVE_TLS_BIND_IP=0.0.0.0
 ADMIN_USERNAME=你的管理员用户名
 ADMIN_PASSWORD=至少12字符的随机密码
 ```
@@ -19,10 +22,12 @@ ADMIN_PASSWORD=至少12字符的随机密码
 `MEDIA_SIGNING_SECRET` 同时用于媒体链接签名、验证码摘要、SMTP 密码和 AI Key 加密，备份时必须保存，轮换后 SMTP 密码和 AI Key 需要重新填写。管理员启动变量仅创建首个账号，创建后移除两个变量；管理员独立访问 `/#admin` 配置 SMTP 和注册政策，用户页面不显示入口。`TRUST_PROXY=1` 仅适用于恰好一层可信反向代理，不要直接暴露该配置的服务。
 
 ```bash
-docker compose -p love-v4 --profile https up -d --build
+docker compose -p love-v4 -f compose.yml -f compose.https.yml --profile https up -d --build
 ```
 
-数据保存于 Docker `love-data` volume。`https` profile 启动仓库内置 Caddy，开放 80/443，自动申请证书并转发到内部 `love:3000`（支持 Socket.IO WebSocket）。先将 `LOVE_DOMAIN` 的 DNS 指向服务器，并开放端口。APK 使用相同 HTTPS 根地址。HTTP 端口绑定由 `LOVE_BIND_IP` 控制，默认 `127.0.0.1`；可设为 `0.0.0.0` 或宿主机指定 IP。仅运行 `docker compose -p love-v4 up -d --build` 时不启动 Caddy，适合本机调试或使用已有 Nginx/Caddy。不要两个反向代理同时占用 80/443。
+数据保存于 Docker `love-data` volume。内置 HTTPS 使用 `compose.https.yml`，需要 Docker Compose 2.24.4 或更新版本。代理将宿主机 `LOVE_TLS_PORT` 转发到容器内部 TLS 端口 443；例如以上配置访问 `https://love.example.com:8013`，APK 填同样的完整地址。`LOVE_TLS_BIND_IP` 控制 HTTPS 监听地址，默认 `0.0.0.0`。后端 `love:3000` 仅在容器网络内访问，不发布 HTTP 端口，因此不会与所选 HTTPS 端口冲突。默认 HTTPS 端口仍为 443。
+
+先将 `LOVE_DOMAIN` 的 DNS 指向服务器，开放 TCP 80 和选定的 HTTPS 端口。80 用于自动证书验证及 HTTP 跳转，HTTPS 端口不能设为 80。已有反向代理选择 external，由自己的代理发布 HTTPS；其后端 HTTP 绑定由 `LOVE_BIND_IP` / `LOVE_PORT` 控制。只运行基础 Compose 时不启动内置代理。
 
 直接 HTTP 访问可在 `.env` 配置：
 
@@ -38,7 +43,7 @@ TRUST_PROXY=0
 
 HTTP 响应不会发送 `upgrade-insecure-requests`、COOP、Origin-Agent-Cluster 或 HSTS；HTTPS 响应保留这些保护。通过可信代理提供 HTTPS 时设置 `TRUST_PROXY=1`，代理必须传递正确的 `X-Forwarded-Proto`，且应用端口只能由代理访问。直接公开 HTTP 端口必须使用 `TRUST_PROXY=0`。如果旧版本出现 HTTP 页面却请求 `https://域名:HTTP端口/assets/...`，更新后端镜像并重新创建服务，再强制刷新页面；仅更新 APK 无法修复 Web 响应头。
 
-日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `docker compose -p love-v4 --profile https up -d --build`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
+日志和健康状态：`docker compose logs -f love proxy`、`docker compose ps`。数据持久化：`love-data` 保存数据库和媒体，`caddy-data` 保存证书。不要使用 `down -v` 进行普通更新；升级用 `./love up`。Docker 中使用内网 AI 时，请将其加入同一网络并设置 `AI_ALLOWED_HOSTS`。
 
 Caddy 示例：
 
@@ -55,7 +60,7 @@ Nginx 需 `client_max_body_size 105m`、`proxy_read_timeout 300s` 以及 WebSock
 
 `./love setup` 先询问是否使用 HTTPS。选择“否”不需要域名或证书，支持 `0.0.0.0` 的公网 HTTP；设置 `LOVE_HTTPS=0`、`LOVE_TLS_PROVIDER=none`、`TRUST_PROXY=0`。
 
-选择 HTTPS 后填写真实域名，再选择：
+选择 HTTPS 后填写真实域名、证书方式、HTTPS 监听 IP 和访问端口。输入 8013 时，摘要和允许来源都使用 `https://你的域名:8013`；443 时省略端口。再选择：
 
 | 方式            | 自动申请和续期                               | 运行服务                        |
 | --------------- | -------------------------------------------- | ------------------------------- |
@@ -63,21 +68,22 @@ Nginx 需 `client_max_body_size 105m`、`proxy_read_timeout 300s` 以及 WebSock
 | Caddy           | 是，由 Caddy 管理                            | Love、Caddy                     |
 | 已有反向代理    | 自行管理                                     | 仅 Love，使用自己的 Nginx/Caddy |
 
-Certbot 还需联系邮箱。域名的 A/AAAA 必须正确指向本服务器，公网开放 TCP 80/443；若设置了 AAAA，IPv6 也必须可访问。80 用于 HTTP-01 验证，申请和续期期间都要保持开放。不要与其他服务争用这两个端口。
+Certbot 还需联系邮箱。域名的 A/AAAA 必须正确指向本服务器，公网开放 TCP 80 和选定的 HTTPS 端口；若设置了 AAAA，IPv6 也必须可访问。80 用于 HTTP-01 验证，申请和续期期间都要保持开放。不要与其他服务争用这两个端口。
 
 ```dotenv
 LOVE_HTTPS=1
 LOVE_TLS_PROVIDER=certbot
 LOVE_DOMAIN=你的真实域名
 CERTBOT_EMAIL=你的邮箱
-LOVE_BIND_IP=127.0.0.1
+LOVE_TLS_BIND_IP=0.0.0.0
+LOVE_TLS_PORT=8013
 TRUST_PROXY=1
 ```
 
-保存后执行 `./love up`，自动加入 `compose.certbot.yml`，无需安装宿主机 Certbot 或配置 cron。首次申请前代理只提供验证路径，其他请求返回 503，不会把账号密码通过 HTTP 暴露；申请成功后启用 HTTPS，HTTP 跳转到 HTTPS。Certbot 失败会写入日志，15 分钟后重试，启动器等待代理就绪而不会把“尚未取得证书”报告为 HTTPS 成功。检查 `./love logs`；排除 DNS/端口问题后，可在原目录运行以下命令立即重新尝试：
+保存后执行 `./love up`，自动加入 `compose.https.yml` 和 `compose.certbot.yml`，无需安装宿主机 Certbot 或配置 cron。首次申请前代理只提供验证路径，其他请求返回 503，不会把账号密码通过 HTTP 暴露；申请成功后启用 HTTPS，HTTP 跳转到 HTTPS。Certbot 失败会写入日志，15 分钟后重试，启动器等待代理就绪而不会把“尚未取得证书”报告为 HTTPS 成功。检查 `./love logs`；排除 DNS/端口问题后，可在原目录运行以下命令立即重新尝试：
 
 ```sh
-docker compose -p love-v4 -f compose.yml -f compose.certbot.yml --profile https restart certbot
+docker compose -p love-v4 -f compose.yml -f compose.https.yml -f compose.certbot.yml --profile https restart certbot
 ```
 
 如果使用内置 PostgreSQL，命令增加 `-f compose.postgres.yml`；若修改了项目名，替换 `love-v4`。证书和 ACME 账户保存于 `certbot-certs` 数据卷，正常更新不能删除该卷。续期不停止应用、不使用 Docker socket；代理只读证书卷，并在证书内容变化后验证配置、平滑加载。
@@ -85,7 +91,7 @@ docker compose -p love-v4 -f compose.yml -f compose.certbot.yml --profile https 
 续期验证（需要真实域名和公网验证路径，使用测试 CA，不会替换正式证书）：
 
 ```sh
-docker compose -p love-v4 -f compose.yml -f compose.certbot.yml --profile https run --rm --entrypoint certbot certbot renew --dry-run
+docker compose -p love-v4 -f compose.yml -f compose.https.yml -f compose.certbot.yml --profile https run --rm --entrypoint certbot certbot renew --dry-run
 ```
 
 选择“已有反向代理”不会启动内置证书服务；按上面的 Caddy/Nginx 示例转发，代理传递 `X-Forwarded-Proto: https`。后端端口默认仅本机访问。选择 HTTP 时直接访问 `http://域名或IP:端口`，不要求 HTTPS 或 Certbot。

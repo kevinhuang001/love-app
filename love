@@ -47,9 +47,9 @@ set -- docker compose --project-name "$project" --env-file .env -f compose.yml
 [ "$database" != postgres ] || set -- "$@" -f compose.postgres.yml
 if [ "$https" = 1 ]; then
   case "$tls" in
-    certbot) set -- "$@" -f compose.certbot.yml --profile https ;;
+    certbot) set -- "$@" -f compose.https.yml -f compose.certbot.yml --profile https ;;
     external) ;;
-    caddy|'') set -- "$@" --profile https ;;
+    caddy|'') set -- "$@" -f compose.https.yml --profile https ;;
     *) echo 'HTTPS 证书方式无效，请运行 ./love setup。' >&2; exit 1 ;;
   esac
 fi

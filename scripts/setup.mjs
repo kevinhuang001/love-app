@@ -174,7 +174,9 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     ? await ask(
         ui.select({
           message: 'HTTPS 证书方式',
-          initialValue: prior('LOVE_TLS_PROVIDER') || 'certbot',
+          initialValue: ['certbot', 'caddy', 'external'].includes(prior('LOVE_TLS_PROVIDER'))
+            ? prior('LOVE_TLS_PROVIDER')
+            : 'certbot',
           options: [
             {
               value: 'certbot',

@@ -10,6 +10,10 @@ const fakeUI = (options = {}) => ({
   outro() {},
   isCancel: (value) => typeof value === 'symbol',
   text: async (p) => {
+    if (p.message === '访问域名' && options.domain) {
+      assert.equal(p.validate?.(options.domain), undefined);
+      return options.domain;
+    }
     if (p.message === 'Certbot 联系邮箱') return options.email || 'admin@example.test';
     if (p.message.startsWith('宿主机 IP') && options.ip) {
       assert.equal(p.validate?.(options.ip), undefined);
@@ -67,6 +71,25 @@ test('proxy trust is enabled only for HTTPS with loopback HTTP binding', async (
     });
     assert.equal(config.TRUST_PROXY, bind === '127.0.0.1' ? '1' : '0');
   }
+});
+test('existing HTTP deployment switches to Certbot HTTPS and back while retaining credentials', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-setup-switch-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const output = join(dir, '.env');
+  const original = await setup({ output, ui: fakeUI({ bind: '0.0.0.0' }), env: {} });
+  const secure = await setup({
+    output,
+    ui: fakeUI({ https: true, domain: 'love.example.test', bind: '127.0.0.1' }),
+    env: {},
+  });
+  assert.equal(secure.LOVE_TLS_PROVIDER, 'certbot');
+  assert.equal(secure.TRUST_PROXY, '1');
+  assert.equal(secure.MEDIA_SIGNING_SECRET, original.MEDIA_SIGNING_SECRET);
+  assert.equal(secure.ADMIN_PASSWORD, original.ADMIN_PASSWORD);
+  const plain = await setup({ output, ui: fakeUI({ bind: '0.0.0.0' }), env: {} });
+  assert.equal(plain.LOVE_HTTPS, '0');
+  assert.equal(plain.LOVE_TLS_PROVIDER, 'none');
+  assert.equal(plain.TRUST_PROXY, '0');
 });
 test('first setup creates usable defaults, private secrets and PostgreSQL selection without exposing credentials', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-'));

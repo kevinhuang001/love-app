@@ -96,6 +96,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page.getByRole('button', { name: '新增纪念日' }).click();
   await expect(page.getByRole('button', { name: '打开空间设置' })).toHaveCount(0);
   await page.getByLabel('名称', { exact: true }).fill('第一次旅行');
+  await page.getByLabel('日期', { exact: true }).fill('2025-06-15');
   await page.getByLabel('时间', { exact: true }).fill('09:10:11');
   await page.getByRole('button', { name: '保存纪念日' }).click();
   await expect(page.getByText('第一次旅行', { exact: true })).toBeVisible();
@@ -552,92 +553,99 @@ test('administrator dashboard configures email whitelist, SMTP, users, quotas an
   request,
 }) => {
   const stamp = Date.now().toString().slice(-9);
-  await page.goto('/#admin');
-  await page.getByText('服务器设置', { exact: true }).click();
-  await page.getByLabel('服务器地址', { exact: true }).fill('http://127.0.0.1:3000');
-  await page.getByLabel('管理员用户名').fill('admin_master');
-  await page.getByLabel('管理员密码', { exact: true }).fill('admin-test-password-123');
-  await solveCaptcha(page);
-  await page.getByRole('button', { name: '进入管理后台', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '运行状态', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '账号', exact: true }).click();
-  await page.getByRole('button', { name: '创建账号', exact: true }).click();
-  await page.getByLabel('新账号用户名').fill(`adminuser${stamp}`);
-  await page.getByLabel('用户昵称').fill(`管理样例${stamp}`);
-  await page.getByLabel('用户邮箱').fill(`adminuser${stamp}@example.test`);
-  await page.getByLabel('初始密码').fill('password123');
-  await page.getByRole('checkbox', { name: '我已确认该邮箱属于此用户' }).check();
-  await page.getByRole('dialog').getByRole('button', { name: '创建账号', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByLabel('搜索管理数据').fill(`adminuser${stamp}`);
-  await page.getByRole('button', { name: `管理管理样例${stamp}`, exact: true }).click();
-  await page.getByRole('button', { name: '停用账号', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await expect(page.getByText('已停用', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: `管理管理样例${stamp}`, exact: true }).click();
-  await page.getByRole('button', { name: '恢复账号', exact: true }).click();
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  await page.getByRole('button', { name: '配对与存储', exact: true }).click();
-  await expect(page.getByRole('button', { name: /设置.*的存储配额/ }).first()).toBeVisible();
-  await page
-    .getByRole('button', { name: /设置.*的存储配额/ })
-    .first()
-    .click();
-  await page.getByLabel('空间上限（MiB）').fill('128');
-  await page.getByRole('button', { name: '保存存储配额' }).click();
-  await expect(page.getByText('/ 128 MiB', { exact: false }).first()).toBeVisible();
-  await page.getByRole('button', { name: '设置', exact: true }).click();
-  await expect(page.getByLabel('SMTP 主机')).toHaveValue('smtp.example.test');
-  await page.getByLabel('SMTP 密码或授权码').fill('new-smtp-test-secret');
-  await page.getByLabel('注册方式').selectOption('whitelist');
-  await page.getByLabel('新配对默认存储上限（MiB）').fill('256');
-  await page.getByLabel('允许注册的邮箱域名').fill('example.test');
-  await page.getByRole('button', { name: '保存服务器设置', exact: true }).click();
-  await expect(page.getByText('服务器设置已保存', { exact: true })).toBeVisible();
-  await page.getByLabel('白名单邮箱').fill(`allow${stamp}@example.test`);
-  await page.getByLabel('白名单备注').fill('允许自行创建并验证邮箱');
-  await page.getByRole('button', { name: '加入白名单', exact: true }).click();
-  await expect(page.getByText(`allow${stamp}@example.test`, { exact: true })).toBeVisible();
-  await page.getByLabel('测试邮件收件人').fill('owner@example.test');
-  await page.getByRole('button', { name: '发送 SMTP 测试邮件' }).click();
-  await expect(
-    page.getByText('测试邮件已交给 SMTP 服务器，请检查收件箱', { exact: true }),
-  ).toBeVisible();
-  await page.getByRole('button', { name: '日志', exact: true }).click();
-  await expect(page.getByText('/api/admin/smtp/test', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: '后台日志', exact: true }).click();
-  await expect(page.getByText('server.started', { exact: true }).first()).toBeVisible();
-  await page.getByRole('button', { name: '操作记录', exact: true }).click();
-  await expect(page.getByText('settings.updated', { exact: true }).first()).toBeVisible();
-  await page.reload();
-  await expect(page.getByRole('heading', { name: '运行状态', exact: true })).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
-  await page.getByRole('button', { name: '退出管理后台' }).click();
-  await page.getByRole('link', { name: '返回用户登录' }).click();
-  await page.getByRole('tab', { name: '创建账号', exact: true }).click();
-  await expect(page.getByText('此服务器仅接受白名单邮箱注册。')).toBeVisible();
-  // Restore the test fixture policy so repeated local runs have the same starting conditions.
-  const { captcha } = await import('./auth-helper');
-  const adminResponse = await request.post('http://127.0.0.1:3000/api/admin/login', {
-    data: {
-      username: 'admin_master',
-      password: 'admin-test-password-123',
-      ...(await captcha(request, 'admin')),
-    },
-  });
-  expect(adminResponse.ok()).toBeTruthy();
-  const adminHeaders = { Authorization: `Bearer ${(await adminResponse.json()).token}` };
-  const current = await (
-    await request.get('http://127.0.0.1:3000/api/admin/settings', { headers: adminHeaders })
-  ).json();
-  await request.patch('http://127.0.0.1:3000/api/admin/settings', {
-    headers: adminHeaders,
-    data: {
-      ...current,
-      registration: 'email',
-      domains: [],
-      invitationRequired: false,
-      defaultQuotaMiB: 1024,
-    },
-  });
+  try {
+    await page.goto('/#admin');
+    await page.getByText('服务器设置', { exact: true }).click();
+    await page.getByLabel('服务器地址', { exact: true }).fill('http://127.0.0.1:3000');
+    await page.getByLabel('管理员用户名').fill('admin_master');
+    await page.getByLabel('管理员密码', { exact: true }).fill('admin-test-password-123');
+    await solveCaptcha(page);
+    await page.getByRole('button', { name: '进入管理后台', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '运行状态', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '账号', exact: true }).click();
+    await page.getByRole('button', { name: '创建账号', exact: true }).click();
+    await page.getByLabel('新账号用户名').fill(`adminuser${stamp}`);
+    await page.getByLabel('用户昵称').fill(`管理样例${stamp}`);
+    await page.getByLabel('用户邮箱').fill(`adminuser${stamp}@example.test`);
+    await page.getByLabel('初始密码').fill('password123');
+    await page.getByRole('checkbox', { name: '我已确认该邮箱属于此用户' }).check();
+    await page.getByRole('dialog').getByRole('button', { name: '创建账号', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByLabel('搜索管理数据').fill(`adminuser${stamp}`);
+    await page.getByRole('button', { name: `管理管理样例${stamp}`, exact: true }).click();
+    await page.getByRole('button', { name: '停用账号', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.getByText('已停用', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: `管理管理样例${stamp}`, exact: true }).click();
+    await page.getByRole('button', { name: '恢复账号', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button', { name: '配对与存储', exact: true }).click();
+    await expect(page.getByRole('button', { name: /设置.*的存储配额/ }).first()).toBeVisible();
+    await page
+      .getByRole('button', { name: /设置.*的存储配额/ })
+      .first()
+      .click();
+    await page.getByLabel('空间上限（MiB）').fill('128');
+    await page.getByRole('button', { name: '保存存储配额' }).click();
+    await expect(page.getByText('/ 128 MiB', { exact: false }).first()).toBeVisible();
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    await expect(page.getByLabel('SMTP 主机')).toHaveValue('smtp.example.test');
+    await page.getByLabel('SMTP 密码或授权码').fill('new-smtp-test-secret');
+    await page.getByLabel('注册方式').selectOption('whitelist');
+    await page.getByLabel('新配对默认存储上限（MiB）').fill('256');
+    await page.getByLabel('允许注册的邮箱域名').fill('example.test');
+    await page.getByRole('button', { name: '保存服务器设置', exact: true }).click();
+    await expect(page.getByText('服务器设置已保存', { exact: true })).toBeVisible();
+    await page.getByLabel('白名单邮箱').fill(`allow${stamp}@example.test`);
+    await page.getByLabel('白名单备注').fill('允许自行创建并验证邮箱');
+    await page.getByRole('button', { name: '加入白名单', exact: true }).click();
+    await expect(page.getByText(`allow${stamp}@example.test`, { exact: true })).toBeVisible();
+    await page.getByLabel('测试邮件收件人').fill('owner@example.test');
+    await page.getByRole('button', { name: '发送 SMTP 测试邮件' }).click();
+    await expect(
+      page.getByText('测试邮件已交给 SMTP 服务器，请检查收件箱', { exact: true }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: '日志', exact: true }).click();
+    await expect(page.getByText('/api/admin/smtp/test', { exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: '后台日志', exact: true }).click();
+    await page.getByLabel('搜索管理数据').fill('server.started');
+    await expect(page.getByText('server.started', { exact: true }).first()).toBeVisible();
+    await page.getByRole('button', { name: '操作记录', exact: true }).click();
+    await page.getByLabel('搜索管理数据').fill('settings.updated');
+    await expect(page.getByText('settings.updated', { exact: true }).first()).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole('heading', { name: '运行状态', exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(
+      false,
+    );
+    await page.getByRole('button', { name: '退出管理后台' }).click();
+    await page.getByRole('link', { name: '返回用户登录' }).click();
+    await page.getByRole('tab', { name: '创建账号', exact: true }).click();
+    await expect(page.getByText('此服务器仅接受白名单邮箱注册。')).toBeVisible();
+  } finally {
+    // Restore the test fixture policy so repeated local runs have the same starting conditions.
+    const { captcha } = await import('./auth-helper');
+    const adminResponse = await request.post('http://127.0.0.1:3000/api/admin/login', {
+      data: {
+        username: 'admin_master',
+        password: 'admin-test-password-123',
+        ...(await captcha(request, 'admin')),
+      },
+    });
+    expect(adminResponse.ok()).toBeTruthy();
+    const adminHeaders = { Authorization: `Bearer ${(await adminResponse.json()).token}` };
+    const current = await (
+      await request.get('http://127.0.0.1:3000/api/admin/settings', { headers: adminHeaders })
+    ).json();
+    await request.patch('http://127.0.0.1:3000/api/admin/settings', {
+      headers: adminHeaders,
+      data: {
+        ...current,
+        registration: 'email',
+        domains: [],
+        invitationRequired: false,
+        defaultQuotaMiB: 1024,
+      },
+    });
+  }
 });

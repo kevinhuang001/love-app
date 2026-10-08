@@ -40,20 +40,32 @@ fi
 [ -f .env ] || { echo '配置不存在，请先运行 ./love setup。' >&2; exit 1; }
 database=$(setting LOVE_DATABASE)
 https=$(setting LOVE_HTTPS)
+tls=$(setting LOVE_TLS_PROVIDER)
 project=$(setting COMPOSE_PROJECT_NAME)
 [ -n "$project" ] || project=love-v4
 set -- docker compose --project-name "$project" --env-file .env -f compose.yml
 [ "$database" != postgres ] || set -- "$@" -f compose.postgres.yml
-[ "$https" != 1 ] || set -- "$@" --profile https
+if [ "$https" = 1 ]; then
+  case "$tls" in
+    certbot) set -- "$@" -f compose.certbot.yml --profile https ;;
+    external) ;;
+    caddy|'') set -- "$@" --profile https ;;
+    *) echo 'HTTPS 证书方式无效，请运行 ./love setup。' >&2; exit 1 ;;
+  esac
+fi
 case "$mode" in
  up)
+   # Disable the bundled proxy when switching to plain HTTP or an external proxy.
+   if [ "$https" != 1 ] || [ "$tls" = external ]; then
+     "$@" --profile https stop proxy
+   fi
    if [ "$LOVE_IMAGE" = love-app:local ]; then
-     exec "$@" up -d --build --wait
+     exec "$@" up -d --build --remove-orphans --wait
    else
      prepare_image
-     exec "$@" up -d --no-build --pull missing --wait
+     exec "$@" up -d --no-build --pull missing --remove-orphans --wait
    fi ;;
- down) exec "$@" down ;;
+ down) exec "$@" down --remove-orphans ;;
  logs) exec "$@" logs -f ;;
  ps) exec "$@" ps ;;
 esac

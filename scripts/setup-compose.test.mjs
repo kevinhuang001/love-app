@@ -18,6 +18,8 @@ try {
     POSTGRES_DB: 'love',
     ADMIN_USERNAME: 'ci_admin',
     ADMIN_PASSWORD: special,
+    LOVE_DOMAIN: 'love.example.test',
+    CERTBOT_EMAIL: 'admin@example.test',
   };
   const file = join(dir, '.env');
   await writeFile(
@@ -67,6 +69,39 @@ try {
     assert.equal(selected.services.love.ports[0].host_ip, ip);
   }
   assert.equal(config.services.postgres.ports, undefined);
+  const tls = JSON.parse(
+    execFileSync(
+      'docker',
+      [
+        'compose',
+        '--env-file',
+        file,
+        '-f',
+        'compose.yml',
+        '-f',
+        'compose.certbot.yml',
+        '--profile',
+        'https',
+        'config',
+        '--format',
+        'json',
+      ],
+      { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+    ),
+  );
+  assert.equal(tls.services.certbot.environment.CERTBOT_EMAIL, 'admin@example.test');
+  assert.deepEqual(tls.services.proxy.entrypoint, ['/bin/sh', '/opt/love/certbot-proxy.sh']);
+  assert.ok(
+    tls.services.proxy.volumes.some(
+      (volume) => volume.target === '/etc/letsencrypt' && volume.read_only,
+    ),
+  );
+  assert.ok(
+    tls.services.certbot.volumes.some(
+      (volume) => volume.target === '/etc/letsencrypt' && !volume.read_only,
+    ),
+  );
+  assert.ok(tls.services.proxy.healthcheck.test[1].includes('love-tls-ready'));
   execFileSync(
     'docker',
     [

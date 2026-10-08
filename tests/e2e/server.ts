@@ -11,11 +11,17 @@ const evidence: {
 const save = () => writeFileSync(resolve(temp, 'e2e-auth.json'), JSON.stringify(evidence));
 save();
 const server = await createApp({
+  staticDir: resolve('apps/client/dist'),
   database: 'data/e2e-admin.sqlite',
   uploads: 'data/e2e-admin-media',
   mediaSecret: 'test-key-for-ci-not-for-production-use',
   adminBootstrap: { username: 'admin_master', password: 'admin-test-password-123' },
-  origins: ['http://127.0.0.1:5173', 'http://localhost:5173', 'https://localhost'],
+  origins: [
+    'http://127.0.0.1:5173',
+    'http://localhost:5173',
+    'https://localhost',
+    'http://public-http.test:3000',
+  ],
   onCaptcha: (id, answer) => {
     evidence.captcha[id] = answer;
     save();

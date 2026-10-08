@@ -50,7 +50,7 @@ cd love-deploy
 LOVE_IMAGE=love-app:prebuilt LOVE_IMAGE_PULL=0 ./love up
 ```
 
-ARM64 替换导入的文件名，其余相同。导入的应用镜像统一命名为 `love-app:prebuilt`；`LOVE_IMAGE_PULL=0` 禁止从 registry 拉取该镜像。配置向导保存这些设置，后续直接运行 `./love up`。Caddy 或 PostgreSQL 仍需首次拉取自身镜像，完整离线部署还需单独准备这两者。
+ARM64 替换导入的文件名，其余相同。导入的应用镜像统一命名为 `love-app:prebuilt`；`LOVE_IMAGE_PULL=0` 禁止从 registry 拉取该镜像。配置向导保存这些设置，后续直接运行 `./love up`。Caddy、Certbot（选择时）和 PostgreSQL（选择时）仍需首次拉取自身镜像，完整离线部署还需单独准备这些镜像。
 
 已有部署只需 `docker load` 新镜像，将 `.env` 设置为 `LOVE_IMAGE=love-app:prebuilt`、`LOVE_IMAGE_PULL=0`，然后在原项目目录运行 `./love up`。无需清空数据卷。
 

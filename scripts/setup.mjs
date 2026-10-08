@@ -15,6 +15,12 @@ const port = (value) =>
     : '端口范围为 1–65535';
 const bindIP = (value) =>
   isIP(value) && !value.includes('%') ? undefined : '填写有效的 IPv4 或 IPv6 地址，不含端口';
+const domain = (value) =>
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(value) &&
+  value !== 'love.example.com'
+    ? undefined
+    : '填写解析到服务器的真实域名，不含 https:// 或路径';
+const email = (value) => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? undefined : '填写有效邮箱');
 export const quoteEnv = (value) => "'" + String(value).replaceAll("'", "\\'") + "'";
 export function parseDeploymentEnv(content) {
   const config = {};
@@ -43,6 +49,14 @@ export function validateConfig(config) {
     throw new Error('管理员密码长度为 12–128 字符');
   if (port(config.LOVE_PORT)) throw new Error('服务端口无效');
   if (bindIP(config.LOVE_BIND_IP || '')) throw new Error('HTTP 监听 IP 无效');
+  if (!['0', '1'].includes(config.LOVE_HTTPS)) throw new Error('HTTPS 选择无效');
+  if (config.LOVE_HTTPS === '1') {
+    if (domain(config.LOVE_DOMAIN || '')) throw new Error('HTTPS 域名无效');
+    if (!['certbot', 'caddy', 'external'].includes(config.LOVE_TLS_PROVIDER))
+      throw new Error('证书方式无效');
+    if (config.LOVE_TLS_PROVIDER === 'certbot' && email(config.CERTBOT_EMAIL || ''))
+      throw new Error('Certbot 邮箱无效');
+  }
   if (config.LOVE_DOCKERFILE && !['Dockerfile', 'Dockerfile.cn'].includes(config.LOVE_DOCKERFILE))
     throw new Error('构建文件只能为 Dockerfile 或 Dockerfile.cn');
   if (config.LOVE_IMAGE && !/^[A-Za-z0-9][A-Za-z0-9_./:@-]*$/.test(config.LOVE_IMAGE))
@@ -148,19 +162,46 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   }
   const https = await ask(
     ui.confirm({
-      message: '使用域名和自动 HTTPS？',
+      message: '使用 HTTPS？',
       initialValue: prior('LOVE_HTTPS') ? prior('LOVE_HTTPS') === '1' : true,
     }),
   );
   config.LOVE_HTTPS = https ? '1' : '0';
   config.LOVE_DOMAIN = https
-    ? await text('访问域名', prior('LOVE_DOMAIN') || 'love.example.com', (v) =>
-        /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/i.test(v) &&
-        v !== 'love.example.com'
-          ? undefined
-          : '填写解析到服务器的真实域名，不含 https:// 或路径',
-      )
+    ? await text('访问域名', prior('LOVE_DOMAIN') || 'love.example.com', domain)
     : '';
+  config.LOVE_TLS_PROVIDER = https
+    ? await ask(
+        ui.select({
+          message: 'HTTPS 证书方式',
+          initialValue: prior('LOVE_TLS_PROVIDER') || 'certbot',
+          options: [
+            {
+              value: 'certbot',
+              label: 'Certbot · 自动申请和续期',
+              hint: '默认 · Let’s Encrypt，需要域名及公网 80/443',
+            },
+            {
+              value: 'caddy',
+              label: 'Caddy · 自动 HTTPS',
+              hint: '由 Caddy 自行管理证书，无需 Certbot',
+            },
+            {
+              value: 'external',
+              label: '已有反向代理 · 自行管理证书',
+              hint: '不启动内置代理或 Certbot，使用自己的 Nginx/Caddy',
+            },
+          ],
+        }),
+      )
+    : 'none';
+  if (config.LOVE_TLS_PROVIDER === 'certbot')
+    config.CERTBOT_EMAIL = await text('Certbot 联系邮箱', prior('CERTBOT_EMAIL') || '', email);
+  if (config.LOVE_TLS_PROVIDER === 'certbot')
+    ui.note(
+      '域名需解析到本服务器，公网开放 80/443。首次申请成功后启用 HTTPS，每 12 小时检查续期并自动加载新证书。',
+      'Certbot',
+    );
   const previousIP = prior('LOVE_BIND_IP') || '127.0.0.1';
   const address = await ask(
     ui.select({
@@ -276,7 +317,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
       ? 'http://服务器实际IP:' + config.LOVE_PORT
       : 'http://' + binding;
   ui.note(
-    `数据库：${config.LOVE_DATABASE}\nHTTP 监听：${binding}\n访问：${access}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
+    `数据库：${config.LOVE_DATABASE}\nHTTP 监听：${binding}\n访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n默认容量：${config.INITIAL_QUOTA_MIB} MiB\n注册：${config.INITIAL_REGISTRATION}`,
     '即将保存',
   );
   if (!(await ask(ui.confirm({ message: '保存配置并继续？', initialValue: true }))))

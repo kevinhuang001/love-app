@@ -95,6 +95,9 @@ jobs:
             ffmpeg -version >/dev/null
           '
       - run: node scripts/setup-compose.test.mjs
+      - name: Verify HTTPS challenge bootstrap and certificate reload
+        if: matrix.dockerfile == 'Dockerfile'
+        run: node scripts/certbot-proxy-smoke.mjs
       - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke -v love-smoke-data:/app/data love-ci
       - run: node scripts/docker-smoke.mjs
       - run: docker restart love-smoke && node scripts/docker-smoke.mjs --verify-persistence

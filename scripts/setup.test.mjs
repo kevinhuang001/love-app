@@ -10,6 +10,7 @@ const fakeUI = (options = {}) => ({
   outro() {},
   isCancel: (value) => typeof value === 'symbol',
   text: async (p) => {
+    if (p.message === 'Certbot 联系邮箱') return options.email || 'admin@example.test';
     if (p.message.startsWith('宿主机 IP') && options.ip) {
       assert.equal(p.validate?.(options.ip), undefined);
       return options.ip;
@@ -23,13 +24,37 @@ const fakeUI = (options = {}) => ({
       ? options.database || 'sqlite'
       : p.message === 'HTTP 监听地址（宿主机）'
         ? options.bind || p.initialValue
-        : p.initialValue,
+        : p.message === 'HTTPS 证书方式'
+          ? options.tls || p.initialValue
+          : p.initialValue,
   confirm: async (p) =>
-    p.message === '使用域名和自动 HTTPS？'
+    p.message === '使用 HTTPS？'
       ? options.https || false
       : p.message === '现在配置 SMTP 和邮箱注册？'
         ? false
         : options.save !== false,
+});
+test('setup selects HTTP without certificates, or HTTPS with Certbot, Caddy or existing proxy', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'love-setup-tls-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  for (const tls of ['certbot', 'caddy', 'external', 'none']) {
+    const output = join(dir, tls + '.env');
+    const config = await setup({
+      output,
+      ui: fakeUI({ https: tls !== 'none', tls }),
+      env: { LOVE_DOMAIN: 'love.example.test' },
+    });
+    assert.equal(config.LOVE_HTTPS, tls === 'none' ? '0' : '1');
+    assert.equal(config.LOVE_TLS_PROVIDER, tls);
+    assert.equal(config.CERTBOT_EMAIL, tls === 'certbot' ? 'admin@example.test' : undefined);
+    assert.equal(config.TRUST_PROXY, tls === 'none' ? '0' : '1');
+    const repeated = await setup({ output, ui: fakeUI({ https: tls !== 'none' }), env: {} });
+    assert.equal(repeated.LOVE_TLS_PROVIDER, tls);
+    if (tls === 'certbot') {
+      assert.throws(() => validateConfig({ ...config, CERTBOT_EMAIL: '' }), /Certbot 邮箱/);
+      assert.throws(() => validateConfig({ ...config, LOVE_TLS_PROVIDER: 'unknown' }), /证书方式/);
+    }
+  }
 });
 test('proxy trust is enabled only for HTTPS with loopback HTTP binding', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'love-setup-proxy-'));

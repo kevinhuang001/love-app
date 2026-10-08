@@ -15,7 +15,7 @@
 向导包含：
 
 - 数据库：SQLite（默认）、Compose 内置 PostgreSQL 18、外部 PostgreSQL。
-- 访问：域名与自动 HTTPS，或直接 HTTP。HTTP 监听 IP 可选 `127.0.0.1`（默认，仅本机）、`0.0.0.0`（全部 IPv4 网卡，用于局域网/公网）或指定宿主机 IPv4/IPv6；端口默认 3000。
+- 访问：可选 HTTP 或 HTTPS；HTTPS 支持 Certbot 自动申请/续期、Caddy 自动证书，或已有反向代理。HTTP 监听 IP 可选 `127.0.0.1`（默认，仅本机）、`0.0.0.0`（全部 IPv4 网卡，用于局域网/公网）或指定宿主机 IPv4/IPv6；端口默认 3000。
 - 管理员：用户名默认 `admin`，密码可输入或留空自动生成。
 - 容量：新配对默认 1024 MiB，0 禁止新增上传。
 - SMTP：可选配置主机、端口、加密、账号、授权码、发件邮箱及初始注册方式。默认仅管理员建号，后续可在后台配置邮件注册。
@@ -32,7 +32,7 @@
 
 SQLite：
 
-手动 `.env` 可设置 `LOVE_BIND_IP=0.0.0.0`、`LOVE_PORT=3000`、`LOVE_HTTPS=0`、`TRUST_PROXY=0`，无需修改 Compose。使用 `./love up` 会按 `LOVE_HTTPS` 自动选择 HTTPS profile；直接 Compose 请自行选择是否加 `--profile https`。
+手动 `.env` 可设置 `LOVE_BIND_IP=0.0.0.0`、`LOVE_PORT=3000`、`LOVE_HTTPS=0`、`TRUST_PROXY=0`，无需修改 Compose。使用 `./love up` 会按 `LOVE_HTTPS` 和 `LOVE_TLS_PROVIDER` 自动选择代理及 Certbot 配置；直接 Compose 请自行组合 profile 和文件，见 [部署文档](deployment.md)。
 
 ```sh
 docker compose -p love-v4 --profile https up -d --build --wait

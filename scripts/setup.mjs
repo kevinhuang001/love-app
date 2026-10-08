@@ -39,6 +39,8 @@ export function validateConfig(config) {
   )
     throw new Error('管理员密码长度为 12–128 字符');
   if (port(config.LOVE_PORT)) throw new Error('服务端口无效');
+  if (config.LOVE_DOCKERFILE && !['Dockerfile', 'Dockerfile.cn'].includes(config.LOVE_DOCKERFILE))
+    throw new Error('构建文件只能为 Dockerfile 或 Dockerfile.cn');
   if (!['sqlite', 'postgres', 'external'].includes(config.LOVE_DATABASE))
     throw new Error('数据库选择无效');
   if (
@@ -92,6 +94,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   };
   ui.intro('Love · 首次部署配置');
   const config = { ...previous };
+  config.LOVE_DOCKERFILE = env.LOVE_DOCKERFILE || prior('LOVE_DOCKERFILE') || 'Dockerfile';
   config.LOVE_DATABASE = await ask(
     ui.select({
       message: '选择数据库',

@@ -6,15 +6,19 @@ command -v docker >/dev/null 2>&1 || { echo '请先安装 Docker Engine 和 Comp
 docker compose version >/dev/null
 mode=${1:-up}
 case "$mode" in up|setup|down|logs|ps) ;; *) echo '用法：./love [up|setup|down|logs|ps]' >&2; exit 1 ;; esac
+# Read only fixed enum fields, never evaluate/shell-source secret values from .env.
+setting() { [ ! -f .env ] || sed -n "s/^$1=['\"]\{0,1\}\([a-zA-Z0-9_.-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
+LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-$(setting LOVE_DOCKERFILE)}
+LOVE_DOCKERFILE=${LOVE_DOCKERFILE:-Dockerfile}
+case "$LOVE_DOCKERFILE" in Dockerfile|Dockerfile.cn) ;; *) echo 'LOVE_DOCKERFILE 只能为 Dockerfile 或 Dockerfile.cn。' >&2; exit 1 ;; esac
+export LOVE_DOCKERFILE
 if [ "$mode" = setup ] || { [ "$mode" = up ] && [ ! -f .env ]; }; then
   [ -t 0 ] && [ -t 1 ] || { echo '首次部署需要交互终端，请运行 ./love setup。' >&2; exit 1; }
-  docker build -t love-app:local .
-  docker run --rm -it --user "$(id -u):$(id -g)" -v "$PWD:/setup" --entrypoint node love-app:local /app/scripts/setup.mjs --output /setup/.env
+  docker build -f "$LOVE_DOCKERFILE" -t love-app:local .
+  docker run --rm -it --user "$(id -u):$(id -g)" -e LOVE_DOCKERFILE -v "$PWD:/setup" --entrypoint node love-app:local /app/scripts/setup.mjs --output /setup/.env
   [ "$mode" = setup ] && exit 0
 fi
 [ -f .env ] || { echo '配置不存在，请先运行 ./love setup。' >&2; exit 1; }
-# Read only fixed enum fields, never evaluate/shell-source secret values from .env.
-setting() { sed -n "s/^$1=['\"]\{0,1\}\([a-z0-9_-]*\)['\"]\{0,1\}$/\1/p" .env | tail -1; }
 database=$(setting LOVE_DATABASE)
 https=$(setting LOVE_HTTPS)
 project=$(setting COMPOSE_PROJECT_NAME)

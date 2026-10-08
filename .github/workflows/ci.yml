@@ -64,7 +64,13 @@ jobs:
           TEST_DATABASE_URL: postgres://love:ci-postgres-test-password@localhost:5432/love_test
   docker:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [Dockerfile, Dockerfile.cn]
+    env:
+      LOVE_DOCKERFILE: ${{ matrix.dockerfile }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -75,7 +81,19 @@ jobs:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           LOVE_DOMAIN: love.example.com
       - run: npm ci
-      - run: docker build -t love-ci .
+      - run: docker build -f "$LOVE_DOCKERFILE" -t love-ci .
+      - name: Verify domestic mirror configuration
+        if: matrix.dockerfile == 'Dockerfile.cn'
+        run: |
+          docker run --rm --entrypoint sh love-ci -c '
+            set -eu
+            test "$(npm config get registry)" = "https://registry.npmmirror.com/"
+            test "$PIP_INDEX_URL" = "https://mirrors.ustc.edu.cn/pypi/simple"
+            grep -q "https://mirrors.ustc.edu.cn/debian$" /etc/apt/sources.list.d/debian.sources
+            grep -q "https://mirrors.ustc.edu.cn/debian-security$" /etc/apt/sources.list.d/debian.sources
+            test -s /etc/ssl/certs/ca-certificates.crt
+            ffmpeg -version >/dev/null
+          '
       - run: node scripts/setup-compose.test.mjs
       - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke -v love-smoke-data:/app/data love-ci
       - run: node scripts/docker-smoke.mjs

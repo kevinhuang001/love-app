@@ -20,7 +20,7 @@ export function encryptKey(value: string, secret: string) {
     content.toString('base64url'),
   ].join('.');
 }
-function decryptKey(value: string, secret: string) {
+export function decryptKey(value: string, secret: string) {
   const [iv, tag, content] = value.split('.');
   const cipher = createDecipheriv(
     'aes-256-gcm',
@@ -317,20 +317,22 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
       if (
         v.avatarMediaId &&
         !(await db
-          .prepare("SELECT id FROM media WHERE id=? AND ownerId=? AND coupleId=? AND kind='image'")
-          .get(v.avatarMediaId, userId, coupleId!))
+          .prepare("SELECT id FROM media WHERE id=? AND coupleId=? AND kind='image'")
+          .get(v.avatarMediaId, coupleId!))
       )
-        throw new Error('AI 头像必须是你在当前空间上传的图片');
+        throw new Error('AI 头像必须是当前空间的图片');
       await db
         .prepare(
-          "INSERT INTO ai_settings(userId,baseUrl,model,secret,enabled) VALUES(?,'','','',0) ON CONFLICT DO NOTHING",
+          "INSERT INTO couple_ai_settings(coupleId,baseUrl,model,secret,enabled) VALUES(?,'','','',0) ON CONFLICT DO NOTHING",
         )
-        .run(userId);
-      await db.prepare('UPDATE ai_settings SET name=? WHERE userId=?').run(v.name, userId);
+        .run(coupleId);
+      await db
+        .prepare('UPDATE couple_ai_settings SET name=? WHERE coupleId=?')
+        .run(v.name, coupleId);
       if (v.avatarMediaId !== undefined)
         await db
-          .prepare('UPDATE ai_settings SET avatarMediaId=? WHERE userId=?')
-          .run(v.avatarMediaId, userId);
+          .prepare('UPDATE couple_ai_settings SET avatarMediaId=? WHERE coupleId=?')
+          .run(v.avatarMediaId, coupleId);
       return { name: v.name, avatarUpdated: v.avatarMediaId !== undefined };
     }
     case 'list_todos':
@@ -449,14 +451,14 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
         | undefined;
       if (!job) return;
       const config = (await db
-        .prepare('SELECT * FROM ai_settings WHERE userId=? AND enabled=1')
-        .get(job.userId)) as
+        .prepare('SELECT * FROM couple_ai_settings WHERE coupleId=? AND enabled=1')
+        .get(job.coupleId)) as
         { baseUrl: string; model: string; secret: string; name: string } | undefined;
       const user = (await db.prepare('SELECT * FROM users WHERE id=?').get(job.userId)) as User;
       const persistReply = async (content: string) => {
         const identity = await db
-          .prepare('SELECT name,avatarMediaId FROM ai_settings WHERE userId=?')
-          .get(job.userId);
+          .prepare('SELECT name,avatarMediaId FROM couple_ai_settings WHERE coupleId=?')
+          .get(job.coupleId);
         const validAvatar =
           identity?.avatarMediaId &&
           (await db
@@ -488,14 +490,14 @@ export function aiWorker({ db, secret, notify, changed, completion = complete }:
             .get(job.userId, `ai:${job.messageId}`))!,
         );
       };
-      if (!config) {
-        await persistReply('请先在“我们”中配置并开启 AI 助手。');
-        return;
-      }
-      if (user.disabled || user.coupleId !== job.coupleId) {
+      if (!user || user.disabled || user.coupleId !== job.coupleId) {
         await db
           .prepare("UPDATE ai_jobs SET status='cancelled' WHERE messageId=?")
           .run(job.messageId);
+        return;
+      }
+      if (!config) {
+        await persistReply('请先在“我们”中配置并开启 AI 助手。');
         return;
       }
       const transcript: AIMessage[] = job.transcript

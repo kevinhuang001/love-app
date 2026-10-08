@@ -52,10 +52,11 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     aiAvatarFile = useRef<HTMLInputElement>(null);
   const [aiName, setAiName] = useState(profile.ai.name);
   const config = useQuery({
-    queryKey: ['ai-settings'],
+    queryKey: ['ai-settings', profile.user.coupleId],
     queryFn: () => api.request<AISettings>('/api/ai/settings'),
     enabled: Boolean(profile.couple && profile.partner),
   });
+  useEffect(() => setApiKey(''), [profile.user.coupleId]);
   useEffect(() => {
     if (config.data) {
       setAiUrl(config.data.baseUrl);
@@ -481,7 +482,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
                 placeholder={config.data?.hasKey ? '已保存；留空保持现有密钥' : '无鉴权服务可留空'}
               />
               <p className="text-[11px] text-muted-foreground">
-                密钥加密保存在你的服务器，不会返回到客户端。
+                配对双方共享并可修改这套配置。密钥加密保存在服务器，不会返回到客户端。
               </p>
             </div>
             <div className="flex items-center justify-between">

@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.3.0
+        description: New version tag, for example v2.4.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.3.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.4.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,19 +85,19 @@ jobs:
           mv release/app-debug.apk "release/$apk"
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cat > release/NOTES.md <<'NOTES'
-          新增可选注册邀请码与统一的交互部署管理。
+          相册连贯切换、真实在线状态与配对共享 AI。
 
-          - 管理员可开启 / 关闭邀请码要求，批量生成并下载，设置使用次数、有效期、批次备注和停用。
-          - 注册邀请码独立于配对邀请，仍需要邮箱验证和图形验证码；注册成功才原子消耗次数。
-          - 直接运行 ./love 选择菜单，不再提供二级命令或用户本地 build。
-          - 支持公开 Release 自动下载 / 校验 / 导入、GHCR 和自定义镜像仓库。
-          - 菜单统一管理初次配置、修改配置、启停、日志、更新、备份、恢复、管理员及用户账号、SMTP、注册和容量。
-          - 更新先备份，保留 .env 与数据；可回滚上次更新的镜像。卸载默认保留数据，删除卷需部署专属确认。
-          - 保留 HTTP / HTTPS 自定义端口、Certbot 自动续证、SQLite / PostgreSQL 与安卓本地通知。
+          - 相册左右滑动跟随手指移动，松手平滑切换；左右按钮、键盘及减少动态效果均支持。
+          - 聊天显示另一半真实前台在线状态，多设备统一计算，后台通知连接不计在线。
+          - AI URL、模型、Key、启用状态、名称与头像归属配对，双方可查看修改并实时同步，Key 保持加密且不返回明文。
+          - 移除右上角“两个人的生活”、在线“两人对话”文案及 To Do 情人节 / 七夕快捷创建。
+          - 公历 To Do 只显示倒计时，农历保留对应公历提示。
+          - 现有 schema 4 启动时原子升级为 schema 5，保留其他数据并移除个人 AI 设置表。
+          - 管理菜单保持现代交互终端，继续支持 HTTP / HTTPS、下载镜像部署、SQLite / PostgreSQL。
 
           APK 来自通过 test、postgres、docker、android 的 Actions 构建，附 SHA-256；这是调试签名，更新时签名不一致需卸载旧包，正式使用请固定 keystore。
           通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
-          现有 schema 4 数据卷无需清空。已有额度 0 现在禁止上传，请管理员按需要分配容量。
+          现有 schema 4 数据卷无需清空，更新前请使用管理菜单备份。
 
           Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md

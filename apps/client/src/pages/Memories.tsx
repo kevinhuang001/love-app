@@ -549,6 +549,8 @@ export function Memories() {
         item={current}
         index={index}
         total={total}
+        previousItem={items[index - 1] || null}
+        nextItem={items[index + 1] || null}
         previous={index > 0 ? () => setSelected(items[index - 1].id) : null}
         next={
           index >= 0 && (index + 1 < items.length || query.hasNextPage)

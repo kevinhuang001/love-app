@@ -54,3 +54,5 @@ export type Todo = {
   completed: number;
   completedDate: string | null;
 };
+
+export type Presence = { coupleId: string; users: { id: string; online: boolean }[] };

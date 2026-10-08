@@ -291,7 +291,7 @@ test('named assistant encrypted config, tool execution and per-user permissions'
   assert.equal(config.hasKey, true);
   assert.equal(config.apiKey, undefined);
   assert.ok(
-    !JSON.stringify(await s.db.prepare('SELECT * FROM ai_settings').all()).includes(
+    !JSON.stringify(await s.db.prepare('SELECT * FROM couple_ai_settings').all()).includes(
       'private-secret',
     ),
   );
@@ -503,8 +503,8 @@ test('custom AI name and avatar are separate from user identity and visible to b
     .expect(204);
   await s
     .api(b.token)
-    .patch('/api/ai/profile', { name: '冒充', avatarMediaId: media.body.id })
-    .expect(403);
+    .patch('/api/ai/profile', { name: '小桃', avatarMediaId: media.body.id })
+    .expect(204);
   await s.api(a.token).patch('/api/ai/profile', { name: '含 空格' }).expect(400);
   await s
     .api(a.token)

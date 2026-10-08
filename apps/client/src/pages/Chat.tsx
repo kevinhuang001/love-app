@@ -16,7 +16,7 @@ type Pending = {
   failed?: boolean;
 };
 export function Chat() {
-  const { api, profile, socket, connected, openUs } = useApp(),
+  const { api, profile, socket, connected, partnerOnline, openUs } = useApp(),
     cache = useQueryClient();
   const key = `love.outbox:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
   const [text, setText] = useState(''),
@@ -166,8 +166,20 @@ export function Chat() {
         )}
         <div>
           <h2 className="text-base font-medium">{profile.partner.name}</h2>
-          <p className="text-xs text-muted-foreground">
-            {typing ? '正在输入…' : connected ? '在线 · 两人对话' : '连接中 · 消息可重试'}
+          <p
+            aria-live="polite"
+            data-testid="partner-presence"
+            className="text-xs text-muted-foreground"
+          >
+            {!connected
+              ? '连接中…'
+              : partnerOnline === null
+                ? '正在确认状态…'
+                : typing && partnerOnline
+                  ? '正在输入…'
+                  : partnerOnline
+                    ? '在线'
+                    : '离线'}
           </p>
         </div>
         <button

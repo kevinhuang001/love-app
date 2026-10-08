@@ -30,16 +30,13 @@ export function Todos() {
     [repeat, setRepeat] = useState<'none' | 'yearly'>('none'),
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState<Todo | null>(null);
-  function begin(item?: Todo, preset?: 'valentine' | 'qixi') {
+  function begin(item?: Todo) {
     setEdit(item || null);
-    setTitle(item?.title || (preset === 'qixi' ? '七夕' : preset === 'valentine' ? '情人节' : ''));
-    setDate(
-      item?.date ||
-        (preset ? `${today().slice(0, 4)}-${preset === 'qixi' ? '07-07' : '02-14'}` : today()),
-    );
-    setCalendar(item?.calendar || (preset === 'qixi' ? 'lunar' : 'solar'));
+    setTitle(item?.title || '');
+    setDate(item?.date || today());
+    setCalendar(item?.calendar || 'solar');
     setLeapMonth(Boolean(item?.leapMonth));
-    setRepeat(item?.repeat || (preset ? 'yearly' : 'none'));
+    setRepeat(item?.repeat || 'none');
     setOpen(true);
   }
   const value = { title, date, calendar, leapMonth, repeat };
@@ -100,14 +97,6 @@ export function Todos() {
           onClick={() => begin()}
         >
           <Plus size={20} />
-        </Button>
-      </div>
-      <div className="mb-6 flex gap-2">
-        <Button size="sm" variant="outline" onClick={() => begin(undefined, 'valentine')}>
-          情人节 · 2/14
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => begin(undefined, 'qixi')}>
-          七夕 · 农历七月初七
         </Button>
       </div>
       {query.isPending ? (
@@ -348,7 +337,7 @@ export function Todos() {
             ) : (
               <p className="rounded-full bg-secondary p-3 text-xs leading-6">
                 {preview
-                  ? `对应公历 ${preview.date} · ${preview.days < 0 ? `已逾期 ${-preview.days} 天` : preview.days === 0 ? '就是今天' : `还有 ${preview.days} 天`}`
+                  ? `${calendar === 'lunar' ? `对应公历 ${preview.date} · ` : ''}${preview.days < 0 ? `已逾期 ${-preview.days} 天` : preview.days === 0 ? '就是今天' : `还有 ${preview.days} 天`}`
                   : '已超过 2100 年支持范围'}
               </p>
             )}

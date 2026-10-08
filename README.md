@@ -69,7 +69,7 @@ CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、
 - [API、Socket.IO 与 AI 工具](docs/api.md)
 - [架构、目录和测试](docs/architecture.md)
 
-后端支持 SQLite 与 PostgreSQL，当前仅支持最新 API 与数据库结构（schema 4），不包含旧版本别名、迁移或导入逻辑。部署使用新的数据目录；登录页底部展开“服务器设置”配置 URL。
+后端支持 SQLite 与 PostgreSQL，当前使用 schema 5，现有 schema 4 启动时原子升级为配对共享 AI；不提供旧 API 别名或 schema 3 及更早版本兼容。登录页底部展开“服务器设置”配置 URL。
 
 ## License
 

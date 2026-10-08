@@ -485,8 +485,27 @@ h3 {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+  touch-action: pan-y;
+}
+.album-viewer-track {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+.album-viewer-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  height: 100%;
   display: grid;
   place-items: center;
+  overflow: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .album-viewer-track {
+    transition-duration: 0ms !important;
+  }
 }
 .album-viewer-media img,
 .album-viewer-media video {
@@ -499,6 +518,7 @@ h3 {
 .album-viewer-media.is-zoomed {
   display: block;
   overflow: auto;
+  touch-action: pan-x pan-y;
 }
 .album-viewer-media.is-zoomed img {
   width: 200%;

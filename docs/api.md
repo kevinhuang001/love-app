@@ -58,7 +58,7 @@
 
 `POST /api/media` 在压缩前读取原文件元数据，返回 `capturedDate: "YYYY-MM-DD" | null`。照片优先 EXIF `DateTimeOriginal`，其次 `CreateDate`；保留相机记录的当地日期，不用服务器时区转换。视频优先 QuickTime 原始带时区的创建日期，其次 `creation_time`（UTC 转为应用日期时区 Asia/Shanghai）。不使用 EXIF 文件修改时间、文件名、文件修改时间或上传时间；缺失、损坏或无效的拍摄日期返回 null，媒体仍可上传。界面选择文件后先上传和识别，未识别时逐个文件补填日期，最后为每个文件分别调用 `POST /api/moments`，其 `date` 必填。提交相册失败时保留已上传的媒体 ID 与用户填写的日期，重试不会重新上传已成功的文件。数据库结构不变，拍摄日期保存于各条 moments.date。
 
-Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
+Socket.IO 用 `auth: { token }` 连接服务器 origin，事件：`message:new`、`message:read`、`typing`、`profile:changed`、`moments:changed`、`anniversaries:changed`、`todos:changed`。连接认证支持 `auth: {token, active: true}`。服务端 `presence:changed` 返回 `{coupleId, users:[{id,online}]}`，仅发往当前配对；客户端发送 `presence:set {active:boolean}` 汇报页面可见性 / 安卓前后台状态。任一有效前台连接存活即为在线，关闭、登出或全部进入后台即离线；丢失网络在 Socket.IO 心跳超时后变为离线。后台通知流不计为在线。客户端可以发送 `typing`；发送消息仍通过 HTTP。服务器决定情侣 room，客户端不能自行加入任意 room。
 
 ## 命名助手用法
 
@@ -110,3 +110,5 @@ GET `/api/notifications/stream` 使用 Bearer 认证，返回 SSE。可选 `afte
 - `POST /api/admin/registration-invites`：`{count:10,maxUses:1,expiresDays:30,label:"批次"}`，201 返回 `{codes:[{id,code,expires,maxUses}]}`；代码仅此响应显示。
 - `PATCH /api/admin/registration-invites/revoke`：`{ids:["UUID"]}`，停用指定邀请码，204。
 - `PATCH /api/admin/settings` 的 `invitationRequired` 控制是否要求邀请码。
+
+AI 地址、模型、密钥、启用状态、名称与头像以 `coupleId` 为单位保存，配对双方均可 GET/POST 设置及 PATCH 助手身份，修改向双方发送 `profile:changed`。响应只包含 `hasKey`，不包含密钥；同地址下省略 `apiKey` 保留密钥，切换地址会清空旧密钥。助手头像可引用当前配对任一方上传的图片。解除后不能访问原配置，重新配对不继承原空间设置。

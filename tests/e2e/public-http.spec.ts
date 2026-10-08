@@ -88,7 +88,7 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
   await page.getByLabel('密码', { exact: true }).fill(password);
   await solveCaptcha(page);
   await page.getByRole('button', { name: '进入我们的空间' }).click();
-  await expect(page.getByText('在线 · 两人对话', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('partner-presence')).toHaveText('离线');
   await page.getByRole('textbox', { name: '消息内容' }).fill('公网 HTTP 聊天正常');
   await page.getByRole('button', { name: '发送消息' }).click();
   await expect(page.getByText('公网 HTTP 聊天正常', { exact: true })).toBeVisible();

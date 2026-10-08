@@ -44,6 +44,8 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   expect(pairing.ok()).toBeTruthy();
   await expect(page.getByText('已经找到你')).toBeVisible();
   await page.getByRole('tab', { name: '聊天', exact: true }).click();
+  await expect(page.getByTestId('partner-presence')).toHaveText('离线');
+  await expect(page.getByText('两个人的生活', { exact: true })).toHaveCount(0);
   await page.getByRole('textbox', { name: '消息内容' }).fill('今天也想见你');
   await page.getByRole('button', { name: '发送消息' }).click();
   await expect(page.getByText('今天也想见你')).toBeVisible();
@@ -57,6 +59,18 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await solveCaptcha(other);
   await other.getByRole('button', { name: '进入我们的空间' }).click();
   await expect(other.getByText('今天也想见你')).toBeVisible();
+  await expect(page.getByTestId('partner-presence')).toHaveText('在线');
+  await expect(other.getByTestId('partner-presence')).toHaveText('在线');
+  await other.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.getByTestId('partner-presence')).toHaveText('离线');
+  await other.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(page.getByTestId('partner-presence')).toHaveText('在线');
   await expect(page.getByText('已读', { exact: true }).first()).toBeVisible();
   await other.getByRole('textbox', { name: '消息内容' }).fill('我也想你');
   await other.getByRole('button', { name: '发送消息' }).click();
@@ -89,7 +103,16 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await expect(page.getByText('旅行纪念日', { exact: true })).toBeVisible();
   await expect(page.getByText('第几天 · 累计')).toBeVisible();
   await page.getByRole('tab', { name: 'To Do', exact: true }).click();
-  await page.getByRole('button', { name: '七夕 · 农历七月初七' }).click();
+  await expect(page.getByRole('button', { name: '七夕 · 农历七月初七' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '情人节 · 2 月 14 日' })).toHaveCount(0);
+  await page.getByRole('button', { name: '新增 To Do' }).click();
+  await expect(page.getByRole('dialog')).not.toContainText('对应公历');
+  await page.getByLabel('待办名称').fill('七夕');
+  await page.getByLabel('历法').selectOption('lunar');
+  await page.getByLabel('农历月份').fill('7');
+  await page.getByLabel('农历日期').fill('7');
+  await page.getByLabel('重复规则').selectOption('yearly');
+  await expect(page.getByRole('dialog')).toContainText('对应公历');
   await expect(page.getByRole('dialog')).toContainText('农历重复每年按农历换算');
   const font = await page.getByRole('dialog').evaluate((el) => getComputedStyle(el).fontFamily);
   expect(font).toContain('Noto Sans SC');
@@ -137,7 +160,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.end(
       JSON.stringify({
-        choices: [{ message: { role: 'assistant', content: '你好，我是星星。中文提示正常。' } }],
+        choices: [{ message: { role: 'assistant', content: '你好，我是松子。中文提示正常。' } }],
       }),
     );
   });
@@ -159,13 +182,28 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     await page.getByLabel('开启 @星星').click();
     await page.getByRole('button', { name: '保存 AI 配置' }).click();
     await expect(page.getByText('AI 配置已保存', { exact: true })).toBeVisible();
+    await other.getByRole('tab', { name: '我们', exact: true }).click();
+    await expect(other.getByLabel('AI 服务 URL')).toHaveValue(
+      await page.getByLabel('AI 服务 URL').inputValue(),
+    );
+    await expect(other.getByLabel('模型名称')).toHaveValue('test-model');
+    await expect(other.getByLabel('AI 名称')).toHaveValue('星星');
+    await expect(other.getByRole('img', { name: 'AI 头像', exact: true })).toBeVisible();
+    await expect(other.getByLabel('API Key')).toHaveValue('');
+    await other.getByLabel('模型名称').fill('partner-model');
+    await other.getByRole('button', { name: '保存 AI 配置' }).click();
+    await expect(page.getByLabel('模型名称')).toHaveValue('partner-model');
+    await other.getByLabel('AI 名称').fill('松子');
+    await other.getByRole('button', { name: '保存 AI 名称', exact: true }).click();
+    await expect(page.getByLabel('AI 名称')).toHaveValue('松子');
+    await expect(page.getByLabel('开启 @松子')).toBeChecked();
     await page.getByRole('tab', { name: '聊天', exact: true }).click();
-    await page.getByRole('textbox', { name: '消息内容' }).fill('@星星 你好');
+    await page.getByRole('textbox', { name: '消息内容' }).fill('@松子 你好');
     await page.getByRole('button', { name: '发送消息' }).click();
-    await expect(page.getByText('你好，我是星星。中文提示正常。', { exact: true })).toBeVisible({
+    await expect(page.getByText('你好，我是松子。中文提示正常。', { exact: true })).toBeVisible({
       timeout: 16000,
     });
-    await expect(page.getByRole('img', { name: '星星的头像', exact: true })).toBeVisible();
+    await expect(page.getByRole('img', { name: '松子的头像', exact: true })).toBeVisible();
     await expect(page.locator('body')).not.toContainText('�');
     await expect(page.locator('body')).not.toContainText('Love Notes');
     const overflow = await page.evaluate(
@@ -333,6 +371,36 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await expect(
     page.getByRole('dialog').getByRole('heading', { name: '周末', exact: true }),
   ).toBeVisible();
+  const media = page.locator('.album-viewer-media');
+  const track = page.locator('.album-viewer-track');
+  const counter = page.getByRole('dialog').locator('footer [aria-live="polite"]');
+  const before = Number((await counter.innerText()).split('/')[0].trim());
+  const box = (await media.boundingBox())!;
+  const baseline = await track.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m41);
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75 - 120, box.y + box.height * 0.5, { steps: 8 });
+  await expect
+    .poll(() => track.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m41))
+    .toBeLessThan(baseline - 100);
+  await page.screenshot({ path: 'test-results/album-mid-swipe.png' });
+  await page.mouse.up();
+  await expect(counter).toHaveText(`${before + 1} / 5`);
+  await expect(track).toHaveAttribute('data-moving', 'false');
+  await page.getByRole('button', { name: '上一项回忆' }).click();
+  await expect(counter).toHaveText(`${before} / 5`);
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5 - 15, box.y + box.height * 0.5);
+  await page.mouse.up();
+  await expect
+    .poll(() => track.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m41))
+    .toBe(baseline);
+  await expect(counter).toHaveText(`${before} / 5`);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.getByRole('button', { name: '下一项回忆' }).click();
+  await expect(counter).toHaveText(`${before + 1} / 5`);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '紧凑查看', exact: true }).click();
   await expect(page.locator('.album-grid.is-compact')).toBeVisible();

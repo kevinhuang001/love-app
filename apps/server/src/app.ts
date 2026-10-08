@@ -1,3 +1,4 @@
+import { presence } from './presence.js';
 import { today } from '@love/calendar';
 import { readAlbum } from './album.js';
 import { anniversarySchema, todoSchema, aiProfileSchema, mentionsAI } from './schedules.js';
@@ -32,6 +33,7 @@ import {
   aiConfigSchema,
   validateAIUrl,
   encryptKey,
+  decryptKey,
   aiWorker,
   executeTool,
   tools as aiTools,
@@ -205,13 +207,13 @@ export async function createApp(options: AppOptions = {}) {
   });
   const aiIdentity = async (user: User) => {
     const row = await db
-      .prepare('SELECT name,avatarMediaId,enabled FROM ai_settings WHERE userId=?')
-      .get(user.id);
+      .prepare('SELECT name,avatarMediaId,enabled FROM couple_ai_settings WHERE coupleId=?')
+      .get(user.coupleId);
     const avatarId =
       row?.avatarMediaId &&
       (await db
-        .prepare('SELECT id FROM media WHERE id=? AND coupleId=? AND ownerId=?')
-        .get(row.avatarMediaId, user.coupleId, user.id))
+        .prepare('SELECT id FROM media WHERE id=? AND coupleId=?')
+        .get(row.avatarMediaId, user.coupleId))
         ? String(row.avatarMediaId)
         : null;
     return {
@@ -247,7 +249,7 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.3.0',
+      version: '2.4.0',
       notifications: 'local',
       database: db.provider,
     }),
@@ -416,6 +418,7 @@ export async function createApp(options: AppOptions = {}) {
       .run(hashToken(code), req.user.id, Date.now() + 600_000);
     res.json({ code, expiresAt: Date.now() + 600_000 });
   });
+  const broadcastPresence = presence(io, db);
   route('post', '/api/pairing/join', async (req, res) => {
     const { code } = z.object({ code: text.toUpperCase().regex(/^[0-9A-F]{12}$/) }).parse(req.body);
     const owner = await transaction(db, async () => {
@@ -442,6 +445,10 @@ export async function createApp(options: AppOptions = {}) {
       io.in(`user:${userId}`).socketsJoin(`couple:${updated.coupleId}`);
       io.to(`user:${userId}`).emit('profile:changed');
     }
+    await broadcastPresence(
+      (await db.prepare('SELECT coupleId FROM users WHERE id=?').get(req.user.id))!
+        .coupleId as string,
+    );
     res.json(
       await profile((await db.prepare('SELECT * FROM users WHERE id=?').get(req.user.id)) as User),
     );
@@ -840,7 +847,12 @@ export async function createApp(options: AppOptions = {}) {
   route('patch', '/api/ai/profile', async (req, res) => {
     const value = aiProfileSchema.parse(req.body);
     if (value.avatarMediaId) {
-      await ownedMedia(value.avatarMediaId, req);
+      if (
+        !(await db
+          .prepare('SELECT id FROM media WHERE id=? AND coupleId=?')
+          .get(value.avatarMediaId, await couple(req)))
+      )
+        fail(403, '不能使用其他空间的媒体');
       if (
         !(await db
           .prepare("SELECT id FROM media WHERE id=? AND kind='image'")
@@ -849,19 +861,19 @@ export async function createApp(options: AppOptions = {}) {
         fail(400, 'AI 头像请选择图片');
     }
     await executeTool(db, req.user.id, 'update_ai_profile', value);
-    io.to(`user:${req.user.id}`).emit('profile:changed');
+    io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     res.sendStatus(204);
   });
   route('get', '/api/ai/settings', async (req, res) => {
     const row = await db
-      .prepare('SELECT baseUrl,model,enabled,secret FROM ai_settings WHERE userId=?')
-      .get(req.user.id);
+      .prepare('SELECT baseUrl,model,enabled,secret FROM couple_ai_settings WHERE coupleId=?')
+      .get(await couple(req));
     res.json(
       row
         ? {
             baseUrl: row.baseUrl,
             model: row.model,
-            hasKey: Boolean(row.secret),
+            hasKey: Boolean(row.secret && decryptKey(String(row.secret), secret)),
             ...(await aiIdentity(req.user)),
           }
         : { baseUrl: '', model: '', hasKey: false, ...(await aiIdentity(req.user)) },
@@ -875,20 +887,25 @@ export async function createApp(options: AppOptions = {}) {
     } catch (err) {
       return fail(400, (err as Error).message);
     }
-    const old = (await db
-      .prepare('SELECT secret,baseUrl FROM ai_settings WHERE userId=?')
-      .get(req.user.id)) as { secret: string; baseUrl: string } | undefined;
-    const encrypted =
-      value.apiKey !== undefined
-        ? encryptKey(value.apiKey, secret)
-        : old?.baseUrl === baseUrl
-          ? old.secret
-          : encryptKey('', secret);
-    await db
-      .prepare(
-        'INSERT INTO ai_settings(userId,baseUrl,model,secret,enabled) VALUES(?,?,?,?,?) ON CONFLICT(userId) DO UPDATE SET baseUrl=excluded.baseUrl,model=excluded.model,secret=excluded.secret,enabled=excluded.enabled',
-      )
-      .run(req.user.id, baseUrl, value.model, encrypted, Number(value.enabled));
+    const coupleId = await transaction(db, async () => {
+      const id = await couple(req);
+      const old = (await db
+        .prepare('SELECT secret,baseUrl FROM couple_ai_settings WHERE coupleId=?')
+        .get(id)) as { secret: string; baseUrl: string } | undefined;
+      const encrypted =
+        value.apiKey !== undefined
+          ? encryptKey(value.apiKey, secret)
+          : old?.baseUrl === baseUrl
+            ? old.secret
+            : encryptKey('', secret);
+      await db
+        .prepare(
+          'INSERT INTO couple_ai_settings(coupleId,baseUrl,model,secret,enabled) VALUES(?,?,?,?,?) ON CONFLICT(coupleId) DO UPDATE SET baseUrl=excluded.baseUrl,model=excluded.model,secret=excluded.secret,enabled=excluded.enabled',
+        )
+        .run(id, baseUrl, value.model, encrypted, Number(value.enabled));
+      return id;
+    });
+    io.to(`couple:${coupleId}`).emit('profile:changed');
     res.sendStatus(204);
   });
   route('get', '/api/ai/tools', (_req, res) =>
@@ -947,18 +964,23 @@ export async function createApp(options: AppOptions = {}) {
     try {
       const found = await lookup(String(socket.handshake.auth.token || ''));
       if (!found) return next(new Error('登录已过期'));
-      socket.data = { userId: found.user.id, hash: found.hash, expires: found.expires };
+      socket.data = {
+        userId: found.user.id,
+        user: found.user,
+        hash: found.hash,
+        expires: found.expires,
+        active: socket.handshake.auth.active !== false,
+      };
       next();
     } catch {
       next(new Error('连接暂时不可用'));
     }
   });
-  io.on('connection', async (socket) => {
+  io.on('connection', (socket) => {
     try {
-      const user = (await db
-        .prepare('SELECT * FROM users WHERE id=?')
-        .get(socket.data.userId)) as User;
-      await control.log('info', 'realtime.connected', { userId: user.id });
+      // Install rooms and listeners synchronously before the client can send packets.
+      const user = socket.data.user as User;
+      void control.log('info', 'realtime.connected', { userId: user.id });
       socket.join(`user:${user.id}`);
       socket.join(`session:${socket.data.hash}`);
       if (user.coupleId) socket.join(`couple:${user.coupleId}`);
@@ -979,6 +1001,16 @@ export async function createApp(options: AppOptions = {}) {
           .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
           .get(hash, Date.now());
       }
+      socket.on('presence:set', async (value) => {
+        if (typeof value?.active !== 'boolean') return;
+        try {
+          socket.data.active = value.active;
+          const current = await db.prepare('SELECT coupleId FROM users WHERE id=?').get(user.id);
+          await broadcastPresence(current?.coupleId as string | null);
+        } catch {
+          socket.disconnect(true);
+        }
+      });
       socket.on('typing', async () => {
         try {
           if (Date.now() - lastTyping < 1500) return;
@@ -992,8 +1024,15 @@ export async function createApp(options: AppOptions = {}) {
       });
       socket.on('disconnect', async (reason) => {
         clearTimeout(expiryTimer);
-        await control.log('info', 'realtime.disconnected', { userId: user.id, reason });
+        try {
+          const current = await db.prepare('SELECT coupleId FROM users WHERE id=?').get(user.id);
+          await broadcastPresence(current?.coupleId as string | null);
+          await control.log('info', 'realtime.disconnected', { userId: user.id, reason });
+        } catch {
+          /* The application may already be shutting down. */
+        }
       });
+      void broadcastPresence(user.coupleId).catch(() => socket.disconnect(true));
     } catch {
       socket.disconnect(true);
     }

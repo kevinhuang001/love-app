@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
 import { schema } from './schema.js';
+import { pairAIUpgrade } from './migrations.js';
 export type User = {
   id: string;
   username: string;
@@ -77,10 +78,18 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     const sqlite = new DatabaseSync(options.path);
     try {
       const version = Number(sqlite.prepare('PRAGMA user_version').get()!.user_version);
-      if (version !== 0 && version !== 4)
+      if (version !== 0 && version !== 4 && version !== 5)
         throw new Error('数据库结构版本不匹配，请使用新的数据目录');
       sqlite.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
-      sqlite.exec(schema + 'PRAGMA user_version=4;');
+      sqlite.exec('BEGIN IMMEDIATE');
+      try {
+        sqlite.exec(schema);
+        if (version === 4) sqlite.exec(pairAIUpgrade);
+        sqlite.exec('PRAGMA user_version=5; COMMIT;');
+      } catch (error) {
+        sqlite.exec('ROLLBACK');
+        throw error;
+      }
     } catch (error) {
       sqlite.close();
       throw error;
@@ -198,14 +207,19 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     await db.transaction(async () => {
       await db.exec('CREATE TABLE IF NOT EXISTS database_meta(version BIGINT PRIMARY KEY)');
       const version = await db.prepare('SELECT version FROM database_meta').get();
-      if (version && version.version !== 4) throw new Error('数据库结构版本不匹配');
+      if (version && version.version !== 4 && version.version !== 5)
+        throw new Error('数据库结构版本不匹配');
       await db.exec(pgSchema());
+      if (version?.version === 4) {
+        await db.exec(pairAIUpgrade);
+        await db.exec('DELETE FROM database_meta WHERE version=4');
+      }
       await db.exec(`DO $$ BEGIN
         IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='users_avatar_fk' AND conrelid='users'::regclass) THEN
           ALTER TABLE users ADD CONSTRAINT users_avatar_fk FOREIGN KEY ("avatarMediaId") REFERENCES media(id);
         END IF;
       END $$;`);
-      await db.prepare('INSERT INTO database_meta VALUES(4) ON CONFLICT DO NOTHING').run();
+      await db.prepare('INSERT INTO database_meta VALUES(5) ON CONFLICT DO NOTHING').run();
     });
     return db;
   } catch (error) {

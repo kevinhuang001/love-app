@@ -7,6 +7,7 @@ export const AppContext = createContext<{
   profile: Profile;
   socket: Socket | null;
   connected: boolean;
+  partnerOnline: boolean | null;
   openUs: () => void;
 } | null>(null);
 export function useApp() {

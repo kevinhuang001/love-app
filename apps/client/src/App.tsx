@@ -13,7 +13,7 @@ import {
   enableNotifications,
   notificationStatus,
 } from './lib/notifications';
-import type { Profile, Session, Message } from './lib/types';
+import type { Profile, Session, Message, Presence } from './lib/types';
 import { AdminPortal } from './pages/Admin';
 import { Auth } from './pages/Auth';
 import { Chat } from './pages/Chat';
@@ -29,6 +29,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     [tab, setTab] = useState('chat'),
     [socket, setSocket] = useState<Socket | null>(null),
     [connected, setConnected] = useState(false),
+    [presence, setPresence] = useState<Presence | null>(null),
     [unread, setUnread] = useState(0);
   const api = useMemo(
     () =>
@@ -44,18 +45,32 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     retry: 1,
   });
   useEffect(() => {
+    let nativeActive = true;
     const connection = io(session.server, {
-      auth: { token: session.token },
+      auth: (callback) =>
+        callback({
+          token: session.token,
+          active: document.visibilityState === 'visible' && nativeActive,
+        }),
       transports: ['websocket', 'polling'],
       reconnectionDelayMax: 5000,
     });
     setSocket(connection);
+    const reportActivity = () =>
+      connection.emit('presence:set', {
+        active: document.visibilityState === 'visible' && nativeActive,
+      });
     const reconnect = () => {
       setConnected(true);
+      reportActivity();
       void cache.invalidateQueries();
     };
     connection.on('connect', reconnect);
-    connection.on('disconnect', () => setConnected(false));
+    connection.on('disconnect', () => {
+      setConnected(false);
+      setPresence(null);
+    });
+    connection.on('presence:changed', (value: Presence) => setPresence(value));
     connection.on('message:new', (message: Message) => {
       void cache.invalidateQueries({ queryKey: ['messages'] });
       if (message.senderId !== profile.data?.user.id || message.role === 'assistant')
@@ -77,6 +92,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       if (err.message === '登录已过期') void end();
     });
     const visible = () => {
+      reportActivity();
       if (document.visibilityState === 'visible') {
         connection.connect();
         void cache.invalidateQueries();
@@ -86,6 +102,8 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     let cleanupNative: (() => void) | undefined;
     if (Capacitor.isNativePlatform())
       void NativeApp.addListener('appStateChange', (state) => {
+        nativeActive = state.isActive;
+        reportActivity();
         if (state.isActive) {
           connection.connect();
           void cache.invalidateQueries();
@@ -152,7 +170,17 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     );
   return (
     <AppContext.Provider
-      value={{ api, profile: profile.data, socket, connected, openUs: () => setTab('us') }}
+      value={{
+        api,
+        profile: profile.data,
+        socket,
+        connected,
+        partnerOnline:
+          connected && presence?.coupleId === profile.data.user.coupleId
+            ? (presence.users.find((user) => user.id === profile.data.partner?.id)?.online ?? null)
+            : null,
+        openUs: () => setTab('us'),
+      }}
     >
       <Tabs value={tab} onValueChange={setTab} className="app-shell gap-0">
         {(!paired || tab !== 'chat') && (
@@ -161,7 +189,6 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
               love
               <span className="brand-dot" />
             </h1>
-            <span className="text-[11px] text-muted-foreground">两个人的生活</span>
           </header>
         )}
         <div className="flex min-h-0 flex-1 flex-col">

@@ -1,9 +1,12 @@
+import { packBackup, digestFile } from '../src/backup-archive.js';
+import { gunzipSync, zstdCompressSync } from 'node:zlib';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import {
   exportDatabase,
   extractBackup,
+  prepareBackupImport,
   validatePackage,
   restoreSQLite,
   rekeyBackup,
@@ -448,8 +451,8 @@ test('SQLite backup and restore retain every table, media bytes and sequences; r
   });
   assert.deepEqual(await readFile(s.sourcePath), s.sourceBytes);
   assert.equal(report.mediaFiles, 4);
-  const archive = join(s.dir, 'backup.tar.gz');
-  execFileSync('tar', ['-C', directory, '-czf', archive, '.']);
+  const archive = join(s.dir, 'backup.tar.zst');
+  await packBackup(directory, archive);
   const extracted = join(s.dir, 'extracted');
   await extractBackup(archive, extracted);
   assert.deepEqual((await validatePackage(extracted)).report, report);
@@ -487,6 +490,7 @@ test('backup extractor rejects links, traversal and malformed packages', async (
   await symlink(s.sourcePath, join(directory, 'love.sqlite'));
   const archive = join(s.dir, 'unsafe.tar.gz');
   execFileSync('tar', ['-C', directory, '-czf', archive, '.']);
+  await writeFile(archive, zstdCompressSync(gunzipSync(await readFile(archive))));
   await assert.rejects(extractBackup(archive, join(s.dir, 'out')), /不安全路径|链接/);
 });
 
@@ -510,14 +514,14 @@ for (const mode of ['original env', 'recreated env', 'lost original key']) {
       directory: packageDir,
     });
     await mkdir(archiveDir);
-    execFileSync('tar', ['-C', packageDir, '-czf', join(archiveDir, 'data.tar.gz'), '.']);
+    await packBackup(packageDir, join(archiveDir, 'data.tar.zst'));
     const backupKey = changedBackupKey ? 'recreated-backup-env-secret-at-least-32' : secret;
     await writeFile(
       join(archiveDir, 'deployment.env'),
       `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${backupKey}'\n`,
     );
     const checksums = await Promise.all(
-      ['deployment.env', 'data.tar.gz'].map(
+      ['deployment.env', 'data.tar.zst'].map(
         async (name) =>
           createHash('sha256')
             .update(await readFile(join(archiveDir, name)))
@@ -539,7 +543,7 @@ for (const mode of ['original env', 'recreated env', 'lost original key']) {
       DATABASE_PATH: join(destination, 'love.sqlite'),
       MEDIA_SIGNING_SECRET: key,
     };
-    const archiveBefore = await readFile(join(archiveDir, 'data.tar.gz'));
+    const archiveBefore = await readFile(join(archiveDir, 'data.tar.zst'));
     const cli = (operation, flags: string[] = []) =>
       spawnSync(
         process.execPath,
@@ -594,7 +598,7 @@ for (const mode of ['original env', 'recreated env', 'lost original key']) {
       await readFile(join(archiveDir, 'deployment.env'), 'utf8'),
       `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${backupKey}'\n`,
     );
-    assert.deepEqual(await readFile(join(archiveDir, 'data.tar.gz')), archiveBefore);
+    assert.deepEqual(await readFile(join(archiveDir, 'data.tar.zst')), archiveBefore);
     for (const name of await readdir(s.mediaDirectory))
       assert.deepEqual(
         await readFile(join(destination, 'media', name)),
@@ -880,6 +884,9 @@ test('versioned packages reject future software, future schema, inconsistent his
     { applicationVersion: '99.0.0' },
     { schemaVersion: 99 },
     { schemaVersion: 0 },
+    { version: 99 },
+    { version: 0 },
+    { version: 1.5 },
   ]) {
     await writeFile(manifestPath, JSON.stringify({ ...JSON.parse(original), ...change }));
     await assert.rejects(restoreSQLite(directory, destination), /版本/);
@@ -893,7 +900,7 @@ test('versioned packages reject future software, future schema, inconsistent his
   sqlite.exec("UPDATE schema_migrations SET checksum='modified'");
   sqlite.close();
   const changed = JSON.parse(original);
-  changed.databaseSha256 = createHash('sha256')
+  changed.integrity.databaseSha256 = createHash('sha256')
     .update(await readFile(join(directory, 'love.sqlite')))
     .digest('hex');
   await writeFile(manifestPath, JSON.stringify(changed));
@@ -910,6 +917,19 @@ test('a later software build validates a version 1 backup, migrates its private 
     mediaDirectory: s.mediaDirectory,
     directory: original,
   });
+  const manifestPath = join(original, 'manifest.json');
+  const current = JSON.parse(await readFile(manifestPath, 'utf8'));
+  const { integrity, ...metadata } = current;
+  await writeFile(
+    manifestPath,
+    JSON.stringify({
+      ...metadata,
+      version: 1,
+      databaseSha256: integrity.databaseSha256,
+      report: integrity.report,
+    }),
+  );
+  const beforeManifest = await readFile(manifestPath);
   const before = await readFile(join(original, 'love.sqlite'));
   const copy = join(s.dir, 'private');
   await cp(original, copy, { recursive: true });
@@ -936,7 +956,10 @@ test('a later software build validates a version 1 backup, migrates its private 
   const versionPath = join(runtime, 'src', 'version.ts');
   await writeFile(
     versionPath,
-    (await readFile(versionPath, 'utf8')).replace("'2.9.2'", "'2.10.0'"),
+    (await readFile(versionPath, 'utf8')).replace(
+      /APPLICATION_VERSION = '[^']+'/,
+      "APPLICATION_VERSION = '2.10.0'",
+    ),
   );
   const destination = join(s.dir, 'future-target', 'love.sqlite');
   const modulePath = new URL('src/database-backup.ts', 'file://' + runtime + '/').href;
@@ -973,6 +996,119 @@ test('a later software build validates a version 1 backup, migrates its private 
     sqlite.close();
   }
   assert.deepEqual(await readFile(join(original, 'love.sqlite')), before);
+  assert.deepEqual(await readFile(manifestPath), beforeManifest);
+  assert.equal(JSON.parse(await readFile(join(copy, 'manifest.json'), 'utf8')).version, 2);
   for (const [name, data] of s.contents)
     assert.deepEqual(await readFile(join(s.dir, 'future-target', 'media', name)), data);
+});
+
+for (const postgres of [false, true]) {
+  test(
+    `historical backup format 1 upgrades and restores into ${postgres ? 'PostgreSQL' : 'SQLite'} without rewriting its archive`,
+    postgres ? onlyPG : {},
+    async (t) => {
+      const s = await fixture(t, postgres),
+        directory = join(s.dir, 'historical');
+      const report = await exportDatabase({
+        sqlitePath: s.sourcePath,
+        mediaDirectory: s.mediaDirectory,
+        directory,
+      });
+      const path = join(directory, 'manifest.json');
+      const { integrity, ...metadata } = JSON.parse(await readFile(path, 'utf8'));
+      await writeFile(
+        path,
+        JSON.stringify({
+          ...metadata,
+          applicationVersion: '2.9.2',
+          version: 1,
+          databaseSha256: integrity.databaseSha256,
+          report: integrity.report,
+        }),
+      );
+      const manifestBefore = await readFile(path),
+        outer = join(s.dir, 'legacy-backup');
+      await mkdir(outer);
+      const archive = join(outer, 'data.tar.gz');
+      execFileSync('tar', ['-C', directory, '-czf', archive, '.']);
+      const archiveBefore = await readFile(archive),
+        extracted = join(s.dir, 'copy');
+      await writeFile(join(outer, 'deployment.env'), 'PRIVATE=source\n');
+      await writeFile(
+        join(outer, 'SHA256SUMS'),
+        (
+          await Promise.all(
+            ['deployment.env', 'data.tar.gz'].map(
+              async (name) => `${await digestFile(join(outer, name))}  ${name}`,
+            ),
+          )
+        ).join('\n') + '\n',
+      );
+      const validated = await prepareBackupImport(outer, extracted);
+      assert.equal(
+        (await readdir(extracted)).some((name) => name.startsWith('.format-')),
+        false,
+      );
+      assert.equal(validated.formatVersion, 1);
+      assert.equal(validated.targetFormatVersion, 2);
+      assert.deepEqual(validated.report, report);
+      assert.equal(JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8')).version, 2);
+      if (postgres) {
+        await restoreToPostgres({
+          sourcePath: join(extracted, 'love.sqlite'),
+          mediaDirectory: join(extracted, 'media'),
+          target: s.target,
+        });
+        assert.equal((await s.target.prepare('SELECT COUNT(*) n FROM users').get())!.n, 2);
+        const repository = new MediaRepository(s.target, 'unused');
+        for (const [name, expected] of s.contents) {
+          const buffers: Buffer[] = [];
+          for await (const part of repository.stream(name)) buffers.push(Buffer.from(part));
+          assert.deepEqual(Buffer.concat(buffers), expected);
+        }
+      } else {
+        const destination = join(s.dir, 'restored', 'love.sqlite');
+        await restoreSQLite(extracted, destination);
+        const restored = new DatabaseSync(destination, { readOnly: true });
+        try {
+          assert.equal(restored.prepare('SELECT COUNT(*) n FROM users').get()!.n, 2);
+          assert.equal(restored.prepare('SELECT COUNT(*) n FROM message_media').get()!.n, 1);
+        } finally {
+          restored.close();
+        }
+        for (const [name, expected] of s.contents)
+          assert.deepEqual(await readFile(join(s.dir, 'restored', 'media', name)), expected);
+      }
+      assert.deepEqual(await readFile(path), manifestBefore);
+      assert.deepEqual(await readFile(archive), archiveBefore);
+      assert.deepEqual(await readFile(s.sourcePath), s.sourceBytes);
+    },
+  );
+}
+
+test('corrupt format 1 payload is rejected before rewriting its manifest or the target', async (t) => {
+  const s = await fixture(t, false),
+    directory = join(s.dir, 'corrupt-v1');
+  await exportDatabase({ sqlitePath: s.sourcePath, mediaDirectory: s.mediaDirectory, directory });
+  const path = join(directory, 'manifest.json');
+  const { integrity, ...metadata } = JSON.parse(await readFile(path, 'utf8'));
+  await writeFile(
+    path,
+    JSON.stringify({
+      ...metadata,
+      version: 1,
+      databaseSha256: integrity.databaseSha256,
+      report: integrity.report,
+    }),
+  );
+  const beforeManifest = await readFile(path);
+  const destination = join(s.dir, 'retained', 'love.sqlite');
+  const target = await openDatabase(destination);
+  await target.prepare("INSERT INTO couples(id) VALUES('retained')").run();
+  await target.close();
+  const beforeTarget = await readFile(destination);
+  await writeFile(join(directory, 'media', 'clip.mp4'), 'corrupt');
+  await assert.rejects(restoreSQLite(directory, destination), /容量|摘要/);
+  assert.deepEqual(await readFile(path), beforeManifest);
+  assert.deepEqual(await readFile(destination), beforeTarget);
 });

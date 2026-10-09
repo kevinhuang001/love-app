@@ -9,6 +9,7 @@ import { Manager, runCommand } from '../deploy/manager.mjs';
 import { quoteEnv } from './setup.mjs';
 import { openDatabase } from '../apps/server/src/db.ts';
 import { MediaRepository } from '../apps/server/src/media-repository.ts';
+import { APPLICATION_VERSION } from '../apps/server/src/version.ts';
 const templateNames = [
   'compose.yml',
   'compose.postgres.yml',
@@ -174,7 +175,7 @@ for (const database of ['sqlite', 'postgres']) {
       selected = 'sqlite-source';
       const cross = join(directory, 'backups', selected);
       await mkdir(cross);
-      for (const name of ['deployment.env', 'data.tar.gz', 'SHA256SUMS'])
+      for (const name of ['deployment.env', 'data.tar.zst', 'SHA256SUMS'])
         await copyFile(join(firstBackup, name), join(cross, name));
       await manager.restore();
       await manager.paused(() =>
@@ -243,7 +244,7 @@ for (const database of ['sqlite', 'postgres']) {
       const external = new Manager({
         directory: externalDirectory,
         executable: join(externalDirectory, 'love'),
-        version: '2.9.2',
+        version: APPLICATION_VERSION,
         source: '0'.repeat(40),
         templates,
         ui,

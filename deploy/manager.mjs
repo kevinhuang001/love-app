@@ -12,12 +12,12 @@ import { latestImage, isCurrentImage, obsoleteImages, imageRepository } from './
 import { latestManager, installManager } from './releases.mjs';
 import { atomicFile } from './files.mjs';
 import { packBackup } from './archive.mjs';
+import { BACKUP_ARCHIVE_NAME } from '../apps/server/src/backup-archive.ts';
 import { openDatabase } from '../apps/server/src/db.ts';
 import {
   exportDatabase,
   digestFile,
-  extractBackup,
-  validatePackage,
+  prepareBackupImport,
   rekeyBackup,
   auditBackupCredentials,
   restoreSQLite,
@@ -376,13 +376,13 @@ export class Manager {
             );
           this.log(`已校验 ${report.tables.users} 个用户、${report.mediaFiles} 个媒体文件。`);
         });
-        await packBackup(data, join(stage, 'data.tar.gz'));
+        await packBackup(data, join(stage, BACKUP_ARCHIVE_NAME));
         await atomicFile(
           join(stage, 'deployment.env'),
           await readFile(join(this.directory, '.env')),
         );
         const sums = await Promise.all(
-          ['deployment.env', 'data.tar.gz'].map(
+          ['deployment.env', BACKUP_ARCHIVE_NAME].map(
             async (n) => (await digestFile(join(stage, n))) + '  ' + n,
           ),
         );
@@ -420,31 +420,16 @@ export class Manager {
         ? resolve(
             await this.ask(
               'text',
-              '备份目录路径（包含 SHA256SUMS、deployment.env 和 data.tar.gz）',
+              '备份目录路径（包含 SHA256SUMS、deployment.env 和 data.tar.zst（旧备份为 data.tar.gz））',
             ),
           )
         : join(this.directory, 'backups', name);
     if (name !== 'manual' && !/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('备份目录无效');
     if (!(await lstat(source)).isDirectory() || (await lstat(source)).isSymbolicLink())
       throw new Error('备份目录无效');
-    const entries = new Set();
-    for (const line of (await readFile(join(source, 'SHA256SUMS'), 'utf8')).trim().split('\n')) {
-      const m = line.match(/^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz)$/);
-      if (
-        !m ||
-        entries.has(m[2]) ||
-        !(await lstat(join(source, m[2]))).isFile() ||
-        (await digestFile(join(source, m[2]))) !== m[1]
-      )
-        throw new Error('备份校验失败');
-      entries.add(m[2]);
-    }
-    if (!entries.has('deployment.env') || !entries.has('data.tar.gz'))
-      throw new Error('备份校验清单不完整');
     const temp = await mkdtemp(join(tmpdir(), 'love-restore-'));
     try {
-      await extractBackup(join(source, 'data.tar.gz'), temp);
-      const original = await validatePackage(temp),
+      const original = await prepareBackupImport(source, temp),
         t = original.report.tables;
       const targetVersion = await this.databaseImageVersion();
       assertBackupVersion(
@@ -457,6 +442,10 @@ export class Manager {
         [
           ['备份版本', `应用 v${original.applicationVersion} / 数据库 ${original.schemaVersion}`],
           ['目标版本', `应用 v${targetVersion} / 数据库 ${SCHEMA_VERSION}`],
+          [
+            '备份格式',
+            `${original.formatVersion} → ${original.targetFormatVersion}${original.formatVersion < original.targetFormatVersion ? '（自动转换）' : ''}`,
+          ],
           ['账号与配对', `${t.users} 个用户 / ${t.couples} 对配对`],
           ['聊天消息', `${t.messages} 条`],
           ['媒体内容', `${t.media} 条记录 / ${original.report.mediaFiles} 个文件`],

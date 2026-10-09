@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -78,8 +78,12 @@ export async function managerSelfTest() {
       ai: 0,
       smtp: 0,
     });
-    await packBackup(output, join(root, 'data.tar.gz'));
-    await extractBackup(join(root, 'data.tar.gz'), join(root, 'extracted'));
+    await packBackup(output, join(root, 'data.tar.zst'));
+    assert.deepEqual(
+      (await readFile(join(root, 'data.tar.zst'))).subarray(0, 4),
+      Buffer.from([0x28, 0xb5, 0x2f, 0xfd]),
+    );
+    await extractBackup(join(root, 'data.tar.zst'), join(root, 'extracted'));
     assert.deepEqual((await validatePackage(join(root, 'extracted'))).report, report);
     const destination = join(root, 'restored', 'love.sqlite');
     await restoreSQLite(join(root, 'extracted'), destination);

@@ -54,7 +54,7 @@ Certbot 失败时会记录原因并稍后重试。先根据日志修复 DNS 或�
 
 ## 备份不能导入
 
-确认拿到的是整个服务器备份目录，包含 `deployment.env`、`data.tar.gz` 和 `SHA256SUMS`。相册 ZIP 只能在回忆页导入。
+确认拿到的是整个服务器备份目录，包含 `deployment.env`、`data.tar.zst`（旧版为 `data.tar.gz`）和 `SHA256SUMS`。相册 ZIP 只能在回忆页导入。
 
 目标软件版本不能低于备份版本。缺失媒体、内容校验失败、旧格式或不支持的数据库结构会停止导入。兼容范围见 [日常维护](manage.md#旧备份的限制)。
 

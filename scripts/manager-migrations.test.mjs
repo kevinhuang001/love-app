@@ -74,13 +74,13 @@ test('initial SQLite import restores a real versioned package before application
     data = join(directory, 'package');
   await mkdir(archive, { recursive: true });
   await exportDatabase({ sqlitePath: sourcePath, mediaDirectory: media, directory: data });
-  await packBackup(data, join(archive, 'data.tar.gz'));
+  await packBackup(data, join(archive, 'data.tar.zst'));
   await writeFile(
     join(archive, 'deployment.env'),
     "MEDIA_SIGNING_SECRET='original-key-with-at-least-32-characters'\n",
   );
   const checksums = await Promise.all(
-    ['deployment.env', 'data.tar.gz'].map(
+    ['deployment.env', 'data.tar.zst'].map(
       async (name) => (await digestFile(join(archive, name))) + '  ' + name,
     ),
   );

@@ -2,6 +2,8 @@
 
 Love 的 Web 与 Android 共用 React 界面。Node.js 后端负责身份校验、业务数据、媒体处理、实时通信和 AI 调用。独立 `love` 管理程序运行在 Linux 宿主机，负责部署与数据库维护。
 
+逐项运行过程与失败分支见[实现细节目录](implementation/README.md)。
+
 ## 组件与职责
 
 | 组件           | 技术与职责                                                             |

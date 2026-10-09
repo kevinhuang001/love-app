@@ -33,9 +33,11 @@
 
 ```text
 部署配置 deployment.env
-数据归档 data.tar.gz
+数据归档 data.tar.zst
 校验文件 SHA256SUMS
 ```
+
+新备份使用 Zstandard 无损压缩，程序会自动处理；旧版的 data.tar.gz 也可以导入，不用手工解压或转换。
 
 把整个备份目录复制到另一台机器或其他可靠存储上。只放在原服务器的备份不能防止服务器或硬盘损坏。
 

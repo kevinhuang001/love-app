@@ -15,17 +15,21 @@
 
 ## 开发者
 
-| 文档                                             | 内容                                                   |
-| ------------------------------------------------ | ------------------------------------------------------ |
-| [本地开发](developer/getting-started.md)         | 环境、启动、测试和仓库目录                             |
-| [架构](developer/architecture.md)                | 前后端职责、权限、消息、媒体、AI 与通知的处理流程      |
-| [配置参考](developer/configuration.md)           | 环境变量、默认值和生效方式                             |
-| [接口参考](developer/api.md)                     | HTTP API、Socket.IO、通知流与 AI 工具                  |
-| [数据库与媒体存储](developer/database.md)        | 数据库接口、表的职责、SQLite 与 PostgreSQL 存储差异    |
-| [数据库迁移](developer/migrations.md)            | 新增增量、迁移历史、事务、兼容范围与测试要求           |
-| [备份与相册文件格式](developer/backup-format.md) | 服务器备份和相册 ZIP 的结构、校验、恢复流程            |
-| [手工部署与镜像构建](developer/deployment.md)    | Compose 文件组合、反向代理、非 Docker 运行、国内构建源 |
-| [Android 构建与签名](developer/android.md)       | 本地构建、固定签名和原生通知测试                       |
-| [CI 与发布](developer/ci.md)                     | GitHub Actions 检查项、构建产物和发布条件              |
+| 文档                                                  | 内容                                                   |
+| ----------------------------------------------------- | ------------------------------------------------------ |
+| [本地开发](developer/getting-started.md)              | 环境、启动、测试和仓库目录                             |
+| [架构](developer/architecture.md)                     | 前后端职责、权限、消息、媒体、AI 与通知的处理流程      |
+| [配置参考](developer/configuration.md)                | 环境变量、默认值和生效方式                             |
+| [接口参考](developer/api.md)                          | HTTP API、Socket.IO、通知流与 AI 工具                  |
+| [数据库与媒体存储](developer/database.md)             | 数据库接口、表的职责、SQLite 与 PostgreSQL 存储差异    |
+| [SQLite 表结构](developer/database-sqlite.md)         | SQLite 每张表的字段、默认值、主键、外键和索引          |
+| [PostgreSQL 表结构](developer/database-postgresql.md) | PostgreSQL 类型、媒体分块表与恢复内部表                |
+| [备份格式迁移](developer/backup-migrations.md)        | 独立格式转换链、历史读法与新增格式的要求               |
+| [实现细节](developer/implementation/README.md)        | 从操作到代码，配合流程图、状态图和时序图阅读           |
+| [数据库迁移](developer/migrations.md)                 | 新增增量、迁移历史、事务、兼容范围与测试要求           |
+| [备份与相册文件格式](developer/backup-format.md)      | 服务器备份和相册 ZIP 的结构、校验、恢复流程            |
+| [手工部署与镜像构建](developer/deployment.md)         | Compose 文件组合、反向代理、非 Docker 运行、国内构建源 |
+| [Android 构建与签名](developer/android.md)            | 本地构建、固定签名和原生通知测试                       |
+| [CI 与发布](developer/ci.md)                          | GitHub Actions 检查项、构建产物和发布条件              |
 
 使用文档说明操作步骤和结果；开发文档说明实现与约定。每项内容只在对应文档详细展开，其他页面通过链接引用。

@@ -131,6 +131,12 @@ export async function exportDatabase({
       } finally {
         source.close();
       }
+      const cleaned = new DatabaseSync(output);
+      try {
+        cleaned.exec('DELETE FROM media_uploads');
+      } finally {
+        cleaned.close();
+      }
     });
   } else {
     const source = db!;

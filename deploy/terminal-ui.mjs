@@ -18,13 +18,7 @@ export const menuOptions = [
   { value: 'status', label: '状态与版本' },
   { value: 'logs', label: '查看日志', hint: '显示最近 200 条' },
   { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才下载，备份可跳过' },
-  { value: 'backup', label: '备份数据与配置' },
-  { value: 'restore', label: '恢复备份', hint: '自动识别并转换至当前数据库，保留部署配置' },
-  {
-    value: 'cleanup',
-    label: '清理 SQLite 未引用媒体',
-    hint: '只删除没有数据库引用的文件，备份可跳过',
-  },
+  { value: 'database', label: '数据库管理', hint: '一致性检查、备份、恢复与未使用媒体清理' },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
   { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
@@ -72,11 +66,47 @@ export async function prompt({
     if (result === 'exit') ui.outro('已退出部署管理');
     return result;
   }
+  if (kind === 'database-menu') {
+    ui.intro('LOVE · 数据库管理');
+    return ask(
+      select({
+        message: '选择数据库操作',
+        initialValue: 'check',
+        options: [
+          { value: 'check', label: '一致性检查', hint: '表关系、媒体完整性与容量，支持深入校验' },
+          { value: 'backup', label: '备份数据与配置' },
+          { value: 'restore', label: '恢复备份', hint: '自动转换至当前数据库，保留部署配置' },
+          {
+            value: 'cleanup',
+            label: '清理未使用媒体',
+            hint: '未进入聊天/回忆的上传全部清理，保护正在使用的头像',
+          },
+          { value: 'back', label: '返回主菜单' },
+        ],
+      }),
+    );
+  }
+  if (kind === 'check-mode')
+    return ask(
+      select({
+        message: '选择一致性检查范围',
+        initialValue: 'quick',
+        options: [
+          { value: 'quick', label: '常规检查', hint: '数据库关系、文件存在性、分块与容量' },
+          {
+            value: 'deep',
+            label: '深入检查',
+            hint: '逐个读取媒体、计算 SHA-256；大数据量耗时较长',
+          },
+          { value: 'cancel', label: '取消检查' },
+        ],
+      }),
+    );
   if (kind === 'continue')
     return ask(
       ui.select({
         message: '查看完操作结果后，按回车返回',
-        options: [{ value: 'continue', label: '返回主菜单' }],
+        options: [{ value: 'continue', label: message || '返回主菜单' }],
         showInstructions: false,
       }),
     );

@@ -5,9 +5,14 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { removeMediaFiles } from './media-storage.js';
 import { imageCaptureDate, videoCaptureDate } from './capture-date.js';
-function run(command: string, args: string[]): Promise<string> {
+function run(command: string, args: string[], signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    signal?.throwIfAborted();
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      signal,
+      killSignal: 'SIGKILL',
+    });
     let output = '',
       errors = '';
     child.stdout.on('data', (chunk) => {
@@ -17,9 +22,13 @@ function run(command: string, args: string[]): Promise<string> {
       if (errors.length < 10_000) errors += chunk;
     });
     child.on('error', (err) => {
-      reject(err);
+      if (!signal?.aborted) reject(err);
     });
     child.on('close', (code) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       code === 0
         ? resolve(output)
         : reject(new Error(`无法解码媒体 (${command}): ${errors.slice(-300)}`));
@@ -31,12 +40,14 @@ export async function processMedia(
   mime: string,
   dir: string,
   retainOriginal: boolean,
+  signal?: AbortSignal,
 ) {
   const id = randomUUID();
   const original = retainOriginal ? `${id}.source` : '',
     thumbnail = `${id}.thumb.webp`;
   let preview = `${id}.preview.webp`;
   try {
+    signal?.throwIfAborted();
     if (mime.startsWith('image/')) {
       const image = sharp(source, { limitInputPixels: false }).rotate();
       const info = await image.metadata();
@@ -53,6 +64,7 @@ export async function processMedia(
         .resize(480, 480, { fit: 'inside', withoutEnlargement: true })
         .webp({ quality: 72 })
         .toFile(join(dir, thumbnail));
+      signal?.throwIfAborted();
       if (retainOriginal) await rename(source, join(dir, original));
       else await rm(source);
       return {
@@ -69,7 +81,11 @@ export async function processMedia(
     }
     if (!mime.startsWith('video/')) throw new Error('只能上传图片或视频');
     const metadata = JSON.parse(
-      await run('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', source]),
+      await run(
+        'ffprobe',
+        ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', source],
+        signal,
+      ),
     );
     const stream = metadata.streams.find(
       (item: { codec_type: string }) => item.codec_type === 'video',
@@ -78,54 +94,63 @@ export async function processMedia(
     if (!stream || !Number.isFinite(duration) || duration <= 0)
       throw new Error('视频数据无效，无法读取时长');
     preview = `${id}.preview.mp4`;
-    await run('ffmpeg', [
-      '-nostdin',
-      '-xerror',
-      '-err_detect',
-      'explode',
-      '-y',
-      '-i',
-      source,
-      '-map',
-      '0:v:0',
-      '-map',
-      '0:a:0?',
-      '-vf',
-      "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '27',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      '-b:a',
-      '96k',
-      '-movflags',
-      '+faststart',
-      '-threads',
-      '2',
-      join(dir, preview),
-    ]);
-    await run('ffmpeg', [
-      '-nostdin',
-      '-xerror',
-      '-err_detect',
-      'explode',
-      '-y',
-      '-i',
-      join(dir, preview),
-      '-frames:v',
-      '1',
-      '-vf',
-      'scale=480:-1',
-      '-c:v',
-      'libwebp',
-      join(dir, thumbnail),
-    ]);
+    await run(
+      'ffmpeg',
+      [
+        '-nostdin',
+        '-xerror',
+        '-err_detect',
+        'explode',
+        '-y',
+        '-i',
+        source,
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a:0?',
+        '-vf',
+        "scale='min(1280,iw)':'min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '27',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '96k',
+        '-movflags',
+        '+faststart',
+        '-threads',
+        '2',
+        join(dir, preview),
+      ],
+      signal,
+    );
+    await run(
+      'ffmpeg',
+      [
+        '-nostdin',
+        '-xerror',
+        '-err_detect',
+        'explode',
+        '-y',
+        '-i',
+        join(dir, preview),
+        '-frames:v',
+        '1',
+        '-vf',
+        'scale=480:-1',
+        '-c:v',
+        'libwebp',
+        join(dir, thumbnail),
+      ],
+      signal,
+    );
+    signal?.throwIfAborted();
     if (retainOriginal) await rename(source, join(dir, original));
     else await rm(source);
     return {

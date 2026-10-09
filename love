@@ -305,16 +305,55 @@ rollback() {
 }
 cleanup_media() {
   require_config && ensure_image || return 1
-  [ "$database" = sqlite ] || { printf '此操作用于 SQLite 的磁盘媒体。\n'; return 1; }
-  confirm '暂停写入，清理没有数据库引用的媒体及上传临时文件？' || return 0
+  confirm '暂停写入并预览未使用媒体？保护回忆、聊天和头像；所有未发布上传均纳入清理。' || return 0
   optional_backup || return 1
   cleanup_running=$(running_app_containers) || return 1
   compose stop love || return 1
   cleanup_status=0
-  compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/unused-media-cli.js --apply || cleanup_status=$?
+  cleanup_review=$(compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/unused-media-cli.js) || cleanup_status=$?
+  if [ "$cleanup_status" = 0 ] && confirm '永久删除以上清单中的未使用媒体和临时文件？既有备份不变。'; then
+    compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/unused-media-cli.js --apply --review "$cleanup_review" || cleanup_status=$?
+  fi
   [ -z "$cleanup_running" ] || compose start love || cleanup_status=1
   return "$cleanup_status"
 }
+check_database() {
+  require_config && ensure_image || return 1
+  ui check-mode || return 1
+  case "$answer" in
+    cancel) return 0;;
+    quick) check_flag='';;
+    deep) check_flag='--deep';;
+    *) return 1;;
+  esac
+  check_running=$(running_app_containers) || return 1
+  compose stop love || return 1
+  check_status=0
+  compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/database-check-cli.js $check_flag || check_status=$?
+  [ -z "$check_running" ] || compose start love || check_status=1
+  return "$check_status"
+}
+database_menu() {
+  while :; do
+    refresh_screen
+    ui database-menu || { [ "$ui_status" = 130 ] && return 0; return 1; }
+    database_choice=$answer
+    [ "$database_choice" != back ] || return 0
+    refresh_screen
+    database_result=0
+    case "$database_choice" in
+      check) check_database || database_result=$?;;
+      backup) backup || database_result=$?;;
+      restore) restore || database_result=$?;;
+      cleanup) cleanup_media || database_result=$?;;
+      *) return 1;;
+    esac
+    [ "$database_result" = 0 ] || printf '操作未完成（退出码 %s），配置和备份仍保留。\n' "$database_result" >&2
+    [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
+    ui continue '返回数据库管理' || return 1
+  done
+}
+
 uninstall() {
   require_config || return 1
   ui uninstall "$project" || return 1
@@ -352,13 +391,12 @@ while :; do
     status) require_config && compose ps && docker image inspect "$image" --format '{{.Id}} {{.Created}}' || result=$?;;
     logs) require_config && compose logs --tail 200 || result=$?;;
     update) update || result=$?;;
-    backup) backup || result=$?;;
-    restore) restore || result=$?;;
-    cleanup) cleanup_media || result=$?;;
+    database) database_menu || result=$?;;
     uninstall) uninstall || result=$?;;
     rollback) rollback || result=$?;;
     *) exit 1;;
   esac
+  [ "$choice" != database ] || { [ "$result" != 0 ] || continue; }
   [ "$result" = 0 ] || printf '操作未完成（退出码 %s），配置和备份仍保留。\n' "$result" >&2
   [ -z "$work" ] || { rm -rf -- "$work"; work=''; }
   return_to_menu

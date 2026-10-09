@@ -58,6 +58,28 @@ test('mobile album exports both ZIP formats and imports a full backup with dates
     .withExif({ IFD2: { DateTimeOriginal: '2024:02:29 12:34:56' } })
     .jpeg()
     .toBuffer();
+  // Closing an uploaded draft frees its records/bytes instead of leaving hidden media.
+  await page.getByRole('button', { name: '新增回忆' }).click();
+  const draftUpload = page.waitForResponse(
+    (response) => response.url().endsWith('/api/media') && response.request().method() === 'POST',
+  );
+  await page
+    .locator('input[type=file]')
+    .last()
+    .setInputFiles({ name: 'cancelled.jpg', mimeType: 'image/jpeg', buffer: photo });
+  const cancelled = await (await draftUpload).json();
+  await expect(page.getByRole('button', { name: '保存回忆', exact: true })).toBeEnabled();
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/media/' + cancelled.id) &&
+      response.request().method() === 'DELETE',
+  );
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  expect((await deletion).status()).toBe(204);
+  const afterCancel = await request.get('http://127.0.0.1:3000/api/me', {
+    headers: { Authorization: 'Bearer ' + first.token },
+  });
+  expect((await afterCancel.json()).couple.storageBytes).toBe(0);
   await page.getByRole('button', { name: '新增回忆' }).click();
   const picker = page.waitForEvent('filechooser');
   await page.getByRole('button', { name: '选择照片或视频（可多选）' }).click();

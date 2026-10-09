@@ -201,6 +201,35 @@ export function Memories() {
     [filterOpen, setFilterOpen] = useState(false),
     [draft, setDraft] = useState(options),
     [filterError, setFilterError] = useState('');
+  const uploadController = useRef<AbortController | null>(null);
+  const draftMedia = useRef(new Set<string>());
+  async function releaseDrafts(ids = [...draftMedia.current]) {
+    const results = await Promise.allSettled(
+      ids.map(async (id) => {
+        await api.delete(`/api/media/${id}`);
+        draftMedia.current.delete(id);
+      }),
+    );
+    if (ids.length) void cache.invalidateQueries({ queryKey: ['profile'] });
+    if (results.some((result) => result.status === 'rejected'))
+      toast.error('部分上传草稿未能清理，可稍后使用管理工具清理未使用媒体');
+  }
+  useEffect(
+    () => () => {
+      uploadController.current?.abort();
+      void releaseDrafts();
+    },
+    [api],
+  );
+  function closeDraft() {
+    if (busy && !uploadController.current) return;
+    uploadController.current?.abort();
+    uploadController.current = null;
+    setBusy(false);
+    setOpen(false);
+    setFiles([]);
+    void releaseDrafts();
+  }
   const input = useRef<HTMLInputElement>(null),
     scroller = useRef<HTMLElement>(null);
   const index = items.findIndex((item) => item.id === selected),
@@ -221,16 +250,24 @@ export function Memories() {
     setOpen(true);
   }
   async function prepare(chosen: UploadFile[]) {
+    const controller = new AbortController();
+    uploadController.current = controller;
     setBusy(true);
     try {
       for (let i = 0; i < chosen.length; i++) {
+        if (controller.signal.aborted) break;
         const item = chosen[i];
         if (item.media) continue;
         setUploadIndex(i + 1);
         setProgress(0);
         setFiles((items) => items.map((v) => (v.id === item.id ? { ...v, error: undefined } : v)));
         try {
-          const media = await api.upload(item.file, setProgress);
+          const media = await api.upload(item.file, setProgress, '/api/media', controller.signal);
+          draftMedia.current.add(media.id);
+          if (controller.signal.aborted) {
+            void releaseDrafts([media.id]);
+            break;
+          }
           setFiles((items) =>
             items.map((v) =>
               v.id === item.id
@@ -245,13 +282,17 @@ export function Memories() {
             ),
           );
         } catch (error) {
+          if (controller.signal.aborted) break;
           setFiles((items) =>
             items.map((v) => (v.id === item.id ? { ...v, error: (error as Error).message } : v)),
           );
         }
       }
     } finally {
-      setBusy(false);
+      if (uploadController.current === controller) {
+        uploadController.current = null;
+        setBusy(false);
+      }
     }
   }
   async function save(e: React.FormEvent) {
@@ -273,7 +314,13 @@ export function Memories() {
           try {
             const item = files[i];
             if (!item.media || !item.date) throw new Error('请先完成上传并填写这个文件的拍摄日期');
-            await api.post('/api/moments', { title, date: item.date, mediaId: item.media.id });
+            await api.post('/api/moments', {
+              title,
+              date: item.date,
+              mediaId: item.media.id,
+              clientId: item.id,
+            });
+            draftMedia.current.delete(item.media.id);
             saved++;
           } catch (error) {
             remaining.push(files[i]);
@@ -771,7 +818,8 @@ export function Memories() {
       <Dialog
         open={open}
         onOpenChange={(value) => {
-          if (!busy) setOpen(value);
+          if (!value) closeDraft();
+          else setOpen(true);
         }}
       >
         <DialogContent>
@@ -796,6 +844,7 @@ export function Memories() {
                       date: '',
                       editDate: false,
                     }));
+                    void releaseDrafts();
                     setFiles(drafts);
                     e.target.value = '';
                     void prepare(drafts);
@@ -821,7 +870,11 @@ export function Memories() {
                   <UploadSelection
                     files={files}
                     busy={busy}
-                    onRemove={(index) => setFiles((items) => items.filter((_, i) => i !== index))}
+                    onRemove={(index) => {
+                      const media = files[index]?.media;
+                      if (media) void releaseDrafts([media.id]);
+                      setFiles((items) => items.filter((_, i) => i !== index));
+                    }}
                     onChange={(id, value) =>
                       setFiles((items) => items.map((v) => (v.id === id ? { ...v, ...value } : v)))
                     }
@@ -865,6 +918,14 @@ export function Memories() {
               </div>
             )}
             <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy && !uploadController.current}
+                onClick={closeDraft}
+              >
+                {uploadController.current ? '取消上传' : '取消'}
+              </Button>
               <Button
                 type="submit"
                 disabled={busy || (!edit && (!files.length || files.some((item) => !item.media)))}

@@ -94,7 +94,8 @@ export async function restoreToPostgres({
     const names = source
       .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .all()
-      .map((row) => String(row.name));
+      .map((row) => String(row.name))
+      .filter((name) => name !== 'media_uploads');
     if (
       names.length !== transferTables.length ||
       names.some((name) => !transferTables.includes(name as (typeof transferTables)[number]))
@@ -262,6 +263,7 @@ export async function restoreToPostgres({
         await target.exec('DELETE FROM database_restores');
         await target.exec('UPDATE users SET "avatarMediaId"=NULL');
         await target.exec('DELETE FROM media_files');
+        await target.exec('DELETE FROM media_uploads');
         for (const table of [...tables].reverse())
           await target.exec(`DELETE FROM ${quote(table.name)}`);
         // SQLite REAL is a double; PostgreSQL REAL is single precision. Preserve

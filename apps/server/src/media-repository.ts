@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
+import { registerMediaDirectory } from './media-drafts.js';
 import type { DB } from './db.js';
 import { HttpError } from './errors.js';
 import { commitMedia, removeMediaFiles, syncMediaFiles } from './media-storage.js';
@@ -26,7 +27,9 @@ export class MediaRepository {
   constructor(
     readonly db: DB,
     readonly directory: string,
-  ) {}
+  ) {
+    registerMediaDirectory(db, directory);
+  }
   private path(name: string) {
     if (!name || name !== basename(name)) throw new HttpError(500, '媒体文件路径无效');
     return join(this.directory, name);
@@ -43,9 +46,16 @@ export class MediaRepository {
       }
     }
   }
-  async stage(names: string[], sizes: number[], transactional = false) {
-    const write = (action: () => Promise<unknown>) =>
-      transactional ? action() : this.write(action);
+  async stage(names: string[], sizes: number[], transactional = false, signal?: AbortSignal) {
+    const write = (action: () => Promise<unknown>) => {
+      signal?.throwIfAborted();
+      return transactional
+        ? action()
+        : this.write(async () => {
+            signal?.throwIfAborted();
+            return action();
+          });
+    };
     if (this.db.provider !== 'postgres') return;
     for (const [i, name] of names.entries()) {
       if (!name || names.indexOf(name) !== i) continue;
@@ -67,6 +77,7 @@ export class MediaRepository {
           total = 0;
         const buffer = Buffer.allocUnsafe(MEDIA_CHUNK_BYTES);
         while (true) {
+          signal?.throwIfAborted();
           let length = 0;
           while (length < buffer.length) {
             const part = await file.read(buffer, length, buffer.length - length, total + length);
@@ -121,18 +132,19 @@ export class MediaRepository {
       }
     }
   }
-  async info(name: string): Promise<{ bytes: number; sha256?: string }> {
+  async info(name: string, draft = false): Promise<{ bytes: number; sha256?: string }> {
     this.path(name);
     if (this.db.provider === 'sqlite') return { bytes: (await stat(this.path(name))).size };
     const row = await this.db
       .prepare(
-        'SELECT bytes,sha256 FROM media_files WHERE name=? AND complete=1 AND mediaId IS NOT NULL',
+        'SELECT bytes,sha256 FROM media_files WHERE name=? AND complete=1' +
+          (draft ? '' : ' AND mediaId IS NOT NULL'),
       )
       .get(name);
     if (!row) throw new HttpError(404, '媒体内容不存在');
     return { bytes: Number(row.bytes), sha256: String(row.sha256) };
   }
-  stream(name: string, start = 0, end?: number): Readable {
+  stream(name: string, start = 0, end?: number, draft = false): Readable {
     this.path(name);
     if (this.db.provider === 'sqlite')
       return createReadStream(this.path(name), { start, ...(end !== undefined ? { end } : {}) });
@@ -140,7 +152,7 @@ export class MediaRepository {
       repository = this;
     return Readable.from(
       (async function* () {
-        const size = (await repository.info(name)).bytes,
+        const size = (await repository.info(name, draft)).bytes,
           last = end ?? size - 1;
         if (start < 0 || last >= size || last < start) throw new HttpError(416, '媒体读取范围无效');
         const firstChunk = Math.floor(start / MEDIA_CHUNK_BYTES),

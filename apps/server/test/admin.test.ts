@@ -221,6 +221,10 @@ test('pair storage uses real byte counts and enforces quotas without leaving fil
     .toBuffer();
   const media = await upload(image);
   assert.equal(media.status, 201);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: media.body.id, title: 'saved', date: '2026-10-09' })
+    .expect(201);
   const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(media.body.id))!;
   const measured = (
     await Promise.all(

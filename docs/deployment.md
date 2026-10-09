@@ -103,7 +103,7 @@ docker compose -p love-v4 -f compose.yml -f compose.https.yml -f compose.certbot
 
 ## 备份和升级
 
-使用 `./love` → 备份数据与配置；恢复自动识别备份并转换至当前 SQLite 或 PostgreSQL，保留当前 `.env`。可将备份目录复制到新部署的 `backups/` 后恢复，详见 [备份恢复](container-images.md#切换数据库与恢复备份)。不要在运行中只复制 `.sqlite` 主文件，WAL 模式还包含尚未 checkpoint 的数据。
+使用 `./love` → 数据库管理 → 备份数据与配置；恢复自动识别备份并转换至当前 SQLite 或 PostgreSQL，保留当前 `.env`。可将备份目录复制到新部署的 `backups/` 后恢复，详见 [备份恢复](container-images.md#切换数据库与恢复备份)。不要在运行中只复制 `.sqlite` 主文件，WAL 模式还包含尚未 checkpoint 的数据。
 
 数据库结构版本为 9。现有 schema 4 / 5 / 6 / 7 / 8 在启动时原子升级，新增相册导入记录并保留配对共享 AI 配置，保留账号、配对、媒体和密钥；两个人都有配置时优先保留已启用且填写完整的配置，其次为填写过地址的配置，最后按用户 ID 确定。升级后删除个人 AI 配置表，不保留运行时兼容代码。更新前用管理菜单备份。schema 3 或更早版本拒绝启动。
 

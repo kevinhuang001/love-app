@@ -1,3 +1,4 @@
+import { publishMediaDraft } from './media-drafts.js';
 import { anniversarySchema, todoSchema, relationshipSchema, aiProfileSchema } from './schedules.js';
 import { nextTodoInstant, today } from '@love/calendar';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -312,6 +313,7 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
           message: '请提供昵称或头像',
         })
         .parse(input);
+      if (v.avatarMediaId) await publishMediaDraft(db, v.avatarMediaId, userId, coupleId);
       if (
         v.avatarMediaId &&
         !(await db
@@ -330,6 +332,7 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
     }
     case 'update_ai_profile': {
       const v = aiProfileSchema.parse(input);
+      if (v.avatarMediaId) await publishMediaDraft(db, v.avatarMediaId, userId, coupleId, true);
       if (
         v.avatarMediaId &&
         !(await db
@@ -424,6 +427,7 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
       const v = z
         .object({ mediaId: z.string().uuid(), title: z.string().trim().max(300), date })
         .parse(input);
+      await publishMediaDraft(db, v.mediaId, userId, coupleId);
       if (
         !(await db
           .prepare('SELECT id FROM media WHERE id=? AND ownerId=? AND coupleId=?')

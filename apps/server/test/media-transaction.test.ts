@@ -62,8 +62,19 @@ test('upload disk sync failure and quota insert failure leave no files or billab
         }
       : statement;
   });
-  await upload().expect(503);
+  const rejectedDraft = await upload().expect(201);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: rejectedDraft.body.id, title: 'rollback', date: '2026-10-09' })
+    .expect(503);
   failInsert.mock.restore();
+  assert.ok(
+    await s.db.prepare('SELECT id FROM media_uploads WHERE id=?').get(rejectedDraft.body.id),
+  );
+  await s
+    .api(a.token)
+    .delete('/api/media/' + rejectedDraft.body.id)
+    .expect(204);
   assert.equal(await s.control.usage(pairId), 0);
   assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM media').get())!.n, 0);
   assert.deepEqual(await readdir(join(s.dir, 'media')), ['tmp']);
@@ -76,6 +87,11 @@ test('upload disk sync failure and quota insert failure leave no files or billab
     },
   );
   const result = await upload().expect(201);
+  assert.equal(await s.control.usage(pairId), 0);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: result.body.id, title: 'saved', date: '2026-10-09' })
+    .expect(201);
   checkSync.mock.restore();
   const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(result.body.id))!;
   const measured = (
@@ -175,7 +191,7 @@ test('media retries a rolled-back PostgreSQL mutation but never repeats a confir
   assert.equal(transactions, 3);
 });
 
-test('a real committed upload with a lost acknowledgement returns its original media and bills exactly once', async (t) => {
+test('a lost staging acknowledgement remains unbilled; atomic publication bills exactly once', async (t) => {
   const s = await setup(t),
     a = await s.register('ack_a'),
     b = await s.register('ack_b');
@@ -203,6 +219,17 @@ test('a real committed upload with a lost acknowledgement returns its original m
     .expect(201);
   wrapped.mock.restore();
   assert.equal(transactions, 2);
+  assert.equal(await s.control.usage(pairId), 0);
+  assert.ok(await s.db.prepare('SELECT id FROM media_uploads WHERE id=?').get(uploaded.body.id));
+  const memory = {
+    mediaId: uploaded.body.id,
+    title: 'atomic',
+    date: '2026-10-09',
+    clientId: (await import('node:crypto')).randomUUID(),
+  };
+  await s.api(a.token).post('/api/moments', memory).expect(201);
+  await s.api(a.token).post('/api/moments', memory).expect(201);
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM moments').get())!.n, 1);
   assert.equal(
     (await s.db.prepare('SELECT COUNT(*) n FROM media WHERE coupleId=?').get(pairId))!.n,
     1,

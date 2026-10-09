@@ -56,6 +56,11 @@ test(
       .expect(201);
     mock.mock.restore();
     assert.equal(interrupted, true);
+    assert.equal(await s.control.usage(pairId), 0);
+    await s
+      .api(a.token)
+      .post('/api/moments', { mediaId: uploaded.body.id, title: 'published', date: '2026-10-09' })
+      .expect(201);
     const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(uploaded.body.id))!;
     assert.deepEqual(await s.mediaRepository.read(String(row.original)), image);
     assert.equal((await readdir(join(s.dir, 'media'))).filter((name) => name !== 'tmp').length, 0);

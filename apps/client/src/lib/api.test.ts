@@ -160,3 +160,42 @@ describe('connection test uses public Love endpoints', () => {
     await expect(api.testConnection()).rejects.toThrow('没有返回有效的 Love 数据');
   });
 });
+
+describe('cancellable uploads', () => {
+  it('aborts the actual request and removes its cancellation listener', async () => {
+    const xhr = {
+      open: vi.fn(),
+      setRequestHeader: vi.fn(),
+      upload: {},
+      send: vi.fn(),
+      abort: vi.fn(),
+    } as unknown as XMLHttpRequest;
+    vi.mocked(xhr.abort).mockImplementation(() => xhr.onabort?.call(xhr, {} as ProgressEvent));
+    vi.stubGlobal('XMLHttpRequest', function () {
+      return xhr;
+    });
+    const controller = new AbortController();
+    const remove = vi.spyOn(controller.signal, 'removeEventListener');
+    const api = new Api({ server: 'http://example.test', token: 'token' });
+    const uploaded = api.upload(
+      new File(['data'], 'a.png'),
+      vi.fn(),
+      '/api/media',
+      controller.signal,
+    );
+    const rejected = expect(uploaded).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    expect(xhr.abort).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+  });
+  it('never starts a request with an already cancelled signal', async () => {
+    const constructor = vi.fn();
+    vi.stubGlobal('XMLHttpRequest', constructor);
+    const api = new Api({ server: 'http://example.test', token: 'token' });
+    await expect(
+      api.upload(new File(['data'], 'a.png'), vi.fn(), '/api/media', AbortSignal.abort()),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(constructor).not.toHaveBeenCalled();
+  });
+});

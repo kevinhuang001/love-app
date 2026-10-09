@@ -87,6 +87,14 @@ test('compressed-only images and videos retain capture dates, previews, playback
     .expect(206);
   assert.match(range.headers['content-type'], /video\/mp4/);
   await request(s.app).get(video.body.thumbnailUrl).expect(200);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: image.body.id, title: 'photo', date: '2024-02-29' })
+    .expect(201);
+  await s
+    .api(b.token)
+    .post('/api/moments', { mediaId: video.body.id, title: 'video', date: '2024-03-01' })
+    .expect(201);
   let actualBytes = 0;
   for (const id of [image.body.id, video.body.id]) {
     const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(id))!;
@@ -113,6 +121,10 @@ test('compressed-only images and videos retain capture dates, previews, playback
     .post('/api/media')
     .auth(a.token, { type: 'bearer' })
     .attach('file', photo, { filename: 'retained.jpg', contentType: 'image/jpeg' })
+    .expect(201);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: retained.body.id, title: 'retained', date: '2024-02-29' })
     .expect(201);
   const source = (await s.db
     .prepare('SELECT original FROM media WHERE id=?')

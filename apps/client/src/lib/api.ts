@@ -108,17 +108,32 @@ export class Api {
     file: File,
     onProgress: (progress: number) => void,
     path = '/api/media',
+    signal?: AbortSignal,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
       const xhr = new XMLHttpRequest();
+      const abort = () => xhr.abort();
+      const cleanup = () => signal?.removeEventListener('abort', abort);
       xhr.open('POST', this.url(path));
       xhr.timeout = 0;
       xhr.setRequestHeader('Authorization', `Bearer ${this.session.token}`);
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) onProgress(Math.round((event.loaded / event.total) * 100));
       };
-      xhr.onerror = () => reject(new Error('上传失败，请检查网络'));
+      xhr.onerror = () => {
+        cleanup();
+        reject(new Error('上传失败，请检查网络'));
+      };
+      xhr.onabort = () => {
+        cleanup();
+        reject(signal?.reason || new DOMException('上传已取消', 'AbortError'));
+      };
       xhr.onload = () => {
+        cleanup();
         const result = (() => {
           try {
             return JSON.parse(xhr.responseText);
@@ -133,6 +148,7 @@ export class Api {
       };
       const form = new FormData();
       form.append('file', file);
+      signal?.addEventListener('abort', abort, { once: true });
       xhr.send(form);
     });
   }

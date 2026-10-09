@@ -47,7 +47,7 @@ base64 < love-release.jks | tr -d '\n'
 
 备份 keystore 与密码，后续更新不要重新生成或替换。私钥不提交到 Git，不上传到 Release，也不进入 Docker 镜像。插件没有管理仓库 Secrets 的权限，需要仓库所有者在 GitHub 设置。
 
-配置后在 Actions 的 **Test and build** 点 **Run workflow**（main）。CI 使用固定密钥构建正式 APK，并核对 APK 实际签名证书；全部检查通过后发布 `Love-v2.8.0.apk`、文件 SHA-256 与签名指纹到 Release。没有配置密钥时，CI 仍构建调试 APK用于测试，但不自动发布随机签名 APK。
+配置后在 Actions 的 **Test and build** 点 **Run workflow**（main）。CI 使用固定密钥构建正式 APK，并核对 APK 实际签名证书；全部检查通过后发布 `Love-v2.8.1.apk`、文件 SHA-256 与签名指纹到 Release。没有配置密钥时，CI 仍构建调试 APK用于测试，但不自动发布随机签名 APK。
 
 本地正式构建：设置 `LOVE_ANDROID_KEYSTORE_PATH` 为 keystore 绝对路径，设置上述密码、alias 环境变量，执行 `npm run android:prepare` 和 `./gradlew assembleRelease`。APK 位于 `app/build/outputs/apk/release/app-release.apk`。无需配置任何推送 Secret。
 

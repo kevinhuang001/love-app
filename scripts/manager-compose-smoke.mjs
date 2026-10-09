@@ -116,10 +116,22 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
       16: 'cleanup',
       0: 'exit',
     };
+    let inDatabase = false;
     const values = input
       .trimEnd()
       .split('\n')
-      .map((value) => actions[value] || value);
+      .flatMap((value) => {
+        if (['8', '9', '16'].includes(value)) {
+          const operation = actions[value];
+          if (!inDatabase) {
+            inDatabase = true;
+            return ['database', operation];
+          }
+          return [operation];
+        }
+        if (value === '0' && inDatabase) return ['back', 'exit'];
+        return [actions[value] || value];
+      });
     execFileSync('node', [
       '-e',
       'require("node:fs").writeFileSync(process.argv[1],process.argv[2])',
@@ -295,12 +307,13 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         await fs.writeFile('/app/data/media/orphan.mp4','old-unreferenced-file');
         await fs.writeFile('/app/data/media/tmp/interrupted','old-upload-temp');
         await db.prepare("INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES('migration-media','migration-pair','migration-user','image','','kept.preview.webp','kept.preview.webp','2026-10-09')").run();
-        await db.prepare("INSERT INTO media_sizes VALUES('migration-media',0,24,0,24)").run();`);
+        await db.prepare("INSERT INTO media_sizes VALUES('migration-media',0,24,0,24)").run();
+        await db.prepare("UPDATE users SET avatarMediaId='migration-media' WHERE id='migration-user'").run();`);
       // The selector regression above intentionally created a SQLite one-off container.
       // Remove it before changing providers; Compose exec must inspect the new application.
       execFileSync('docker', ['rm', '-f', maintenanceContainer], { stdio: 'ignore' });
       maintenanceContainer = undefined;
-      menu('16\nyes\nbackup\n0\n');
+      menu('16\nyes\nbackup\nyes\n0\n');
       const cleaned = JSON.parse(
         query(
           `console.log(JSON.stringify({kept:await fs.readFile('/app/data/media/kept.preview.webp','utf8'),orphan:await fs.stat('/app/data/media/orphan.mp4').then(()=>true,()=>false),temp:await fs.stat('/app/data/media/tmp/interrupted').then(()=>true,()=>false)}));`,

@@ -117,6 +117,11 @@ test('each pairing receives its own capacity; zero blocks upload, default change
     .auth(a.token, { type: 'bearer' })
     .attach('file', image, { filename: 'photo.png', contentType: 'image/png' })
     .expect(201);
+  assert.equal(await s.control.usage(p.id), 0);
+  await s
+    .api(a.token)
+    .post('/api/moments', { mediaId: media.body.id, title: 'published', date: '2026-10-09' })
+    .expect(201);
   const updated = (await s.api(b.token).get('/api/me')).body.couple;
   assert.ok(updated.storageBytes > image.length);
   assert.equal(updated.quotaBytes, 1048576);
@@ -125,7 +130,7 @@ test('each pairing receives its own capacity; zero blocks upload, default change
   assert.ok(await s.db.prepare('SELECT id FROM media WHERE id=?').get(media.body.id));
 });
 
-test('concurrent uploads cannot overrun a pair quota and rejected files are removed', async (t) => {
+test('concurrent publication cannot overrun a pair quota and rejected drafts are cancellable', async (t) => {
   const s = await setup(t),
     a = await s.register('race_a'),
     b = await s.register('race_b');
@@ -146,8 +151,27 @@ test('concurrent uploads cannot overrun a pair quota and rejected files are remo
       .post('/api/media')
       .auth(token, { type: 'bearer' })
       .attach('file', image, { filename: 'photo.png', contentType: 'image/png' });
-  const responses = await Promise.all([send(a.token), send(b.token)]);
+  const uploads = await Promise.all([send(a.token), send(b.token)]);
+  assert.deepEqual(
+    uploads.map((r) => r.status),
+    [201, 201],
+  );
+  assert.equal(await s.control.usage(pair.id), 0);
+  const tokens = [a.token, b.token];
+  const responses = await Promise.all(
+    uploads.map((r, i) =>
+      s
+        .api(tokens[i])
+        .post('/api/moments', { mediaId: r.body.id, title: 'published', date: '2026-10-09' }),
+    ),
+  );
   assert.deepEqual(responses.map((r) => r.status).sort(), [201, 413]);
+  for (const [i, result] of responses.entries())
+    if (result.status === 413)
+      await s
+        .api(tokens[i])
+        .delete('/api/media/' + uploads[i].body.id)
+        .expect(204);
   assert.ok((await s.control.usage(pair.id)) <= 1048576);
   assert.equal(
     Number((await s.db.prepare('SELECT COUNT(*) n FROM media WHERE coupleId=?').get(pair.id))!.n),

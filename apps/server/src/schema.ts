@@ -1,5 +1,6 @@
 // Shared schema; driver supplies PostgreSQL identity and timestamp definitions.
 export const schema = `
+CREATE TABLE IF NOT EXISTS media_uploads(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL, ownerId TEXT NOT NULL, metadata TEXT NOT NULL, createdAt TEXT NOT NULL);
   
     CREATE TABLE IF NOT EXISTS couples(id TEXT PRIMARY KEY, startDate TEXT, startTime TEXT NOT NULL DEFAULT '00:00:00');
     CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, name TEXT NOT NULL, password TEXT NOT NULL, coupleId TEXT REFERENCES couples(id), avatarMediaId TEXT REFERENCES media(id), email TEXT UNIQUE NOT NULL, verifiedAt TEXT, disabled INTEGER NOT NULL DEFAULT 0, createdAt TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), lastLoginAt TEXT);

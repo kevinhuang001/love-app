@@ -31,6 +31,8 @@ import {
   signMedia,
   validSignature,
 } from './security.js';
+import { publishMediaDraft } from './media-drafts.js';
+import { mediaReferences } from './media-cleanup.js';
 import { processMedia } from './media.js';
 import { syncMediaFiles, commitMedia, removeMediaFiles } from './media-storage.js';
 import { CommitUncertainError } from './postgres.js';
@@ -199,9 +201,22 @@ export async function createApp(options: AppOptions = {}) {
       : undefined;
   const mediaView = async (id: string | null) => {
     if (!id) return null;
-    const row = await db
+    let row = await db
       .prepare('SELECT id,kind,width,height,duration FROM media WHERE id=?')
       .get(id);
+    if (!row) {
+      const upload = await db.prepare('SELECT metadata FROM media_uploads WHERE id=?').get(id);
+      if (upload) {
+        const draft = JSON.parse(String(upload.metadata));
+        row = {
+          id,
+          kind: draft.kind,
+          width: draft.width,
+          height: draft.height,
+          duration: draft.duration,
+        };
+      }
+    }
     if (!row) return null;
     const expires = Date.now() + 3_600_000;
     const url = (variant: string) =>
@@ -272,15 +287,17 @@ export async function createApp(options: AppOptions = {}) {
     if (
       id &&
       !(await db
-        .prepare('SELECT id FROM media WHERE id=? AND coupleId=? AND ownerId=?')
-        .get(id, await couple(req), req.user.id))
+        .prepare(
+          'SELECT id FROM media WHERE id=? AND coupleId=? AND ownerId=? UNION SELECT id FROM media_uploads WHERE id=? AND coupleId=? AND ownerId=?',
+        )
+        .get(id, await couple(req), req.user.id, id, await couple(req), req.user.id))
     )
       fail(403, '不能使用此媒体');
   };
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.8.0',
+      version: '2.8.1',
       notifications: 'local',
       database: db.provider,
     }),
@@ -390,15 +407,23 @@ export async function createApp(options: AppOptions = {}) {
       !validSignature(signature, signMedia(secret, id, variant, expires))
     )
       fail(403, '媒体链接已过期');
-    const row = (await db.prepare('SELECT * FROM media WHERE id=?').get(id)) as
+    let row = (await db.prepare('SELECT * FROM media WHERE id=?').get(id)) as
       Record<string, string> | undefined;
+    let draft = false;
+    if (!row) {
+      const upload = await db.prepare('SELECT metadata FROM media_uploads WHERE id=?').get(id);
+      if (upload) {
+        row = JSON.parse(String(upload.metadata));
+        draft = true;
+      }
+    }
     if (!row) fail(404, '媒体不存在');
     res
       .set('Cache-Control', 'private, max-age=300')
       .type(variant === 'thumbnail' || row!.kind === 'image' ? 'image/webp' : 'video/mp4');
     if (db.provider === 'sqlite') return res.sendFile(join(uploads, row![variant]));
     const name = row![variant],
-      { bytes } = await mediaRepository.info(name);
+      { bytes } = await mediaRepository.info(name, draft);
     res.set('Accept-Ranges', 'bytes');
     const ranges = req.range(bytes);
     if (ranges === -1) {
@@ -415,7 +440,7 @@ export async function createApp(options: AppOptions = {}) {
     res.set('Content-Length', String(end - start + 1));
     if (req.method === 'HEAD') return res.end();
     try {
-      await pipeline(mediaRepository.stream(name, start, end), res);
+      await pipeline(mediaRepository.stream(name, start, end, draft), res);
     } catch (error) {
       if (!res.headersSent) throw error;
       res.destroy(error as Error);
@@ -693,7 +718,10 @@ export async function createApp(options: AppOptions = {}) {
         .prepare('SELECT * FROM messages WHERE senderId=? AND clientId=?')
         .get(req.user.id, value.clientId);
       if (existing) return existing;
-      for (const mediaId of value.mediaIds) await ownedMedia(mediaId, req);
+      for (const mediaId of value.mediaIds) {
+        await ownedMedia(mediaId, req);
+        await publishMediaDraft(db, mediaId, req.user.id, coupleId);
+      }
       const result = await db
         .prepare(
           'INSERT INTO messages(coupleId,senderId,clientId,content,createdAt) VALUES(?,?,?,?,?)',
@@ -751,11 +779,21 @@ export async function createApp(options: AppOptions = {}) {
         next(error);
       }
     },
-    (req, res, next) =>
+    (req, res, next) => {
+      const controller = new AbortController();
+      const abort = () => controller.abort(new Error('上传已取消'));
+      const close = () => {
+        if (!res.writableFinished) abort();
+      };
+      req.once('aborted', abort);
+      res.once('close', close);
+      if (req.aborted || res.destroyed) abort();
+      const signal = controller.signal;
       upload.single('file')(req, res, async (error) => {
         let generatedFiles: string[] = [],
           committed = false;
         try {
+          signal.throwIfAborted();
           if (error) throw error;
           if (!req.file) fail(400, '请选择支持的图片或视频');
           const keepOriginal = await retainOriginal((req as AuthRequest).user.coupleId!);
@@ -764,10 +802,12 @@ export async function createApp(options: AppOptions = {}) {
             req.file!.mimetype,
             uploads,
             keepOriginal,
+            signal,
           );
           generatedFiles = [media.original, media.preview, media.thumbnail]
             .filter(Boolean)
             .map((name) => join(uploads, name));
+          signal.throwIfAborted();
           const user = (await db
             .prepare('SELECT * FROM users WHERE id=?')
             .get((req as AuthRequest).user.id)) as User;
@@ -788,54 +828,41 @@ export async function createApp(options: AppOptions = {}) {
               (await control.quota(user.coupleId!))
           )
             fail(413, '两人空间存储已达到配额，请联系管理员');
-          await mediaRepository.stage([media.original, media.preview, media.thumbnail], sizes);
+          await mediaRepository.stage(
+            [media.original, media.preview, media.thumbnail],
+            sizes,
+            false,
+            signal,
+          );
+          signal.throwIfAborted();
           await commitMedia(
             db,
             async () =>
-              Boolean(
-                await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(media.id),
-              ),
+              Boolean(await db.prepare('SELECT id FROM media_uploads WHERE id=?').get(media.id)),
             async () => {
-              const current = (await db
-                .prepare('SELECT * FROM users WHERE id=?')
-                .get(user.id)) as User;
-              if (
-                !current ||
-                current.disabled ||
-                current.coupleId !== user.coupleId ||
-                !(await db
-                  .prepare('SELECT hash FROM sessions WHERE hash=? AND expires>?')
-                  .get((req as AuthRequest).sessionHash, Date.now()))
-              )
-                fail(409, '账号或配对状态已改变，请重新登录');
-              const limit = await control.quota(current.coupleId);
-              if (current.coupleId && (await retainOriginal(current.coupleId)) !== keepOriginal)
+              signal.throwIfAborted();
+              const current = await lookup(
+                req.headers.authorization?.replace(/^Bearer /, '') || '',
+              );
+              if (!current || current.user.coupleId !== user.coupleId)
+                fail(409, '账号或配对状态已改变');
+              if ((await retainOriginal(user.coupleId!)) !== keepOriginal)
                 fail(409, '媒体保存设置已改变，请重新上传');
-              if (!current.coupleId || (await control.usage(current.coupleId)) + totalBytes > limit)
+              if (
+                (await control.usage(user.coupleId!)) + totalBytes >
+                (await control.quota(user.coupleId!))
+              )
                 fail(413, '两人空间存储已达到配额，请联系管理员');
               await db
-                .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+                .prepare('INSERT INTO media_uploads VALUES(?,?,?,?,?)')
                 .run(
                   media.id,
-                  user.coupleId!,
+                  user.coupleId,
                   user.id,
-                  media.kind,
-                  media.original,
-                  media.preview,
-                  media.thumbnail,
-                  media.width || null,
-                  media.height || null,
-                  media.duration,
+                  JSON.stringify({ ...media, sizes, totalBytes, retainOriginal: keepOriginal }),
                   new Date().toISOString(),
                 );
-              await db
-                .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
-                .run(media.id, sizes[0], sizes[1], sizes[2], totalBytes);
-              await mediaRepository.bind(media.id, [
-                media.original,
-                media.preview,
-                media.thumbnail,
-              ]);
+              signal.throwIfAborted();
             },
           );
           committed = true;
@@ -844,22 +871,75 @@ export async function createApp(options: AppOptions = {}) {
             .status(201)
             .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
         } catch (err) {
-          if (db.provider === 'postgres')
+          if (db.provider === 'postgres' && !committed && !(err instanceof CommitUncertainError))
             await mediaRepository.discard(
               generatedFiles.map((file) => file.slice(uploads.length + 1)),
             );
           if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
             await removeMediaFiles([...generatedFiles, ...(req.file ? [req.file.path] : [])]);
-          next(
-            err instanceof HttpError || err instanceof multer.MulterError
-              ? err
-              : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
-          );
+          if (!signal.aborted)
+            next(
+              err instanceof HttpError || err instanceof multer.MulterError
+                ? err
+                : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
+            );
         } finally {
+          req.off('aborted', abort);
+          res.off('close', close);
           processing--;
         }
-      }),
+      });
+    },
   );
+  route('delete', '/api/media/:id', async (req, res) => {
+    await couple(req);
+    const id = z.string().uuid().parse(req.params.id);
+    let names: string[] = [];
+    await db.transaction(async () => {
+      const draft = await db
+        .prepare('SELECT metadata FROM media_uploads WHERE id=? AND ownerId=?')
+        .get(id, req.user.id);
+      if (draft) {
+        const media = JSON.parse(String(draft.metadata));
+        names = [media.original, media.preview, media.thumbnail].filter(Boolean);
+        if (
+          names.some(
+            (name) => name.includes('/') || name.includes('\\') || name === '.' || name === '..',
+          )
+        )
+          fail(500, '媒体路径无效');
+        await db.prepare('DELETE FROM media_uploads WHERE id=?').run(id);
+        if (db.provider === 'postgres')
+          for (const name of new Set(names))
+            await db.prepare('DELETE FROM media_files WHERE name=? AND mediaId IS NULL').run(name);
+        return;
+      }
+      const row = await db
+        .prepare('SELECT * FROM media WHERE id=? AND ownerId=?')
+        .get(id, req.user.id);
+      if (!row) return;
+      if ((await mediaReferences(db)).has(id)) fail(409, '此媒体已被回忆、聊天或头像使用');
+      const candidates = [
+        ...new Set([row.original, row.preview, row.thumbnail].filter(Boolean).map(String)),
+      ];
+      for (const name of candidates) {
+        if (name.includes('/') || name.includes('\\') || name === '.' || name === '..')
+          fail(500, '媒体路径无效');
+        if (
+          !(await db
+            .prepare(
+              'SELECT id FROM media WHERE id<>? AND (original=? OR preview=? OR thumbnail=?)',
+            )
+            .get(id, name, name, name))
+        )
+          names.push(name);
+      }
+      await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(id);
+      await db.prepare('DELETE FROM media WHERE id=?').run(id);
+    });
+    await removeMediaFiles(names.map((name) => join(uploads, name)));
+    if (!res.headersSent) res.status(204).end();
+  });
   route('get', '/api/moments', async (req, res) => {
     await couple(req);
     const result = await readAlbum(db, req.user, req.query);
@@ -875,14 +955,45 @@ export async function createApp(options: AppOptions = {}) {
   });
   route('post', '/api/moments', async (req, res) => {
     const value = z
-      .object({ title: text.max(300).default(''), mediaId: z.string().uuid(), date })
+      .object({
+        title: text.max(300).default(''),
+        mediaId: z.string().uuid(),
+        date,
+        clientId: z.string().uuid().optional(),
+      })
       .parse(req.body);
-    const coupleId = await couple(req);
-    await ownedMedia(value.mediaId, req);
-    const id = randomUUID();
-    await db
-      .prepare('INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)')
-      .run(id, coupleId, req.user.id, value.title, value.mediaId, value.date);
+    const coupleId = await couple(req),
+      id = value.clientId || randomUUID();
+    await commitMedia(
+      db,
+      async () =>
+        Boolean(
+          await db.prepare('SELECT id FROM moments WHERE id=? AND ownerId=?').get(id, req.user.id),
+        ),
+      async () => {
+        const current = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
+        if (!current || current.user.coupleId !== coupleId) fail(409, '账号或配对状态已改变');
+        const existing = await db.prepare('SELECT * FROM moments WHERE id=?').get(id);
+        if (existing) {
+          if (
+            existing.ownerId !== req.user.id ||
+            existing.coupleId !== coupleId ||
+            existing.mediaId !== value.mediaId ||
+            existing.title !== value.title ||
+            existing.date !== value.date
+          )
+            fail(409, '回忆编号冲突');
+          return;
+        }
+        await ownedMedia(value.mediaId, req);
+        await publishMediaDraft(db, value.mediaId, req.user.id, coupleId);
+        await db
+          .prepare(
+            'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
+          )
+          .run(id, coupleId, req.user.id, value.title, value.mediaId, value.date);
+      },
+    );
     io.to(`couple:${coupleId}`).emit('moments:changed');
     res.status(201).json({ id });
   });
@@ -977,20 +1088,6 @@ export async function createApp(options: AppOptions = {}) {
   );
   route('patch', '/api/ai/profile', async (req, res) => {
     const value = aiProfileSchema.parse(req.body);
-    if (value.avatarMediaId) {
-      if (
-        !(await db
-          .prepare('SELECT id FROM media WHERE id=? AND coupleId=?')
-          .get(value.avatarMediaId, await couple(req)))
-      )
-        fail(403, '不能使用其他空间的媒体');
-      if (
-        !(await db
-          .prepare("SELECT id FROM media WHERE id=? AND kind='image'")
-          .get(value.avatarMediaId))
-      )
-        fail(400, 'AI 头像请选择图片');
-    }
     await executeTool(db, req.user.id, 'update_ai_profile', value);
     io.to(`couple:${req.user.coupleId}`).emit('profile:changed');
     res.sendStatus(204);

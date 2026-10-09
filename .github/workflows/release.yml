@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.8.0
+        description: New version tag, for example v2.8.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.8.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.8.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -93,19 +93,18 @@ jobs:
           cp release/signing.json "release/$apk.signing.json"
           echo 'publish=true' >> "$GITHUB_OUTPUT"
           cat > release/NOTES.md <<'NOTES'
-          聊天多图、AI 名字快捷补全与固定 APK 签名。
+          修复取消上传遗留媒体与管理工具清理范围。
 
-          - 输入 @ 或助手名称前缀，显示当前助手名字和头像，可点选或 Enter / Tab 补全。
-          - 聊天一次选择多张图片或多个视频，按顺序上传和合并为一条消息；支持逐项移除与失败重试。
-          - 视觉模型获得同一条消息的全部压缩图片与媒体 ID；视频提供封面。AI 工具续接不重复保存图片字节。
-          - Android 保存登录会话、服务器地址与用户名；采用仓库固定 keystore 签名，同签名覆盖更新保留应用数据。卸载或清除数据会丢失本地登录信息，服务器内容不受影响。
-          - SQLite / PostgreSQL schema 9 一次性迁移既有单附件消息；不保留旧单附件 API。
-          - 修复管理工具检查更新时多个容器 ID 合并成单个参数的问题。
+          - 相册增加取消上传；关闭、移除或重选文件时清理未发布草稿。
+          - 媒体先暂存、不计正式额度；媒体、容量与回忆或聊天消息在同一事务发布，失败整体回滚。
+          - 请求中断会停止视频处理和数据库分块写入；提交前取消不会占用容量。
+          - 管理工具同时支持 SQLite / PostgreSQL，先预览未使用媒体及容量，确认后清理。保护回忆、聊天附件、双方及 AI 头像；未发布上传全部纳入清理。
+          - 管理脚本新增数据库管理菜单，统一提供常规/深入一致性检查、备份、恢复与清理。
+          - 清理前备份可选，既有备份不改动；预览清单变化时停止删除。
+          - 包含旧备份字段顺序修复与无法解密凭据的最大限度恢复。
 
-          APK 来自通过 test、postgres、docker、android 的 Actions 构建，附文件 SHA-256 和签名证书指纹。此前调试 APK 与正式签名不同，首次转换需重新安装，此后请覆盖更新并始终使用同一 keystore。
-          通知以应用进程存活为前提，有常驻连接通知。请允许后台运行并将电池设为“不受限制”；系统休眠可能造成延迟，实际锁屏送达需要真机验证。
-          现有 schema 4 / 5 / 6 / 7 / 8 数据卷无需清空，更新前请使用管理菜单备份。
-
+          APK 来自通过完整 CI 的构建，附文件 SHA-256 和固定签名指纹。请覆盖安装以保留登录信息；卸载会清除本地应用数据。
+          通知需要应用进程存活，请允许后台运行。既有数据卷无需清空。
           Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
           管理：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md

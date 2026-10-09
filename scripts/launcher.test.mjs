@@ -48,9 +48,10 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  const index=a.indexOf('/setup/deploy/terminal-ui.mjs'),kind=a[index+1],file=a[index+2].replace('/setup/',process.cwd()+'/');
  if(kind==='continue'){fs.writeFileSync(file,'continue');process.exit(0);}
  const queue=fs.readFileSync('answers','utf8').split('\\n'),next=queue.shift();fs.writeFileSync('answers',queue.join('\\n'));
- const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',12:'uninstall',13:'rollback',14:'refresh',16:'cleanup',0:'exit'};
+ const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',12:'uninstall',13:'rollback',14:'refresh',16:'cleanup',17:'database',0:'exit'};
  let result=next;
- if(kind==='menu')result=menus[next];
+ if(kind==='menu'){if(['8','9','16'].includes(next)){result='database';queue.unshift(menus[next]);fs.writeFileSync('answers',queue.join('\\n'));}else result=menus[next];}
+ if(kind==='database-menu'&&Object.hasOwn(menus,next)){result='back';queue.unshift(next);fs.writeFileSync('answers',queue.join('\\n'));}
  if(kind==='confirm')result=next==='y'?'yes':'no';
  if(kind==='uninstall')result=next==='2'?'volumes':'containers';
  fs.writeFileSync(file,result||'');process.exit(0);
@@ -60,7 +61,8 @@ if(a.includes('/app/apps/server/dist/database-backup-cli.js')){
  if(a.includes('backup')){process.stdout.write('fixture-portable-backup');process.exit(process.env.TEST_BACKUP_FAIL==='1'?1:0);}
  if(a.includes('restore'))process.exit(process.env.TEST_RESTORE_FAIL==='1'?1:0);
 }
-if(a.includes('/app/apps/server/dist/unused-media-cli.js'))process.exit(process.env.TEST_CLEANUP_FAIL==='1'?1:0);
+if(a.includes('/app/apps/server/dist/database-check-cli.js'))process.exit(process.env.TEST_CHECK_FAIL==='1'?1:0);
+if(a.includes('/app/apps/server/dist/unused-media-cli.js')){if(!a.includes('--apply')){console.log('reviewed-plan');process.exit(0);}process.exit(process.env.TEST_CLEANUP_FAIL==='1'?1:0);}
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
 if(a[0]==='ps'){console.log(process.env.TEST_RUNNING_IDS);process.exit(0);}
 if(a[0]==='container'&&a[1]==='inspect'){
@@ -127,6 +129,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
         TEST_BACKUP_PROVIDER: options.backupProvider || 'sqlite',
         TEST_UNREADABLE_CREDENTIALS: options.unreadableCredentials ? '1' : '0',
         TEST_CLEANUP_FAIL: options.cleanupFail ? '1' : '0',
+        TEST_CHECK_FAIL: options.checkFail ? '1' : '0',
         TERM: 'xterm-256color',
       },
       encoding: 'utf8',
@@ -497,10 +500,19 @@ test('unreadable credential recovery is opt-in and cancellation does not stop or
 
 test('cleanup backs up before deletion, stops writers, restores running state on failure and never changes database config', async (t) => {
   for (const cleanupFail of [false, true]) {
-    const { calls, config, result } = await launch(t, base, '16\ny\nbackup\n0\n', { cleanupFail });
+    const { calls, config, result } = await launch(t, base, '16\ny\nbackup\ny\n0\n', {
+      cleanupFail,
+    });
     assert.equal(result.status, 0);
     assert.equal(config, base);
-    const cleanup = calls.findIndex((a) => a.includes('/app/apps/server/dist/unused-media-cli.js'));
+    const cleanup = calls.findIndex(
+      (a) => a.includes('/app/apps/server/dist/unused-media-cli.js') && a.includes('--apply'),
+    );
+    const preview = calls.findIndex(
+      (a) => a.includes('/app/apps/server/dist/unused-media-cli.js') && !a.includes('--apply'),
+    );
+    assert.ok(preview < cleanup);
+    assert.equal(calls[cleanup].at(-1), 'reviewed-plan');
     assert.ok(
       cleanup >
         calls.findIndex(
@@ -520,7 +532,7 @@ test('update, restore and cleanup can skip backups entirely or cancel before mut
           ? `7\ny\n${policy}\n0\n`
           : action === 'restore'
             ? `9\noriginal-backup\nRESTORE\n${policy}\n0\n`
-            : `16\ny\n${policy}\n0\n`;
+            : `16\ny\n${policy}\n${policy === 'skip' ? 'y\n' : ''}0\n`;
       const { calls, result, dir } = await launch(t, base, input, {
         update: action === 'update',
         backupFail: true,
@@ -544,4 +556,32 @@ test('update, restore and cleanup can skip backups entirely or cancel before mut
       );
       assert.equal(mutations.length > 0, policy === 'skip');
     }
+});
+
+test('PostgreSQL cleanup previews first and a rejected deletion resumes the application without deleting', async (t) => {
+  const { calls, config, result } = await launch(
+    t,
+    base.replace("LOVE_DATABASE='sqlite'", "LOVE_DATABASE='external'"),
+    '16\ny\nskip\nn\n0\n',
+  );
+  assert.equal(result.status, 0);
+  const scans = calls.filter((a) => a.includes('/app/apps/server/dist/unused-media-cli.js'));
+  assert.equal(scans.length, 1);
+  assert.ok(!scans[0].includes('--apply'));
+  assert.ok(calls.some((a) => a.includes('start') && a.at(-1) === 'love'));
+  assert.ok(!calls.some((a) => a.includes('pull') && a.some((v) => v.startsWith('postgres:'))));
+  assert.equal(config, base.replace("LOVE_DATABASE='sqlite'", "LOVE_DATABASE='external'"));
+});
+
+test('database check stops writers and restores running state after a failed deep check', async (t) => {
+  const { calls, result, config } = await launch(t, base, '17\ncheck\ndeep\nback\n0\n', {
+    checkFail: true,
+  });
+  assert.equal(result.status, 0);
+  assert.equal(config, base);
+  const check = calls.findIndex((a) => a.includes('/app/apps/server/dist/database-check-cli.js'));
+  assert.ok(check >= 0 && calls[check].includes('--deep'));
+  assert.ok(calls.some((a, i) => i < check && a.includes('stop') && a.at(-1) === 'love'));
+  assert.ok(calls.some((a, i) => i > check && a.includes('start') && a.at(-1) === 'love'));
+  assert.ok(!calls.some((a) => a.includes('/app/apps/server/dist/database-backup-cli.js')));
 });

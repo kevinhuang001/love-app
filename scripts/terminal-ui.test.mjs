@@ -46,7 +46,11 @@ test('modern menu exposes named actions and deployment summary without passwords
   );
   assert.match(f.notes[0], /love-ui · postgres · HTTP/);
   assert.ok(!f.notes[0].includes('private-password'));
-  assert.equal(f.calls[0].maxItems, 14);
+  assert.equal(f.calls[0].maxItems, 12);
+  assert.ok(menuOptions.some((option) => option.value === 'database'));
+  assert.ok(
+    menuOptions.every((option) => !['backup', 'restore', 'cleanup'].includes(option.value)),
+  );
   assert.ok(menuOptions.some((option) => option.value === 'refresh'));
   assert.equal(menuOptions.at(-1).value, 'exit');
 });
@@ -100,5 +104,19 @@ test('operation backup policy defaults to skipping, permits explicit backup and 
   await assert.rejects(
     prompt({ ...f, kind: 'backup-policy', ui: { ...f.ui, select: async () => Symbol('cancel') } }),
     /PROMPT_CANCELLED/,
+  );
+});
+
+test('database submenu groups checks, backups, recovery and cleanup; quick checks are the default', async (t) => {
+  const f = await fixture(t);
+  assert.equal(await prompt({ ...f, kind: 'database-menu' }), 'check');
+  assert.deepEqual(
+    f.calls.at(-1).options.map((o) => o.value),
+    ['check', 'backup', 'restore', 'cleanup', 'back'],
+  );
+  assert.equal(await prompt({ ...f, kind: 'check-mode' }), 'quick');
+  assert.deepEqual(
+    f.calls.at(-1).options.map((o) => o.value),
+    ['quick', 'deep', 'cancel'],
   );
 });

@@ -17,13 +17,13 @@ export const menuOptions = [
   { value: 'restart', label: '重启应用' },
   { value: 'status', label: '状态与版本' },
   { value: 'logs', label: '查看日志', hint: '显示最近 200 条' },
-  { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才备份和下载' },
+  { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才下载，备份可跳过' },
   { value: 'backup', label: '备份数据与配置' },
   { value: 'restore', label: '恢复备份', hint: '自动识别并转换至当前数据库，保留部署配置' },
   {
     value: 'cleanup',
     label: '清理 SQLite 未引用媒体',
-    hint: '暂停写入并备份，只删除没有数据库引用的文件',
+    hint: '只删除没有数据库引用的文件，备份可跳过',
   },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
@@ -78,6 +78,18 @@ export async function prompt({
         message: '查看完操作结果后，按回车返回',
         options: [{ value: 'continue', label: '返回主菜单' }],
         showInstructions: false,
+      }),
+    );
+  if (kind === 'backup-policy')
+    return ask(
+      select({
+        message: '本次操作前是否备份当前数据？',
+        initialValue: 'skip',
+        options: [
+          { value: 'skip', label: '直接继续，跳过备份' },
+          { value: 'backup', label: '先备份，再继续', hint: '完整数据库与媒体，耗时取决于数据量' },
+          { value: 'cancel', label: '取消本次操作' },
+        ],
       }),
     );
   if (kind === 'confirm')

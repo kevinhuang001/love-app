@@ -324,7 +324,9 @@ test('a confirmed GHCR update preserves deployment values, refreshes bundled scr
   const secret = "ADMIN_PASSWORD='$(touch injected)'\n",
     original =
       base.replace("LOVE_HTTPS='0'", "LOVE_HTTPS='1'\nLOVE_TLS_PROVIDER='certbot'") + secret;
-  const { calls, result, config, dir } = await launch(t, original, '7\ny\n0\n', { update: true });
+  const { calls, result, config, dir } = await launch(t, original, '7\ny\nbackup\n0\n', {
+    update: true,
+  });
   assert.equal(result.status, 0);
   const stop = calls.findIndex((a) => a.includes('stop') && a.at(-1) === 'love'),
     pull = calls.findIndex((a) => a[0] === 'pull'),
@@ -354,7 +356,7 @@ test('bootstrap and repeated updates ignore stale .next files, directories and d
       const { result, config, dir, calls } = await launch(
         t,
         bootstrap ? null : base,
-        bootstrap ? '0\n' : '7\ny\n7\ny\n0\n',
+        bootstrap ? '0\n' : '7\ny\nbackup\n7\ny\nbackup\n0\n',
         {
           bootstrap,
           update: true,
@@ -392,7 +394,7 @@ test('bootstrap and repeated updates ignore stale .next files, directories and d
 });
 
 test('deployment writes never follow stale links; failed tool copy cleans temp files and preserves the active image', async (t) => {
-  const { result, dir, config, calls } = await launch(t, base, '7\ny\n0\n', {
+  const { result, dir, config, calls } = await launch(t, base, '7\ny\nbackup\n0\n', {
     update: true,
     failToolCopy: true,
     prepare: async (directory) => {
@@ -429,7 +431,7 @@ test('restore detects source type, preserves external configuration, backs up an
       const { calls, config, result } = await launch(
         t,
         current,
-        '9\noriginal-backup\nRESTORE\n0\n',
+        '9\noriginal-backup\nRESTORE\nbackup\n0\n',
         {
           restoreFail,
           backupProvider,
@@ -462,7 +464,7 @@ test('restore detects source type, preserves external configuration, backs up an
 });
 test('cleanup backs up before deletion, stops writers, restores running state on failure and never changes database config', async (t) => {
   for (const cleanupFail of [false, true]) {
-    const { calls, config, result } = await launch(t, base, '16\ny\n0\n', { cleanupFail });
+    const { calls, config, result } = await launch(t, base, '16\ny\nbackup\n0\n', { cleanupFail });
     assert.equal(result.status, 0);
     assert.equal(config, base);
     const cleanup = calls.findIndex((a) => a.includes('/app/apps/server/dist/unused-media-cli.js'));
@@ -475,4 +477,38 @@ test('cleanup backs up before deletion, stops writers, restores running state on
     assert.ok(calls[cleanup].includes('--apply'));
     assert.ok(calls.some((a, i) => i > cleanup && a.includes('start') && a.at(-1) === 'love'));
   }
+});
+
+test('update, restore and cleanup can skip backups entirely or cancel before mutations', async (t) => {
+  for (const action of ['update', 'restore', 'cleanup'])
+    for (const policy of ['skip', 'cancel']) {
+      const input =
+        action === 'update'
+          ? `7\ny\n${policy}\n0\n`
+          : action === 'restore'
+            ? `9\noriginal-backup\nRESTORE\n${policy}\n0\n`
+            : `16\ny\n${policy}\n0\n`;
+      const { calls, result, dir } = await launch(t, base, input, {
+        update: action === 'update',
+        backupFail: true,
+        prepare: async (dir) => {
+          await mkdir(join(dir, 'backups', 'original-backup'), { recursive: true });
+        },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(
+        !calls.some(
+          (a) => a.includes('/app/apps/server/dist/database-backup-cli.js') && a.includes('backup'),
+        ),
+      );
+      assert.deepEqual(await readdir(join(dir, 'backups')), ['original-backup']);
+      const mutations = calls.filter(
+        (a) =>
+          a.includes('stop') ||
+          a.includes('up') ||
+          a.includes('/app/apps/server/dist/unused-media-cli.js') ||
+          (a.includes('/app/apps/server/dist/database-backup-cli.js') && a.includes('restore')),
+      );
+      assert.equal(mutations.length > 0, policy === 'skip');
+    }
 });

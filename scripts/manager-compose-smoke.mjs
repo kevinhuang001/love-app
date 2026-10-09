@@ -205,7 +205,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
     query(
       `await db.prepare("UPDATE server_config SET value='after' WHERE key='backup-proof'").run();await fs.writeFile('/app/data/after-backup-marker','after');`,
     );
-    menu('9\n' + name + '\nRESTORE\n0\n');
+    menu('9\n' + name + '\nRESTORE\nbackup\n0\n');
     const proof = JSON.parse(
       query(
         `console.log(JSON.stringify({value:(await db.prepare("SELECT value FROM server_config WHERE key='backup-proof'").get()).value,marker:await fs.stat('/app/data/after-backup-marker').then(()=>true,()=>false)}));`,
@@ -274,7 +274,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         `await db.prepare("UPDATE server_config SET value='changed' WHERE key='backup-proof'").run();`,
       );
       const beforeConfig = await readFile(join(dir, '.env'), 'utf8');
-      const restored = menu('9\nlegacy-postgres\nRESTORE\n0\n');
+      const restored = menu('9\nlegacy-postgres\nRESTORE\nbackup\n0\n');
       assert.match(restored, /恢复完成/);
       assert.equal(await readFile(join(dir, '.env'), 'utf8'), beforeConfig);
       assert.equal(
@@ -300,7 +300,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
       // Remove it before changing providers; Compose exec must inspect the new application.
       execFileSync('docker', ['rm', '-f', maintenanceContainer], { stdio: 'ignore' });
       maintenanceContainer = undefined;
-      menu('16\nyes\n0\n');
+      menu('16\nyes\nbackup\n0\n');
       const cleaned = JSON.parse(
         query(
           `console.log(JSON.stringify({kept:await fs.readFile('/app/data/media/kept.preview.webp','utf8'),orphan:await fs.stat('/app/data/media/orphan.mp4').then(()=>true,()=>false),temp:await fs.stat('/app/data/media/tmp/interrupted').then(()=>true,()=>false)}));`,
@@ -351,7 +351,9 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
             .map(([k, v]) => k + '=' + quoteEnv(v))
             .join('\n') + '\n';
         await writeFile(join(dir, '.env'), targetEnv);
-        const output = menu('9\n' + sqliteBackup + '\nRESTORE\n0\n');
+        const countBeforeSkip = (await readdir(join(dir, 'backups'))).length;
+        const output = menu('9\n' + sqliteBackup + '\nRESTORE\nskip\n0\n');
+        assert.equal((await readdir(join(dir, 'backups'))).length, countBeforeSkip);
         assert.match(output, /恢复完成/);
         assert.equal(await readFile(join(dir, '.env'), 'utf8'), targetEnv);
         const convertedCompose = (...args) =>
@@ -382,7 +384,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
           (name) => !beforePgBackup.has(name),
         );
         await writeFile(join(dir, '.env'), originalSourceConfig);
-        const back = menu('9\n' + pgBackup + '\nRESTORE\n0\n');
+        const back = menu('9\n' + pgBackup + '\nRESTORE\nbackup\n0\n');
         assert.match(back, /恢复完成/);
         assert.equal(await readFile(join(dir, '.env'), 'utf8'), originalSourceConfig);
         assert.equal(

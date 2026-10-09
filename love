@@ -140,6 +140,15 @@ backup() {
   [ -z "$running" ] || compose start love || return 1
   printf '备份完成：%s（统一数据包，包含密码和密钥，请妥善保管）。\n' "$backup_dir"
 }
+optional_backup() {
+  backup_dir=''
+  ui backup-policy || return 1
+  case "$answer" in
+    backup) backup || return 1;;
+    skip) printf '已跳过操作前备份。\n';;
+    *) return 1;;
+  esac
+}
 # Old PGDMP archives can only be decoded by PostgreSQL. Use an isolated, disposable
 # reader on a private network: never restore a native dump into the production DB.
 convert_legacy_backup() (
@@ -173,16 +182,17 @@ restore() {
     (cd "$work" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; else shasum -a 256 deployment.env data.tar.gz; fi; } > SHA256SUMS) || return 1
     restore_dir=$work
   fi
-  backup || return 1
-  restore_running=$running
+  optional_backup || return 1
+  restore_running=$(running_app_containers) || return 1
+  [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
   compose stop love || return 1
-  if ! compose run --rm -T --no-deps --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" --entrypoint node love /app/apps/server/dist/database-backup-cli.js restore --directory /backup; then
-    printf '恢复失败；当前数据、部署配置和安全备份保留。\n' >&2
+  if ! compose run --rm -T --no-deps --user 0 --volume "$restore_dir:/backup:ro" --entrypoint node love /app/apps/server/dist/database-backup-cli.js restore --directory /backup; then
+    printf '恢复失败；当前数据和部署配置保留。\n' >&2
     [ -z "$restore_running" ] || compose start love
     return 1
   fi
   # Recreated containers pick up the same current .env, never deployment.env from the backup.
-  start || { printf '数据已恢复，启动失败；请检查连接和日志。恢复前备份：%s\n' "$backup_dir" >&2; return 1; }
+  start || { printf '数据已恢复，启动失败；请检查连接和日志。恢复前备份：%s\n' "${backup_dir:-未创建}" >&2; return 1; }
   printf '恢复完成，当前数据库与部署配置保持不变。\n'
 }
 update() {
@@ -253,8 +263,8 @@ GHCR_CHECK
   ) || return 1
   [ -n "$latest" ] || { printf '已是最新版本，无需更新。\n'; return 0; }
   case "$latest" in ghcr.io/kevinhuang001/love-app@sha256:*) ;; *) printf '更新检查结果无效。\n' >&2; return 1;; esac
-  confirm '发现新版本。备份后下载 GHCR 镜像并更新？' || return 0
-  backup || return 1
+  confirm '发现新版本。下载 GHCR 镜像并更新？' || return 0
+  optional_backup || return 1
   rollback_image="ghcr.io/kevinhuang001/love-app:rollback-$(date -u +%Y%m%dT%H%M%SZ)"
   docker tag "$current_id" "$rollback_image" || return 1
   previous_image=$image
@@ -265,7 +275,7 @@ GHCR_CHECK
   update_tools || { image=$previous_image; return 1; }
   printf '%s\n' "$rollback_image" > .love-rollback
   set_field LOVE_IMAGE "$image" || return 1
-  start || { printf '启动失败，可从菜单选择回滚；备份已保留。\n' >&2; return 1; }
+  start || { printf '启动失败，可检查日志或从菜单选择回滚。\n' >&2; return 1; }
   if [ "$https" = 1 ] && [ "$tls" != external ]; then compose restart proxy || return 1; fi
   printf '更新完成，正在重新加载管理菜单。\n'
   return_to_menu
@@ -283,9 +293,9 @@ rollback() {
 cleanup_media() {
   require_config && ensure_image || return 1
   [ "$database" = sqlite ] || { printf '此操作用于 SQLite 的磁盘媒体。\n'; return 1; }
-  confirm '备份并暂停写入，清理没有数据库引用的媒体及上传临时文件？' || return 0
-  backup || return 1
-  cleanup_running=$running
+  confirm '暂停写入，清理没有数据库引用的媒体及上传临时文件？' || return 0
+  optional_backup || return 1
+  cleanup_running=$(running_app_containers) || return 1
   compose stop love || return 1
   cleanup_status=0
   compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/unused-media-cli.js --apply || cleanup_status=$?

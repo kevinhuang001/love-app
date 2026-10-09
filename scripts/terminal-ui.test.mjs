@@ -71,3 +71,20 @@ test('backup picker orders newest first, skips non-directories and supports canc
     /PROMPT_CANCELLED/,
   );
 });
+
+test('operation backup policy defaults to skipping, permits explicit backup and cancellation', async (t) => {
+  const f = await fixture(t);
+  assert.equal(await prompt({ ...f, kind: 'backup-policy' }), 'skip');
+  assert.deepEqual(
+    f.calls.at(-1).options.map((o) => o.value),
+    ['skip', 'backup', 'cancel'],
+  );
+  assert.equal(
+    await prompt({ ...f, kind: 'backup-policy', ui: { ...f.ui, select: async () => 'backup' } }),
+    'backup',
+  );
+  await assert.rejects(
+    prompt({ ...f, kind: 'backup-policy', ui: { ...f.ui, select: async () => Symbol('cancel') } }),
+    /PROMPT_CANCELLED/,
+  );
+});

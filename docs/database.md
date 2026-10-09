@@ -60,7 +60,7 @@ DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/l
 
 统一数据包包含全部 27 张业务表及引用的原文件、压缩预览、缩略图和头像，保留密码哈希、会话、配对、消息、日期、AI 配置、邀请码、后台设置、配额和日志。自增序号保留删除后的高水位；PostgreSQL double precision 保留 SQLite 浮点精度。媒体按每块 1 MiB 读写，不重新压缩或转码；恢复前会验证关联、行数、字节数与 SHA-256。
 
-AI 与 SMTP 加密凭据在私有副本中用当前密钥重新加密，原备份不修改。恢复允许替换目标现有内容，覆盖前另存安全备份；PostgreSQL 事务失败回滚全部表和媒体，SQLite 使用暂存数据和持久化日志处理文件切换。详见 [备份操作](container-images.md#切换数据库与恢复备份)。
+AI 与 SMTP 加密凭据在私有副本中用当前密钥重新加密，原备份不修改。恢复允许替换目标现有内容，覆盖前可选择另存安全备份；PostgreSQL 事务失败回滚全部表和媒体，SQLite 使用暂存数据和持久化日志处理文件切换。详见 [备份操作](container-images.md#切换数据库与恢复备份)。
 
 ## PostgreSQL 连接参数
 

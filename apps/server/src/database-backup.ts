@@ -136,7 +136,7 @@ export async function exportDatabase({
     const source = db!;
     const sqlite = new DatabaseSync(output);
     try {
-      sqlite.exec(schema + '; PRAGMA user_version=9; BEGIN;');
+      sqlite.exec(schema + '; PRAGMA user_version=9; BEGIN; PRAGMA defer_foreign_keys=ON;');
       await source.transaction(
         async () => {
           for (const table of transferTables) {
@@ -170,7 +170,7 @@ export async function exportDatabase({
             const savedSequence = (await source
               .prepare(`SELECT last_value,is_called FROM ${sequence}`)
               .get())!;
-            const value = savedSequence.is_called ? Number(savedSequence.last_value) : 0;
+            const value = Number(savedSequence.last_value) - (savedSequence.is_called ? 0 : 1);
             const maximum = Number(
               sqlite.prepare(`SELECT COALESCE(MAX(id),0) value FROM ${quote(name)}`).get()!.value,
             );

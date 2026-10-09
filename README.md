@@ -8,7 +8,7 @@ chmod +x love
 ./love
 ```
 
-脚本只从 GHCR 拉取官方应用镜像，首次自动取出部署工具；使用方向键选择配置、启动、更新、备份恢复或卸载。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。更新先检查 GHCR，仅有新版本时才备份并更新管理脚本和 Docker 镜像，保留部署配置与数据。
+脚本只从 GHCR 拉取官方应用镜像，首次自动取出部署工具；使用方向键选择配置、启动、更新、备份恢复或卸载。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。更新先检查 GHCR，仅有新版本时才更新管理脚本和 Docker 镜像；操作前可选择备份或跳过，保留部署配置与数据。
 
 以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite / PostgreSQL + Socket.IO。
 

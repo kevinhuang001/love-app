@@ -55,11 +55,22 @@ ui() {
 }
 confirm() { ui confirm "$1" && [ "$answer" = yes ]; }
 return_to_menu() { ui continue || { [ "$ui_status" = 130 ] && exit 0; exit 1; }; }
-set_field() {
+install_file() (
+  # A unique file beside the destination avoids stale .next files and symlinks.
+  source_file=$1; target_file=$2; target_mode=${3:-600}
+  staged_file=$(mktemp "$(dirname -- "$target_file")/.love-$(basename -- "$target_file").XXXXXXXX") || return 1
+  trap 'rm -f -- "$staged_file"' EXIT
+  trap 'exit 1' HUP INT TERM
+  cp -- "$source_file" "$staged_file" && chmod "$target_mode" "$staged_file" && mv -fT -- "$staged_file" "$target_file"
+)
+set_field() (
   # Values passed here are restricted image references / fixed enum fields.
   [ -f .env ] || return 0
-  sed "/^$1=/d" .env > .env.next && printf "%s='%s'\n" "$1" "$2" >> .env.next && chmod 600 .env.next && mv .env.next .env
-}
+  staged_env=$(mktemp "$PWD/.love-env.XXXXXXXX") || return 1
+  trap 'rm -f -- "$staged_env"' EXIT
+  trap 'exit 1' HUP INT TERM
+  sed "/^$1=/d" .env > "$staged_env" && printf "%s='%s'\n" "$1" "$2" >> "$staged_env" && mv -fT -- "$staged_env" .env
+)
 download_image() { docker pull "$image"; }
 ensure_image() { docker image inspect "$image" >/dev/null 2>&1 || download_image; }
 deployment_bundle() {
@@ -67,16 +78,25 @@ deployment_bundle() {
   mkdir -p "$work/deploy" || return 1
   docker run --rm --entrypoint tar "$image" -C /app -cf - love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml deploy Caddyfile > "$work/deploy.tar" || return 1
   tar --no-same-owner --no-same-permissions -xf "$work/deploy.tar" -C "$work/deploy" || return 1
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh; do
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh; do
     [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '镜像部署配置不完整。\n' >&2; return 1; }
   done
 }
 install_bundle() {
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile; do
-    cp "$work/deploy/$file" "$file.next" && mv "$file.next" "$file" || return 1
+  mkdir -p deploy || return 1
+  for file in compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh love; do
+    mode=600; [ "$file" != love ] || mode=755
+    install_file "$work/deploy/$file" "$file" "$mode" || return 1
   done
-  cp -R "$work/deploy/deploy" . || return 1
-  chmod 755 love
+}
+update_tools() {
+  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh Caddyfile love; do
+    [ ! -d "$file" ] || { printf '部署文件路径被目录占用：%s\n' "$file" >&2; return 1; }
+  done
+  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh Caddyfile love; do
+    mode=600; [ "$file" != love ] || mode=755
+    install_file "$work/deploy/$file" "$file" "$mode" || return 1
+  done
 }
 configure() {
   [ -t 0 ] && [ -t 1 ] || { printf '配置需要交互终端。\n' >&2; return 1; }
@@ -210,10 +230,8 @@ GHCR_CHECK
   image=$latest
   download_image || { image=$previous_image; return 1; }
   deployment_bundle || { image=$previous_image; return 1; }
-  cp "$work/deploy/love" love.next && mv love.next love || { image=$previous_image; return 1; }
-  cp "$work/deploy/deploy/terminal-ui.mjs" deploy/terminal-ui.mjs && chmod 755 love || return 1
   # Proxy templates are bundled application code. Deployment values stay in .env.
-  cp "$work/deploy/deploy/certbot-proxy.sh" deploy/certbot-proxy.sh && cp "$work/deploy/Caddyfile" Caddyfile || return 1
+  update_tools || { image=$previous_image; return 1; }
   printf '%s\n' "$rollback_image" > .love-rollback
   set_field LOVE_IMAGE "$image" || return 1
   start || { printf '启动失败，可从菜单选择回滚；备份已保留。\n' >&2; return 1; }

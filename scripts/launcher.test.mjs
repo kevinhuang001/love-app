@@ -1,7 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtemp, copyFile, chmod, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
+import {
+  mkdtemp,
+  copyFile,
+  chmod,
+  mkdir,
+  writeFile,
+  readFile,
+  rm,
+  symlink,
+  lstat,
+  readdir,
+} from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 async function launch(t, config, input, options = {}) {
@@ -19,6 +30,16 @@ async function launch(t, config, input, options = {}) {
   await writeFile(join(dir, 'Caddyfile'), 'request_body {\n max_size 105MB\n}\n');
   await writeFile(join(dir, 'deploy/certbot-proxy.sh'), 'max_size 105MB\n');
   await mkdir(join(dir, 'bin'));
+  if (options.failToolCopy) {
+    await writeFile(
+      join(dir, 'bin/cp'),
+      `#!/bin/sh
+case "$3" in */.love-Caddyfile.*) echo 'fixture: copy failed' >&2; exit 1;; esac
+exec /bin/cp "$@"
+`,
+    );
+    await chmod(join(dir, 'bin/cp'), 0o755);
+  }
   await writeFile(
     join(dir, 'bin/docker'),
     `#!/usr/bin/env node
@@ -60,6 +81,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
     'Caddyfile',
     'deploy/terminal-ui.mjs',
     'deploy/certbot-proxy.sh',
+    'deploy/certbot-renew.sh',
   ])
     await copyFile(new URL('../' + file, import.meta.url), join(dir, 'bundle', file));
   execFileSync('tar', [
@@ -76,6 +98,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
     'deploy',
   ]);
   if (options.bootstrap) await rm(join(dir, 'compose.yml'));
+  if (options.prepare) await options.prepare(dir);
   const result = spawnSync(
     options.tty ? 'script' : 'sh',
     options.tty ? ['-q', '-e', '-c', 'sh love', '/dev/null'] : ['love', ...(options.args || [])],
@@ -308,4 +331,76 @@ test('a confirmed GHCR update preserves deployment values, refreshes bundled scr
   assert.match(config, /LOVE_IMAGE='ghcr.io\/kevinhuang001\/love-app@sha256:/);
   assert.ok(calls.every((a) => !['build', 'load', 'curl'].includes(a[0])));
   await assert.rejects(readFile(join(dir, 'injected')), (error) => error.code === 'ENOENT');
+});
+
+test('bootstrap and repeated updates ignore stale .next files, directories and dangling links', async (t) => {
+  for (const bootstrap of [false, true]) {
+    for (const residue of ['file', 'directory', 'symlink']) {
+      const { result, config, dir, calls } = await launch(
+        t,
+        bootstrap ? null : base,
+        bootstrap ? '0\n' : '7\ny\n7\ny\n0\n',
+        {
+          bootstrap,
+          update: true,
+          prepare: async (directory) => {
+            // cp to a dangling love.next reproduces the user's exact EEXIST failure.
+            for (const name of ['love.next', '.env.next', 'compose.yml.next', 'Caddyfile.next']) {
+              const path = join(directory, name);
+              if (residue === 'file') await writeFile(path, 'previous interrupted write');
+              if (residue === 'directory') await mkdir(path);
+              if (residue === 'symlink') await symlink('missing-target', path);
+            }
+          },
+        },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stderr, /操作未完成|File exists/);
+      assert.equal(
+        await readFile(join(dir, 'love'), 'utf8'),
+        await readFile(new URL('../love', import.meta.url), 'utf8'),
+      );
+      assert.equal((await lstat(join(dir, 'love'))).mode & 0o777, 0o755);
+      assert.equal((await lstat(join(dir, 'love.next'))).isSymbolicLink(), residue === 'symlink');
+      assert.equal((await lstat(join(dir, 'love.next'))).isDirectory(), residue === 'directory');
+      for (const folder of [dir, join(dir, 'deploy')])
+        assert.ok(
+          !(await readdir(folder)).some((name) => /^\.love-.*\.[a-zA-Z0-9]{8}$/.test(name)),
+        );
+      if (!bootstrap) {
+        assert.equal((await lstat(join(dir, '.env'))).mode & 0o777, 0o600);
+        assert.match(config, /LOVE_IMAGE='ghcr.io\/kevinhuang001\/love-app@sha256:/);
+        assert.equal(calls.filter((a) => a.includes('up')).length, 2);
+      }
+    }
+  }
+});
+
+test('deployment writes never follow stale links; failed tool copy cleans temp files and preserves the active image', async (t) => {
+  const { result, dir, config, calls } = await launch(t, base, '7\ny\n0\n', {
+    update: true,
+    failToolCopy: true,
+    prepare: async (directory) => {
+      await writeFile(join(directory, 'untouched'), 'private configuration');
+      await symlink('untouched', join(directory, 'love.next'));
+      await symlink('untouched', join(directory, '.env.next'));
+    },
+  });
+  assert.match(result.stderr, /fixture: copy failed/);
+  assert.match(result.stderr, /操作未完成/);
+  assert.equal(await readFile(join(dir, 'untouched'), 'utf8'), 'private configuration');
+  assert.equal(config, base);
+  assert.equal(
+    await readFile(join(dir, 'love'), 'utf8'),
+    await readFile(new URL('../love', import.meta.url), 'utf8'),
+  );
+  const pull = calls.findIndex((a) => a[0] === 'pull');
+  assert.ok(pull > 0);
+  assert.ok(calls.some((a, i) => i < pull && a.includes('start') && a.at(-1) === 'love'));
+  assert.ok(!calls.some((a, i) => i > pull && a.includes('up')));
+  const prompts = calls.filter((a, i) => i > pull && a.includes('/setup/deploy/terminal-ui.mjs'));
+  assert.ok(prompts.length > 0);
+  assert.ok(prompts.every((a) => a.includes('ghcr.io/kevinhuang001/love-app:latest')));
+  assert.ok(!(await readdir(join(dir, 'deploy'))).some((name) => name.startsWith('.love-')));
+  assert.ok(!(await readdir(dir)).some((name) => name.startsWith('.love-Caddyfile.')));
 });

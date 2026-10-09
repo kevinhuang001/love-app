@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { setup, parseDeploymentEnv, quoteEnv } from '../scripts/setup.mjs';
 import { prompt } from './terminal-ui.mjs';
+import { formatRows, imageVersion, deploymentRows } from './presentation.mjs';
 import { latestImage, isCurrentImage, obsoleteImages, imageRepository } from './registry.mjs';
 import { latestManager, installManager } from './releases.mjs';
 import { atomicFile } from './files.mjs';
@@ -134,11 +135,56 @@ export class Manager {
       message,
       placeholder,
       ui: this.ui,
-      env: { LOVE_UI_IMAGE: this.image },
+      context: this.context,
     });
   }
   async confirm(message) {
     return (await this.ask('confirm', message)) === 'yes';
+  }
+  note(rows, title) {
+    const content = formatRows(rows);
+    if (this.ui.note) this.ui.note(content, title);
+    else this.log(title + '\n' + content);
+  }
+  async deploymentContext() {
+    const context = { version: this.version, latestVersion: this.latestVersion };
+    if (!existsSync(join(this.directory, '.env'))) return context;
+    try {
+      const ids = (
+        await this.docker(
+          [
+            'ps',
+            '--all',
+            '--quiet',
+            '--no-trunc',
+            '--filter',
+            `label=com.docker.compose.project=${this.project}`,
+            '--filter',
+            'label=com.docker.compose.service=love',
+            '--filter',
+            'label=com.docker.compose.oneoff=False',
+          ],
+          true,
+        )
+      )
+        .split(/\s+/)
+        .filter(Boolean);
+      if (!ids.length) return { ...context, appVersion: '尚未部署', status: '未启动' };
+      const entries = JSON.parse(await this.docker(['container', 'inspect', ...ids], true));
+      const image = await this.currentImage();
+      context.appVersion = imageVersion(image);
+      context.status = entries.some((c) => !c.State?.Running)
+        ? '已停止'
+        : entries.some((c) => c.State?.Health?.Status === 'unhealthy')
+          ? '健康检查失败'
+          : entries.some((c) => c.State?.Health?.Status === 'starting')
+            ? '启动中'
+            : '运行中';
+    } catch {
+      context.status = '无法读取 Docker 状态';
+      context.appVersion = '尚未检查';
+    }
+    return context;
   }
   refresh() {
     if (process.stdout.isTTY && process.env.TERM !== 'dumb')
@@ -376,8 +422,17 @@ export class Manager {
       await extractBackup(join(source, 'data.tar.gz'), temp);
       const original = await validatePackage(temp),
         t = original.report.tables;
-      this.log(
-        `可恢复：${t.users} 个用户、${t.couples} 对配对、${t.messages} 条消息、${t.media} 条媒体记录（${original.report.mediaFiles} 个文件）、${t.anniversaries} 个纪念日、${t.todos} 个 To Do；头像及业务设置随数据恢复。`,
+      this.note(
+        [
+          ['账号与配对', `${t.users} 个用户 / ${t.couples} 对配对`],
+          ['聊天消息', `${t.messages} 条`],
+          ['媒体内容', `${t.media} 条记录 / ${original.report.mediaFiles} 个文件`],
+          ['纪念日', `${t.anniversaries} 个`],
+          ['To Do', `${t.todos} 个`],
+          ['其他内容', '头像与业务设置随数据恢复'],
+          ['部署配置', '保留当前设置'],
+        ],
+        '恢复预览',
       );
       const backupConfig = parseDeploymentEnv(
         await readFile(join(source, 'deployment.env'), 'utf8'),
@@ -388,7 +443,14 @@ export class Manager {
       );
       let reset = false;
       if (lost.ai || lost.smtp) {
-        this.log(`无法恢复：${lost.ai} 个 AI 密钥、${lost.smtp} 个 SMTP 密码；其他数据可以恢复。`);
+        this.note(
+          [
+            ['AI 密钥', `${lost.ai} 个无法解密`],
+            ['SMTP 密码', `${lost.smtp} 个无法解密`],
+            ['其他数据', '可以恢复'],
+          ],
+          '加密凭据',
+        );
         if ((await this.ask('recovery-policy')) !== 'recover') return;
         reset = true;
       }
@@ -448,11 +510,18 @@ export class Manager {
       this.withDatabase(async (db, location) => {
         const plan = await inspectMediaCleanup(db, location.directory),
           review = cleanupFingerprint(plan);
-        this.log(
-          `可清理：${plan.media.length} 条未使用媒体、${plan.uploads.length} 条未发布上传、${plan.files.length} 个磁盘文件、${plan.staging.length} 个数据库暂存文件。`,
-        );
-        this.log(
-          `磁盘文件 ${(plan.files.reduce((n, r) => n + r.bytes, 0) / 1048576).toFixed(1)} MiB；未使用记录 ${(plan.media.reduce((n, r) => n + r.bytes, 0) / 1048576).toFixed(1)} MiB（可能与磁盘容量重复）。`,
+        this.note(
+          [
+            ['未使用媒体', `${plan.media.length} 条`],
+            ['未发布上传', `${plan.uploads.length} 条`],
+            [
+              '磁盘文件',
+              `${plan.files.length} 个 / ${(plan.files.reduce((n, r) => n + r.bytes, 0) / 1048576).toFixed(1)} MiB`,
+            ],
+            ['数据库暂存', `${plan.staging.length} 个文件`],
+            ['保护内容', '聊天、回忆、个人头像和 AI 头像'],
+          ],
+          '清理预览',
         );
         for (const row of [...plan.media, ...plan.uploads])
           this.log(
@@ -548,28 +617,50 @@ export class Manager {
   }
   async update() {
     await this.requireConfig();
-    this.log('正在检查 GHCR 镜像和管理工具更新…');
-    const local = await this.currentImage();
-    const remote = await latestImage({
-      request: this.request,
-      arch: local.Architecture === 'amd64' ? 'x64' : local.Architecture || process.arch,
-    });
-    const release = await latestManager({ request: this.request });
+    const progress = this.ui.spinner?.();
+    progress?.start('正在检查 GitHub Release 与 GHCR…');
+    let local, remote, release;
+    try {
+      local = await this.currentImage();
+      [remote, release] = await Promise.all([
+        latestImage({
+          request: this.request,
+          arch: local.Architecture === 'amd64' ? 'x64' : local.Architecture || process.arch,
+        }),
+        latestManager({ request: this.request }),
+      ]);
+      progress?.stop('版本检查完成');
+    } catch (error) {
+      progress?.stop('版本检查未完成');
+      throw error;
+    }
+    this.latestVersion = release.version;
+    const imageChanged = !isCurrentImage(local, remote),
+      managerChanged = release.version !== this.version;
+    this.note(
+      [
+        [
+          '应用',
+          `${imageVersion(local)} → ${remote.version ? 'v' + remote.version : '最新构建'} · ${imageChanged ? '可更新' : '已是最新'}`,
+        ],
+        [
+          '管理程序',
+          `v${this.version} → v${release.version} · ${managerChanged ? '可更新' : '已是最新'}`,
+        ],
+        ['更新来源', 'GHCR 镜像 / GitHub Release'],
+      ],
+      '版本对比',
+    );
     if (remote.version && remote.version !== release.version) {
       this.log('镜像与管理工具的新版本仍在发布同步中，请稍后重新检查。当前应用未修改。');
       return;
     }
-    const imageChanged = !isCurrentImage(local, remote),
-      managerChanged = release.version !== this.version;
     if (!imageChanged && !managerChanged) {
       this.log('应用和管理工具均为最新版本，无需更新。');
       await this.pruneOldImages(local);
       return;
     }
-    this.log(
-      `应用镜像：${imageChanged ? '发现更新' : '已是最新'}；管理工具：${managerChanged ? '发现更新 ' + release.version : '已是最新'}。`,
-    );
-    if (!(await this.confirm('下载并应用以上更新？启动成功后清理旧 Love 镜像。'))) return;
+    if (!(await this.confirm(`更新至 v${release.version}？健康检查通过后清理旧镜像。`))) return;
     await this.optionalBackup();
     if (imageChanged) {
       let downloaded = false;
@@ -641,8 +732,17 @@ export class Manager {
     if (choice === 'restart') return this.compose(['restart']);
     if (choice === 'logs') return this.compose(['logs', '--tail', '200']);
     if (choice === 'status') {
-      this.log(`管理工具：${this.version} · ${this.source}`);
-      return this.compose(['ps']);
+      this.context = await this.deploymentContext();
+      this.note(deploymentRows(this.config, this.context), '部署状态');
+      this.note(
+        [
+          ['部署目录', this.directory],
+          ['源码版本', this.source.slice(0, 12)],
+          ['镜像地址', this.image],
+        ],
+        '部署详情',
+      );
+      return;
     }
     throw new Error('未知管理操作');
   }
@@ -683,6 +783,7 @@ export class Manager {
     while (true) {
       await this.reload();
       this.refresh();
+      this.context = await this.deploymentContext();
       const choice = await this.ask('menu');
       if (choice === 'exit') return;
       if (choice === 'refresh') continue;
@@ -693,7 +794,20 @@ export class Manager {
         } catch (e) {
           if (e.message !== 'PROMPT_CANCELLED') throw e;
         }
-      } else await this.operation(() => this.action(choice));
+      } else {
+        const labels = {
+          configure: '部署配置',
+          start: '启动应用',
+          stop: '停止应用',
+          restart: '重启应用',
+          status: '部署状态',
+          logs: '应用日志',
+          update: '检查更新',
+          uninstall: '卸载应用',
+        };
+        this.ui.intro('LOVE · ' + labels[choice]);
+        await this.operation(() => this.action(choice));
+      }
       if (this.needsReload) return 'reload';
     }
   }

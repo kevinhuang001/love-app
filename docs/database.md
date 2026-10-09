@@ -5,10 +5,10 @@
 ## 首次 Docker 部署
 
 ```sh
-./love
+curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/install.sh | bash
 ```
 
-只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。在菜单选择首次配置，下载已构建镜像，用 Docker 交互终端运行配置向导，再按提示启动并等待服务健康。
+只需 Docker Engine 和 Compose 插件，无需在宿主机安装 Node.js。在宿主机管理菜单选择部署配置，再按提示下载已构建镜像并启动，等待服务健康。
 
 菜单只从官方 GHCR 拉取镜像；详细管理用法见 [预构建镜像部署](container-images.md)。
 
@@ -45,7 +45,7 @@ docker compose -p love-v4 -f compose.yml -f compose.postgres.yml --profile https
 
 覆盖文件使用独立 `postgres-data` 卷，挂载 PostgreSQL 18 的 `/var/lib/postgresql`，不会向宿主机发布数据库端口。应用等待数据库健康后启动。PostgreSQL 统一保存账号、配对、聊天、日期、配置、容量、日志，以及所有图片、视频和头像的二进制内容。应用的数据卷只用于上传/转码临时文件；成功写入数据库后清理。
 
-连接外部数据库：只使用 `compose.yml`，设置：
+连接外部数据库时，直接使用所填 URL 中已有的 Love 账号、配对、头像、AI 设置和媒体数据；不自动导入或覆盖数据，也不创建本地 SQLite 或内置 PostgreSQL。只使用 `compose.yml`，设置：
 
 ```dotenv
 DATABASE_PROVIDER=postgres
@@ -99,7 +99,7 @@ PostgreSQL 将原图/原视频（按配对保留设置）、压缩预览、缩�
 
 ## PostgreSQL 备份
 
-默认使用 `./love` 的统一备份恢复，不需要在宿主机安装数据库客户端。内置和外部 PostgreSQL 均通过应用镜像直接备份全部业务及数据库媒体，不下载额外客户端镜像；保存的 `deployment.env` 用于读取原密钥，恢复不会覆盖当前部署配置。
+默认使用 `./love` 的统一备份恢复，不需要在宿主机安装数据库客户端。内置和外部 PostgreSQL 均由宿主机管理程序直接备份全部业务及数据库媒体，不创建额外工具容器；保存的 `deployment.env` 用于读取原密钥，恢复不会覆盖当前部署配置。
 
 旧 PGDMP 自定义格式备份需先用旧管理工具转换成统一数据包；新的独立管理程序直接处理统一包与旧 SQLite 快照，不启动临时数据库容器。请安全保管备份，不要公开数据库内容和密钥。
 

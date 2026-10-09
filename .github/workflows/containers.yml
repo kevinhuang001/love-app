@@ -4,7 +4,7 @@ on:
     paths:
       - '.github/workflows/containers.yml'
       - 'Dockerfile'
-      - 'love'
+      - 'install.sh'
       - 'scripts/setup*'
       - 'compose*.yml'
       - 'deploy/**'

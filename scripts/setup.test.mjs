@@ -99,8 +99,8 @@ test('custom HTTPS port appears in access URL and allowed origin and survives se
   assert.ok(
     notes.some(
       (text) =>
-        text.includes('HTTPS 监听：0.0.0.0:8013') &&
-        text.includes('访问：https://kevinhuang.top:8013'),
+        /HTTPS 监听：\s+0\.0\.0\.0:8013/.test(text) &&
+        /访问：\s+https:\/\/kevinhuang\.top:8013/.test(text),
     ),
   );
   const repeated = await setup({ output, ui: fakeUI({ https: true }), env: {} });

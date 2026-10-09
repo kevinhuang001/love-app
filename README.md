@@ -5,19 +5,10 @@
 在 Linux 部署主机的独立目录执行（已有部署请在原 `love` 所在目录执行）：
 
 ```sh
-case "$(uname -m)" in
-  x86_64) asset=love-linux-x64 ;;
-  aarch64|arm64) asset=love-linux-arm64 ;;
-  *) echo '支持 Linux amd64 / arm64'; exit 1 ;;
-esac
-base=https://github.com/kevinhuang001/love-app/releases/latest/download
-curl -fL "$base/$asset" -o "$asset"
-curl -fL "$base/SHA256SUMS" -o SHA256SUMS
-grep "  $asset$" SHA256SUMS | sha256sum -c -
-chmod +x "$asset"
-mv -f "$asset" love
-sudo ./love
+curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/install.sh | bash
 ```
+
+安装入口自动识别 AMD64 / ARM64，固定正式发布版本并校验 SHA-256，仅安装 `love` 二进制。交互终端中安装完成后直接打开菜单；以后运行 `sudo ./love`。已有 `.env`、备份与数据卷保留，下载或校验失败不会替换原程序。
 
 管理逻辑全部用 JavaScript 编写，以 Bun 编译为单文件二进制，现代终端仍使用 Clack。首次运行将内嵌 `compose*.yml`、`Caddyfile` 与代理配置创建到 `love` 所在目录；`.env`、`backups/` 也在同级目录，从其他目录运行仍使用这一位置。程序只检查官方 GHCR 镜像与 GitHub Release 中的管理工具，有更新才下载。成功启动后清理本项目旧镜像，不提供版本回滚；下载失败不停止原应用，启动失败提示排查日志；操作前备份可跳过。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。
 

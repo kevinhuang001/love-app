@@ -1,9 +1,18 @@
 // Prompt rendering runs directly in the standalone host executable.
 import * as clack from '@clack/prompts';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile, readdir } from 'node:fs/promises';
-import { resolve, dirname } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { readFile, readdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { parseDeploymentEnv } from '../scripts/setup.mjs';
+import { deploymentRows, formatRows } from './presentation.mjs';
+clack.SELECT_INSTRUCTIONS.splice(
+  0,
+  clack.SELECT_INSTRUCTIONS.length,
+  '↑/↓ 选择',
+  '回车确认',
+  'Ctrl+C 取消',
+);
+clack.updateSettings({ messages: { cancel: '已取消', error: '操作未完成' } });
 export const menuOptions = [
   { value: 'configure', label: '部署配置', hint: '初次配置或修改 IP、端口、数据库、HTTPS' },
   { value: 'start', label: '启动应用', hint: '下载已构建镜像并应用部署配置' },
@@ -11,7 +20,7 @@ export const menuOptions = [
   { value: 'restart', label: '重启应用' },
   { value: 'status', label: '状态与版本' },
   { value: 'logs', label: '查看日志', hint: '显示最近 200 条' },
-  { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才下载，备份可跳过' },
+  { value: 'update', label: '检查更新', hint: '显示当前和最新版本，再选择是否更新' },
   { value: 'database', label: '数据库管理', hint: '一致性检查、备份、恢复与未使用媒体清理' },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
@@ -23,7 +32,7 @@ export async function prompt({
   message = '',
   placeholder = '',
   ui = clack,
-  env = process.env,
+  context = {},
 }) {
   const ask = async (operation) => {
     const result = await operation;
@@ -33,27 +42,34 @@ export async function prompt({
   const select = (options) =>
     ui.select({
       ...options,
-      message: options.message + '（↑/↓ 选择 · 回车确认）',
-      showInstructions: false,
+      message: options.message,
+      showInstructions: true,
     });
   if (kind === 'menu') {
-    let summary = '尚未配置 · 选择“部署配置”开始';
+    let config;
     try {
-      const content = await readFile(resolve(directory, '.env'), 'utf8');
-      const setting = (key) =>
-        content.match(new RegExp(`^${key}=['"]?([a-zA-Z0-9_./:@-]*)['"]?$`, 'm'))?.[1];
-      summary = `${setting('COMPOSE_PROJECT_NAME') || 'love-v4'} · ${setting('LOVE_DATABASE') || 'sqlite'} · ${setting('LOVE_HTTPS') === '1' ? 'HTTPS' : 'HTTP'}\n镜像：${env.LOVE_UI_IMAGE || setting('LOVE_IMAGE') || 'ghcr.io/kevinhuang001/love-app:latest'}`;
+      config = parseDeploymentEnv(await readFile(resolve(directory, '.env'), 'utf8'));
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
     ui.intro('LOVE · 部署管理');
-    ui.note(summary, '当前部署');
+    ui.note(
+      config
+        ? formatRows(deploymentRows(config, context))
+        : '选择“部署配置”开始。安装完成后无需下载源码。',
+      config ? '部署概况' : '首次使用',
+    );
+    const options = menuOptions.map((option) =>
+      option.value === 'update' && context.latestVersion
+        ? { ...option, hint: `最新版本 v${context.latestVersion} · 回车重新检查` }
+        : option,
+    );
     const result = await ask(
       select({
         message: '选择操作',
-        options: menuOptions,
+        options,
         initialValue: existsSync(resolve(directory, '.env')) ? 'status' : 'configure',
-        maxItems: menuOptions.length,
+        maxItems: Math.max(4, Math.min(menuOptions.length, (process.stdout.rows || 30) - 20)),
       }),
     );
     if (result === 'exit') ui.outro('已退出部署管理');
@@ -184,24 +200,4 @@ export async function prompt({
     );
   }
   throw new Error('未知终端提示');
-}
-if (import.meta.main) {
-  const [kind, output, message, placeholder] = process.argv.slice(2);
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.error('请在交互终端直接运行 ./love。');
-    process.exitCode = 1;
-  } else {
-    try {
-      const result = await prompt({ kind, directory: dirname(output), message, placeholder });
-      await writeFile(output, String(result), { mode: 0o600 });
-    } catch (error) {
-      if (error.message === 'PROMPT_CANCELLED') {
-        clack.cancel('已取消，配置和数据未更改');
-        process.exitCode = 130;
-      } else {
-        clack.log.error(error.message);
-        process.exitCode = 1;
-      }
-    }
-  }
 }

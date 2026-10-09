@@ -40,19 +40,35 @@ test('modern menu exposes named actions and deployment summary without passwords
     await prompt({
       ...f,
       kind: 'menu',
-      env: { LOVE_UI_IMAGE: 'ghcr.io/kevinhuang001/love-app:latest' },
+      context: { version: '2.9.2', appVersion: 'v2.9.1', latestVersion: '2.9.2', status: '运行中' },
     }),
     'status',
   );
-  assert.match(f.notes[0], /love-ui · postgres · HTTP/);
+  assert.match(f.notes[0], /项目名称\s+love-ui/);
+  assert.match(f.notes[0], /数据库\s+PostgreSQL · 内置/);
+  assert.match(f.notes[0], /应用版本\s+v2.9.1/);
+  assert.match(f.notes[0], /最新版本\s+v2.9.2/);
   assert.ok(!f.notes[0].includes('private-password'));
-  assert.equal(f.calls[0].maxItems, 11);
+  assert.ok(f.calls[0].maxItems >= 4 && f.calls[0].maxItems <= 11);
+  assert.match(f.calls[0].options.find((o) => o.value === 'update').hint, /最新版本 v2.9.2/);
   assert.ok(menuOptions.some((option) => option.value === 'database'));
   assert.ok(
     menuOptions.every((option) => !['backup', 'restore', 'cleanup'].includes(option.value)),
   );
   assert.ok(menuOptions.some((option) => option.value === 'refresh'));
   assert.equal(menuOptions.at(-1).value, 'exit');
+});
+test('remote database summary displays the endpoint without credentials and brackets IPv6 correctly', async (t) => {
+  const f = await fixture(t);
+  await writeFile(
+    join(f.directory, '.env'),
+    "LOVE_DATABASE='external'\nDATABASE_URL='postgresql://secret-user:secret-password@[2001:db8::1]:5432/love?sslmode=disable'\nLOVE_BIND_IP='::1'\nLOVE_PORT='8013'\n",
+  );
+  await prompt({ ...f, kind: 'menu', context: { version: '2.9.2' } });
+  assert.match(f.notes[0], /PostgreSQL · 远程/);
+  assert.match(f.notes[0], /\[2001:db8::1\]:5432\/love/);
+  assert.match(f.notes[0], /HTTP · \[::1\]:8013/);
+  assert.doesNotMatch(f.notes[0], /secret-user|secret-password|sslmode/);
 });
 test('first configuration is selected initially and destructive confirmations default to no', async (t) => {
   const f = await fixture(t);

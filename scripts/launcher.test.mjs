@@ -254,6 +254,23 @@ test('publication skew is not reported as a new usable version and never changes
   assert.match(f.notes.join('\n'), /发布同步/);
   assert.ok(!f.calls.some((a) => a[0] === 'pull' || a.includes('stop')));
 });
+test('update review displays both current and latest versions before asking to download', async (t) => {
+  const f = await fixture(t, { updated: true, managerUpdated: true });
+  f.current.Config.Labels['org.opencontainers.image.version'] = '2.8.1';
+  let review;
+  f.ui.note = (content, title) => {
+    if (title === '版本对比') review = content;
+  };
+  f.ui.confirm = async (p) => {
+    assert.match(review, /应用\s+v2.8.1 → v2.9.0/);
+    assert.match(review, /管理程序\s+v2.8.1 → v2.9.0/);
+    assert.match(p.message, /更新至 v2.9.0/);
+    return false;
+  };
+  await f.manager.update();
+  assert.equal(f.manager.latestVersion, '2.9.0');
+  assert.ok(!f.calls.some((a) => a[0] === 'pull'));
+});
 test('database failures resume only previously running applications', async (t) => {
   const f = await fixture(t);
   await assert.rejects(

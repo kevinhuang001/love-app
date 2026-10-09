@@ -44,4 +44,4 @@ AI 使用仅发起者可配置的凭据。队列先保存 @配置名称请求，
 
 `db.ts` 提供统一异步参数化接口。SQLite 使用 WAL 与单写事务队列；PostgreSQL 使用连接池，同一事务的查询通过 AsyncLocalStorage 固定在同一 client。短写事务使用数据库 advisory lock，保持配对、一次性验证码及容量核算的原子性。共享 schema 在驱动层生成各自的 identity、整数和时间默认值，PostgreSQL 使用 schema 版本表。池关闭、日志写入与后台任务在关停时排空。
 
-Docker 启动器 `./love` 首次通过镜像中的 Clack 终端向导生成 `.env`，选择 Compose 覆盖文件。`compose.postgres.yml` 提供带健康检查与独立持久化卷的 PostgreSQL；外部 PostgreSQL 使用 `DATABASE_URL`。
+独立 Bun 管理程序 `./love` 在宿主机运行 Clack 终端向导并生成 `.env`，选择 Compose 覆盖文件。`compose.postgres.yml` 提供带健康检查与独立持久化卷的 PostgreSQL；外部 PostgreSQL 使用 `DATABASE_URL`。

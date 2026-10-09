@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseEnv } from 'node:util';
 import { isIP } from 'node:net';
+import { formatRows, databaseLabel, databaseEndpoint } from '../deploy/presentation.mjs';
 const identifier = (value) =>
   /^[a-z][a-z0-9_]{0,30}$/.test(value) ? undefined : '使用小写字母、数字、下划线，以字母开头';
 const username = (value) =>
@@ -430,8 +431,25 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
       ? 'http://服务器实际IP:' + config.LOVE_PORT
       : 'http://' + binding;
   ui.note(
-    `数据库：${config.LOVE_DATABASE}\n${bundledTLS ? 'HTTPS' : 'HTTP'} 监听：${binding}\n${bundledTLS ? '后端 HTTP：仅容器网络，不占宿主机端口\n' : ''}访问：${access}\n证书：${config.LOVE_TLS_PROVIDER}\n管理员：${config.ADMIN_USERNAME}\n注册、SMTP、邀请码和容量：登录后台配置`,
-    '即将保存',
+    formatRows([
+      ['数据库', databaseLabel(config)],
+      ...(databaseEndpoint(config) ? [['数据源', databaseEndpoint(config)]] : []),
+      [`${bundledTLS ? 'HTTPS' : 'HTTP'} 监听：`, binding],
+      ['访问：', access],
+      [
+        '证书方式',
+        {
+          certbot: 'Certbot · 自动续期',
+          caddy: 'Caddy · 自动 HTTPS',
+          external: '已有反向代理',
+          none: 'HTTP · 无证书',
+        }[config.LOVE_TLS_PROVIDER],
+      ],
+      ['管理员', config.ADMIN_USERNAME],
+      ...(bundledTLS ? [['后端 HTTP', '仅容器网络']] : []),
+      ['业务设置', '注册、SMTP、邀请码和容量在管理后台配置'],
+    ]),
+    '确认部署配置',
   );
   if (!(await ask(ui.confirm({ message: '保存配置并继续？', initialValue: true }))))
     throw new Error('SETUP_CANCELLED');

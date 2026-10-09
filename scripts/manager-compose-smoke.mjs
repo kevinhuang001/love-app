@@ -8,6 +8,7 @@ import { createServer } from 'node:net';
 import { Manager, runCommand } from '../deploy/manager.mjs';
 import { quoteEnv } from './setup.mjs';
 import { openDatabase } from '../apps/server/src/db.ts';
+import { MediaRepository } from '../apps/server/src/media-repository.ts';
 const templateNames = [
   'compose.yml',
   'compose.postgres.yml',
@@ -136,7 +137,9 @@ for (const database of ['sqlite', 'postgres']) {
         for (const name of [seed, stopped]) {
           try {
             execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
-          } catch { /* Already removed during the test. */ }
+          } catch {
+            /* Already removed during the test. */
+          }
         }
       }
     }
@@ -189,6 +192,113 @@ for (const database of ['sqlite', 'postgres']) {
       await manager.backup();
       await manager.restore();
       assert.ok(!calls.slice(marker).some((a) => a.includes('up') && a.at(-1) === 'postgres'));
+      // A fresh deployment connects to an existing remote database as-is.
+      // The source PostgreSQL belongs to another Compose project and stays running.
+      const bytes = Buffer.from('existing-remote-avatar'),
+        name = 'remote-avatar.webp';
+      await manager.paused(() =>
+        manager.withDatabase(async (db, source) => {
+          await writeFile(join(source.directory, name), bytes);
+          const repository = new MediaRepository(db, source.directory);
+          await repository.stage([name], [bytes.length]);
+          await db.transaction(async () => {
+            await db
+              .prepare(
+                'INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES(?,?,?,?,?,?,?,?)',
+              )
+              .run('remote-avatar', 'pair', 'user', 'image', name, name, name, '2026-10-09');
+            await db
+              .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
+              .run('remote-avatar', bytes.length, 0, 0, bytes.length);
+            await repository.bind('remote-avatar', [name]);
+            await db
+              .prepare('UPDATE users SET avatarMediaId=? WHERE id=?')
+              .run('remote-avatar', 'user');
+            await db
+              .prepare(
+                'INSERT INTO couple_ai_settings(coupleId,baseUrl,model,secret,enabled,name,avatarMediaId) VALUES(?,?,?,?,?,?,?)',
+              )
+              .run('pair', '', '', '', 0, '远程助手', 'remote-avatar');
+          });
+          await rm(join(source.directory, name));
+        }),
+      );
+      const externalDirectory = await mkdtemp(join(tmpdir(), 'love-existing-remote-'));
+      directories.push(externalDirectory);
+      const externalConfig = {
+        ...config,
+        COMPOSE_PROJECT_NAME: project + '-external',
+        LOVE_PORT: await availablePort(),
+      };
+      await writeFile(
+        join(externalDirectory, '.env'),
+        Object.entries(externalConfig)
+          .map(([k, v]) => k + '=' + quoteEnv(v))
+          .join('\n') + '\n',
+      );
+      const externalCalls = [];
+      const external = new Manager({
+        directory: externalDirectory,
+        executable: join(externalDirectory, 'love'),
+        version: '2.9.2',
+        source: '0'.repeat(40),
+        templates,
+        ui,
+        run: async (args, options) => {
+          externalCalls.push(args);
+          return runCommand(args, options);
+        },
+      });
+      external.restore = () => {
+        throw new Error('Connecting to a remote database must not restore or replace it');
+      };
+      try {
+        await external.reload();
+        await external.installTemplates();
+        await external.start();
+        const health = await (
+          await fetch('http://127.0.0.1:' + externalConfig.LOVE_PORT + '/api/health')
+        ).json();
+        assert.equal(health.database, 'postgres');
+        await external.paused(() =>
+          external.withDatabase(async (db, destination) => {
+            assert.equal(
+              (await db.prepare('SELECT name,avatarMediaId FROM users WHERE id=?').get('user'))
+                .name,
+              'User',
+            );
+            assert.equal(
+              (await db.prepare('SELECT avatarMediaId FROM users WHERE id=?').get('user'))
+                .avatarMediaId,
+              'remote-avatar',
+            );
+            assert.equal(
+              (await db.prepare('SELECT name FROM couple_ai_settings WHERE coupleId=?').get('pair'))
+                .name,
+              '远程助手',
+            );
+            assert.equal((await db.prepare('SELECT COUNT(*) n FROM couples').get()).n, 1);
+            const chunks = [];
+            for await (const chunk of new MediaRepository(db, destination.directory).stream(name))
+              chunks.push(chunk);
+            assert.deepEqual(Buffer.concat(chunks), bytes);
+            assert.throws(() =>
+              execFileSync('test', ['-f', join(destination.root, 'love.sqlite')]),
+            );
+          }),
+        );
+        assert.ok(
+          !externalCalls.some(
+            (a) =>
+              a.includes('postgres') || a.some((value) => value.endsWith('compose.postgres.yml')),
+          ),
+        );
+        console.log(
+          'Fresh external PostgreSQL deployment reused existing accounts, pair, avatars, AI settings and media without importing SQLite.',
+        );
+      } finally {
+        await external.compose(['down', '--volumes']).catch(() => {});
+      }
       config.LOVE_DATABASE = 'postgres';
       config.DATABASE_URL = '';
       await save();

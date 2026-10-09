@@ -282,6 +282,127 @@ async function fixture(t: TestContext, postgres = true) {
   };
 }
 
+async function upgradeLegacyScheduleLayout(path: string, emptyTodos = false) {
+  const sqlite = new DatabaseSync(path);
+  sqlite.exec(`
+    ALTER TABLE couples DROP COLUMN startTime;
+    ALTER TABLE anniversaries DROP COLUMN time;
+    ALTER TABLE todos DROP COLUMN time;
+    ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id);
+    UPDATE messages SET mediaId='video' WHERE id=41;
+    DELETE FROM message_media;
+    PRAGMA user_version=5;
+  `);
+  sqlite.close();
+  const upgraded = await openDatabase(path);
+  try {
+    await upgraded.prepare("UPDATE todos SET time='21:22:23'").run();
+    if (emptyTodos) await upgraded.prepare('DELETE FROM todos').run();
+    return (await upgraded.prepare('PRAGMA table_info(todos)').all()).map((row) => row.name);
+  } finally {
+    await upgraded.close();
+  }
+}
+
+test('legacy schedule upgrade keeps appended column layout, avatar references and portable backup media', async (t) => {
+  const s = await fixture(t, false);
+  const columns = await upgradeLegacyScheduleLayout(s.sourcePath);
+  assert.equal(columns.at(-1), 'time');
+  const source = new DatabaseSync(s.sourcePath, { readOnly: true });
+  try {
+    assert.equal(source.prepare('PRAGMA user_version').get()!.user_version, 9);
+    assert.equal(
+      source.prepare("SELECT avatarMediaId FROM users WHERE id='usera'").get()!.avatarMediaId,
+      'avatar',
+    );
+  } finally {
+    source.close();
+  }
+  const directory = join(s.dir, 'old-layout-backup');
+  await exportDatabase({ sqlitePath: s.sourcePath, mediaDirectory: s.mediaDirectory, directory });
+  const snapshot = await validatePackage(directory);
+  assert.equal(snapshot.report.mediaFiles, 4);
+  for (const [name, contents] of s.contents)
+    assert.deepEqual(await readFile(join(directory, 'media', name)), contents);
+});
+
+for (const emptyTodos of [false, true]) {
+  test(
+    `upgraded legacy SQLite restores into fresh PostgreSQL by column names (${emptyTodos ? 'empty todos' : 'populated todos'})`,
+    onlyPG,
+    async (t) => {
+      const s = await fixture(t);
+      // Reproduce the real v5 -> v9 upgrade: schedule columns are appended by ALTER TABLE.
+      const sourceColumns = await upgradeLegacyScheduleLayout(s.sourcePath, emptyTodos);
+      const targetColumns = (
+        await s.target
+          .prepare(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='todos' ORDER BY ordinal_position",
+          )
+          .all()
+      ).map((row) => row.column_name);
+      assert.notDeepEqual(sourceColumns, targetColumns);
+      assert.deepEqual([...sourceColumns].sort(), [...targetColumns].sort());
+      assert.deepEqual(
+        rekeyBackup(
+          s.sourcePath,
+          'missing-old-backup-key',
+          'new-restore-key-at-least-32-characters',
+          { resetUnreadable: true },
+        ),
+        { ai: 1, smtp: 0 },
+      );
+      const before = await readFile(s.sourcePath);
+      const report = await s.migrate();
+      assert.equal(report.tables.todos, emptyTodos ? 0 : 1);
+      assert.deepEqual(await readFile(s.sourcePath), before);
+      if (!emptyTodos) {
+        const todo = (await s.target.prepare('SELECT * FROM todos').get())!;
+        assert.equal(todo.time, '21:22:23');
+        assert.equal(todo.calendar, 'lunar');
+        assert.equal(todo.repeat, 'yearly');
+      }
+      assert.equal(
+        (await s.target.prepare("SELECT avatarMediaId FROM users WHERE id='usera'").get())!
+          .avatarMediaId,
+        'avatar',
+      );
+      assert.equal(
+        (await s.target.prepare('SELECT avatarMediaId FROM couple_ai_settings').get())!
+          .avatarMediaId,
+        'avatar',
+      );
+      assert.equal(
+        (await s.target.prepare('SELECT secret FROM couple_ai_settings').get())!.secret,
+        '',
+      );
+      assert.equal(
+        (await s.target.prepare('SELECT assistantAvatarMediaId FROM messages').get())!
+          .assistantAvatarMediaId,
+        'avatar',
+      );
+      const repository = new MediaRepository(s.target, join(s.dir, 'no-disk-media'));
+      for (const [name, contents] of s.contents)
+        assert.deepEqual(await repository.read(name), contents);
+    },
+  );
+}
+
+test(
+  'genuinely different target columns are rejected before any target data change',
+  onlyPG,
+  async (t) => {
+    const s = await fixture(t);
+    await s.target.exec('ALTER TABLE todos ADD COLUMN unexpected_field TEXT');
+    await s.target.prepare("INSERT INTO server_config VALUES('proof','untouched')").run();
+    await assert.rejects(s.migrate(), /目标表结构不一致：todos.*目标多出：unexpected_field/);
+    assert.equal(
+      (await s.target.prepare("SELECT value FROM server_config WHERE key='proof'").get())!.value,
+      'untouched',
+    );
+  },
+);
+
 test(
   'SQLite transfer copies all tables, media and credentials, preserves source, can retry, and resets sequences',
   onlyPG,

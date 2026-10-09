@@ -189,8 +189,14 @@ export async function restoreToPostgres({
           )
           .all(name)
       ).map((column) => String(column.column_name));
-      if (JSON.stringify(columns) !== JSON.stringify(targetColumns))
-        throw new Error(`目标表结构不一致：${name}`);
+      // Upgrades append columns; fresh schemas may declare them in the middle.
+      // INSERT/SELECT below name every column explicitly, so physical order is irrelevant.
+      const missing = columns.filter((column) => !targetColumns.includes(column));
+      const extra = targetColumns.filter((column) => !columns.includes(column));
+      if (missing.length || extra.length)
+        throw new Error(
+          `目标表结构不一致：${name}（目标缺少：${missing.join('、') || '无'}；目标多出：${extra.join('、') || '无'}）`,
+        );
     }
     const restoreId = randomUUID();
     const verify = async () => {

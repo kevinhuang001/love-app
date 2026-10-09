@@ -160,6 +160,10 @@ test(
         .attach('file', image, { filename: 'legacy.png', contentType: 'image/png' })
         .expect(201)
     ).body;
+    await s
+      .api(a.token)
+      .post('/api/moments', { mediaId: media.id, title: 'legacy fixture', date: '2026-10-09' })
+      .expect(201);
     const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(media.id))!;
     const names = [row.original, row.preview, row.thumbnail].map(String),
       data = await Promise.all(names.map((name) => s.mediaRepository.read(name)));

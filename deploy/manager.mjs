@@ -488,6 +488,37 @@ export class Manager {
     return local;
   }
   async pruneOldImages(current) {
+    // Docker allows removing a tag even while another container uses that image.
+    // Preserve references as well as layers for all deployments, including stopped ones.
+    const containers = (await this.docker(['ps', '--all', '--quiet', '--no-trunc'], true))
+      .split(/\s+/)
+      .filter(Boolean);
+    const used = new Set([current.Id]);
+    let entries = [];
+    if (containers.length) {
+      try {
+        entries = JSON.parse(await this.docker(['container', 'inspect', ...containers], true));
+      } catch {
+        this.log('无法确认其他容器使用的镜像，本次跳过旧镜像清理。');
+        return 0;
+      }
+      for (const container of entries) used.add(container.Image);
+    }
+    const own = entries.filter(
+      (container) =>
+        container.Config?.Labels?.['com.docker.compose.project'] === this.project &&
+        container.Config?.Labels?.['com.docker.compose.service'] === 'love' &&
+        container.Config?.Labels?.['com.docker.compose.oneoff'] === 'False',
+    );
+    if (
+      !own.length ||
+      own.some(
+        (container) => !container.State?.Running || container.State?.Health?.Status !== 'healthy',
+      )
+    ) {
+      this.log('应用尚未通过健康检查，本次跳过旧镜像清理；请查看日志并重新启动。');
+      return 0;
+    }
     const ids = [
       ...new Set(
         (await this.docker(['image', 'ls', '--all', '--quiet', '--no-trunc'], true))
@@ -498,7 +529,7 @@ export class Manager {
     let removed = 0;
     for (const id of ids) {
       const [entry] = JSON.parse(await this.docker(['image', 'inspect', id], true));
-      if (!obsoleteImages([entry], current).length) continue;
+      if (used.has(entry.Id) || !obsoleteImages([entry], current).length) continue;
       const references = [...(entry.RepoTags || []), ...(entry.RepoDigests || [])].filter(
         (r) => r.startsWith(imageRepository + ':') || r.startsWith(imageRepository + '@'),
       );
@@ -540,55 +571,25 @@ export class Manager {
     );
     if (!(await this.confirm('下载并应用以上更新？启动成功后清理旧 Love 镜像。'))) return;
     await this.optionalBackup();
-    const previous = this.image,
-      oldConfig = await readFile(join(this.directory, '.env'));
-    const previousTemplates = new Map();
-    for (const name of Object.keys(this.templates)) {
-      const p = join(this.directory, name);
-      previousTemplates.set(
-        name,
-        await readFile(p).catch((e) => {
-          if (e.code === 'ENOENT') return null;
-          throw e;
-        }),
-      );
-    }
     if (imageChanged) {
-      // Retain the deployed image through health verification, even if :latest moves.
-      const safetyTag = imageRepository + ':updating-' + randomUUID();
-      await this.docker(['tag', local.Id, safetyTag]);
+      let downloaded = false;
       try {
         await this.docker(['pull', remote.image]);
+        downloaded = true;
         this.image = remote.image;
         await this.installTemplates(true, release.templates);
         await this.field('LOVE_IMAGE', this.image);
         await this.start();
         if (this.config.LOVE_HTTPS === '1' && this.config.LOVE_TLS_PROVIDER !== 'external')
           await this.compose(['restart', 'proxy']);
-      } catch (e) {
-        this.image = safetyTag;
-        await atomicFile(join(this.directory, '.env'), oldConfig);
-        for (const [name, content] of previousTemplates) {
-          if (content === null) await rm(join(this.directory, name), { force: true });
-          else await atomicFile(join(this.directory, name), content);
-        }
-        await this.reload();
-        this.image = safetyTag;
-        try {
-          await this.compose([
-            'up',
-            '-d',
-            '--no-build',
-            '--pull',
-            'never',
-            '--remove-orphans',
-            '--wait',
-          ]);
-        } catch {
-          this.log('旧应用重新启动失败，请查看日志；旧镜像和部署配置仍保留。');
-        }
-        this.image = previous;
-        throw new Error('更新失败，已保留旧镜像并恢复部署配置：' + e.message);
+      } catch (error) {
+        throw new Error(
+          (downloaded
+            ? '新版本应用未成功启动；不自动回滚，请查看日志并修正配置后重新启动。'
+            : '镜像下载失败，原应用未停止或重建。') +
+            ' 数据和备份保留：' +
+            error.message,
+        );
       }
     }
     if (managerChanged) {

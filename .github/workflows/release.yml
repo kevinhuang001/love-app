@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.9.0
+        description: New version tag, for example v2.9.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.9.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.9.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,7 +122,10 @@ jobs:
           - 菜单、配置向导、备份、恢复、一致性检查和媒体清理直接在宿主机运行，不创建临时工具容器。
           - 首次运行将内嵌 Compose 和代理配置创建到 love 所在目录；现有 .env 与备份保留。
           - 独立检查应用镜像和管理程序，识别多架构摘要及相同源码重复构建，修复无更新误报。
-          - 更新通过健康检查后清理本项目旧镜像；更新失败保留旧镜像并恢复部署配置。
+          - 删除版本回滚逻辑，不创建回滚标签、不保存旧部署模板、不自动切回旧版本。
+          - 下载失败不停止或重建原应用；新版本启动失败明确提示查看日志并修正配置。
+          - 更新成功并通过健康检查后清理本项目旧镜像；应用不健康时不清理。
+          - 保留其他部署（包括停止的容器）正在使用的旧镜像和标签，不执行强制删除或全局清理。
           - 更新程序使用 SHA-256 校验与原子替换；操作前备份仍可跳过。
           - 保留统一 SQLite / PostgreSQL 备份格式与最大限度恢复；旧 PGDMP 需先用旧工具导出统一包。
 

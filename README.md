@@ -19,7 +19,7 @@ mv -f "$asset" love
 sudo ./love
 ```
 
-管理逻辑全部用 JavaScript 编写，以 Bun 编译为单文件二进制，现代终端仍使用 Clack。首次运行将内嵌 `compose*.yml`、`Caddyfile` 与代理配置创建到 `love` 所在目录；`.env`、`backups/` 也在同级目录，从其他目录运行仍使用这一位置。程序只检查官方 GHCR 镜像与 GitHub Release 中的管理工具，有更新才下载。成功启动后清理本项目旧镜像，更新失败保留旧镜像；操作前备份可跳过。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。
+管理逻辑全部用 JavaScript 编写，以 Bun 编译为单文件二进制，现代终端仍使用 Clack。首次运行将内嵌 `compose*.yml`、`Caddyfile` 与代理配置创建到 `love` 所在目录；`.env`、`backups/` 也在同级目录，从其他目录运行仍使用这一位置。程序只检查官方 GHCR 镜像与 GitHub Release 中的管理工具，有更新才下载。成功启动后清理本项目旧镜像，不提供版本回滚；下载失败不停止原应用，启动失败提示排查日志；操作前备份可跳过。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。
 
 以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite / PostgreSQL + Socket.IO。
 

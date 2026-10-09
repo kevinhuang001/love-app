@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { Manager } from '../deploy/manager.mjs';
 import { imageRepository as repo } from '../deploy/registry.mjs';
 import { installManager } from '../deploy/releases.mjs';
+import { parseDeploymentEnv } from './setup.mjs';
 const old = '1'.repeat(40),
   latest = '2'.repeat(40),
   digest = 'sha256:' + 'a'.repeat(64),
@@ -61,7 +62,20 @@ async function fixture(
     calls.push(a);
     if (a[0] === 'ps') return 'container';
     if (a[0] === 'container')
-      return JSON.stringify([{ Image: deployed.Id, Config: { Image: image } }]);
+      return JSON.stringify([
+        {
+          Image: deployed.Id,
+          State: { Running: true, Health: { Status: 'healthy' } },
+          Config: {
+            Image: image,
+            Labels: {
+              'com.docker.compose.project': 'love-fixture',
+              'com.docker.compose.service': 'love',
+              'com.docker.compose.oneoff': 'False',
+            },
+          },
+        },
+      ]);
     if (a[0] === 'image' && a[1] === 'inspect') {
       if (a[2] === 'unrelated')
         return JSON.stringify([{ Id: 'unrelated', RepoTags: ['postgres:18-alpine'] }]);
@@ -171,15 +185,63 @@ test('successful image update verifies health before removing old Love images an
   assert.match(env, new RegExp(digest));
   assert.equal(await readFile(join(f.directory, 'compose.yml'), 'utf8'), templates['compose.yml']);
 });
-for (const fail of ['pull', 'health'])
-  test(`${fail} failure retains old images, original config and deployment templates`, async (t) => {
-    const f = await fixture(t, { updated: true, fail });
-    const env = await readFile(join(f.directory, '.env'), 'utf8');
-    await assert.rejects(f.manager.update(), /更新失败/);
-    assert.equal(await readFile(join(f.directory, '.env'), 'utf8'), env);
-    assert.equal(await readFile(join(f.directory, 'compose.yml'), 'utf8'), 'old-template');
-    assert.ok(!f.calls.some((a) => a[0] === 'image' && a[1] === 'rm'));
-  });
+test('a failed download preserves config and templates without creating rollback artifacts', async (t) => {
+  const f = await fixture(t, { updated: true, fail: 'pull' });
+  const env = await readFile(join(f.directory, '.env'), 'utf8');
+  await assert.rejects(f.manager.update(), /镜像下载失败/);
+  assert.equal(await readFile(join(f.directory, '.env'), 'utf8'), env);
+  assert.equal(await readFile(join(f.directory, 'compose.yml'), 'utf8'), 'old-template');
+  assert.ok(!f.calls.some((a) => a[0] === 'tag' || (a[0] === 'image' && a[1] === 'rm')));
+});
+test('health failure retains new version configuration and does not switch back to the old image', async (t) => {
+  const f = await fixture(t, { updated: true, fail: 'health' });
+  const before = { ...f.manager.config };
+  await assert.rejects(f.manager.update(), /不自动回滚/);
+  const after = parseDeploymentEnv(await readFile(join(f.directory, '.env'), 'utf8'));
+  assert.equal(after.LOVE_IMAGE, repo + '@' + digest);
+  assert.deepEqual({ ...after, LOVE_IMAGE: before.LOVE_IMAGE }, before);
+  assert.equal(await readFile(join(f.directory, 'compose.yml'), 'utf8'), templates['compose.yml']);
+  assert.ok(
+    !f.calls.some(
+      (a) => a[0] === 'tag' || a.includes('never') || (a[0] === 'image' && a[1] === 'rm'),
+    ),
+  );
+  assert.equal(f.calls.filter((a) => a[0] === 'compose' && a.includes('up')).length, 1);
+});
+test('a failed image download does not start or recreate the unchanged application', async (t) => {
+  const f = await fixture(t, { updated: true, fail: 'pull' });
+  await assert.rejects(f.manager.update(), /镜像下载失败/);
+  assert.ok(
+    !f.calls.some(
+      (args) =>
+        args[0] === 'compose' &&
+        ['up', 'stop', 'start', 'restart'].some((command) => args.includes(command)),
+    ),
+  );
+});
+test('old image cleanup preserves every tag of images used by another deployment, including stopped containers', async (t) => {
+  const f = await fixture(t),
+    run = f.manager.run;
+  const oldImage = {
+    Id: 'shared-old',
+    RepoTags: [repo + ':old'],
+    RepoDigests: [repo + '@sha256:' + 'f'.repeat(64)],
+  };
+  f.manager.run = async (args, options) => {
+    if (args[0] === 'ps') return 'container\nother-stopped-container';
+    if (args[0] === 'container' && args.includes('other-stopped-container'))
+      return JSON.stringify([
+        ...JSON.parse(await run(['container', 'inspect', 'container'], options)),
+        { Image: oldImage.Id, State: { Running: false } },
+      ]);
+    if (args[0] === 'image' && args[1] === 'ls') return oldImage.Id;
+    if (args[0] === 'image' && args[1] === 'inspect' && args[2] === oldImage.Id)
+      return JSON.stringify([oldImage]);
+    return run(args, options);
+  };
+  assert.equal(await f.manager.pruneOldImages(f.current), 0);
+  assert.ok(!f.calls.some((args) => args[0] === 'image' && args[1] === 'rm'));
+});
 test('failed binary checksum leaves the manager intact and retains old images for retry', async (t) => {
   const f = await fixture(t, { updated: true, managerUpdated: true, fail: 'binary' });
   await assert.rejects(f.manager.update(), /校验失败/);
@@ -254,4 +316,23 @@ test('HTTPS starts the selected certificate services; HTTP and external proxies 
   f.manager.config.LOVE_HTTPS = '0';
   f.manager.config.LOVE_TLS_PROVIDER = 'none';
   assert.ok(!f.manager.composeArgs(['up', '-d']).includes('--profile'));
+});
+
+test('rechecking an unhealthy or stopped latest-version app never cleans up old images', async (t) => {
+  for (const state of [{ Running: true, Health: { Status: 'unhealthy' } }, { Running: false }]) {
+    const f = await fixture(t),
+      run = f.manager.run;
+    f.manager.run = async (args, options) => {
+      const result = await run(args, options);
+      if (args[0] === 'container') {
+        const entries = JSON.parse(result);
+        entries.forEach((entry) => (entry.State = state));
+        return JSON.stringify(entries);
+      }
+      return result;
+    };
+    await f.manager.update();
+    assert.match(f.notes.join('\n'), /尚未通过健康检查/);
+    assert.ok(!f.calls.some((args) => args[0] === 'image' && args[1] === 'rm'));
+  }
 });

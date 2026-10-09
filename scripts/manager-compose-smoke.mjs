@@ -106,6 +106,40 @@ for (const database of ['sqlite', 'postgres']) {
   await manager.installTemplates();
   try {
     await manager.start();
+    if (database === 'sqlite') {
+      const seed = project + '-image-seed',
+        stopped = project + '-other-stopped',
+        tag = 'ghcr.io/kevinhuang001/love-app:cleanup-fixture';
+      try {
+        execFileSync('docker', ['create', '--name', seed, 'love-ci']);
+        execFileSync('docker', [
+          'commit',
+          '--change',
+          'LABEL org.opencontainers.image.source=https://github.com/kevinhuang001/love-app',
+          '--change',
+          'LABEL org.opencontainers.image.version=0.0.0',
+          seed,
+          tag,
+        ]);
+        execFileSync('docker', ['rm', seed]);
+        execFileSync('docker', ['create', '--name', stopped, tag]);
+        const current = await manager.currentImage();
+        await manager.pruneOldImages(current);
+        execFileSync('docker', ['image', 'inspect', tag], { stdio: 'ignore' });
+        execFileSync('docker', ['rm', stopped]);
+        await manager.pruneOldImages(current);
+        assert.throws(() => execFileSync('docker', ['image', 'inspect', tag], { stdio: 'ignore' }));
+        console.log(
+          'Old image cleanup preserves stopped deployments and removes unused Love images.',
+        );
+      } finally {
+        for (const name of [seed, stopped]) {
+          try {
+            execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore' });
+          } catch { /* Already removed during the test. */ }
+        }
+      }
+    }
     await manager.paused(() =>
       manager.withDatabase(async (db, location) => {
         await db.prepare('INSERT INTO couples(id) VALUES(?)').run('pair');

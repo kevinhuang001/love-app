@@ -1,4 +1,4 @@
-name: Publish Android release
+name: Publish release
 on:
   workflow_run:
     workflows: [Test and build]
@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.8.1
+        description: New version tag, for example v2.9.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.8.1' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.9.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,7 +51,7 @@ jobs:
           assert.equal(run.workflowName, 'Test and build');
           assert.equal(run.conclusion, 'success');
           assert.match(run.headSha, /^[a-f0-9]{40}$/);
-          for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android'])
+          for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android', 'manager', 'manager-arm'])
             assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `${name} must pass`);
           writeFileSync('source-sha.txt', run.headSha);
           JS
@@ -76,6 +76,25 @@ jobs:
           path: release
           github-token: ${{ github.token }}
           run-id: ${{ env.SOURCE_RUN_ID }}
+      - uses: actions/download-artifact@v4
+        if: steps.source.outputs.publish == 'true'
+        with:
+          name: love-manager
+          path: release/manager
+          github-token: ${{ github.token }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+      - name: Verify manager binaries and tested source
+        if: steps.source.outputs.publish == 'true'
+        run: |
+          (cd release/manager && sha256sum -c SHA256SUMS)
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const m=JSON.parse(readFileSync('release/manager/manager-release.json'));
+          assert.equal(m.source,readFileSync('source-sha.txt','utf8'));
+          assert.equal('v'+m.version,process.env.RELEASE_TAG);
+          assert.deepEqual(m.assets.map(x=>x.name).sort(),['love-linux-arm64','love-linux-x64']);
+          JS
       - name: Prepare APK and checksum
         if: steps.source.outputs.publish == 'true'
         id: apk
@@ -92,16 +111,20 @@ jobs:
           (cd release && sha256sum "$apk" > "$apk.sha256")
           cp release/signing.json "release/$apk.signing.json"
           echo 'publish=true' >> "$GITHUB_OUTPUT"
-          cat > release/NOTES.md <<'NOTES'
-          修复取消上传遗留媒体与管理工具清理范围。
 
-          - 相册增加取消上传；关闭、移除或重选文件时清理未发布草稿。
-          - 媒体先暂存、不计正式额度；媒体、容量与回忆或聊天消息在同一事务发布，失败整体回滚。
-          - 请求中断会停止视频处理和数据库分块写入；提交前取消不会占用容量。
-          - 管理工具同时支持 SQLite / PostgreSQL，先预览未使用媒体及容量，确认后清理。保护回忆、聊天附件、双方及 AI 头像；未发布上传全部纳入清理。
-          - 管理脚本新增数据库管理菜单，统一提供常规/深入一致性检查、备份、恢复与清理。
-          - 清理前备份可选，既有备份不改动；预览清单变化时停止删除。
-          - 包含旧备份字段顺序修复与无法解密凭据的最大限度恢复。
+      - name: Prepare release notes
+        if: steps.source.outputs.publish == 'true'
+        run: |
+          cat > release/NOTES.md <<'NOTES'
+          独立 Love 管理程序，支持 Linux AMD64 / ARM64。
+
+          - 管理逻辑全部用 JavaScript 实现，以 Bun 编译为单文件程序；用户无需安装 Bun、Node.js 或 npm。
+          - 菜单、配置向导、备份、恢复、一致性检查和媒体清理直接在宿主机运行，不创建临时工具容器。
+          - 首次运行将内嵌 Compose 和代理配置创建到 love 所在目录；现有 .env 与备份保留。
+          - 独立检查应用镜像和管理程序，识别多架构摘要及相同源码重复构建，修复无更新误报。
+          - 更新通过健康检查后清理本项目旧镜像；更新失败保留旧镜像并恢复部署配置。
+          - 更新程序使用 SHA-256 校验与原子替换；操作前备份仍可跳过。
+          - 保留统一 SQLite / PostgreSQL 备份格式与最大限度恢复；旧 PGDMP 需先用旧工具导出统一包。
 
           APK 来自通过完整 CI 的构建，附文件 SHA-256 和固定签名指纹。请覆盖安装以保留登录信息；卸载会清除本地应用数据。
           通知需要应用进程存活，请允许后台运行。既有数据卷无需清空。
@@ -109,11 +132,15 @@ jobs:
           Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
           管理：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
           NOTES
-      - name: Publish release with APK assets
-        if: steps.apk.outputs.publish == 'true'
+      - name: Publish manager and optional signed APK assets
+        if: steps.source.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          apk="Love-${RELEASE_TAG}.apk"
-          gh release create "$RELEASE_TAG" "release/$apk" "release/$apk.sha256" "release/$apk.signing.json" \
+          assets=(release/manager/love-linux-x64 release/manager/love-linux-arm64 release/manager/SHA256SUMS release/manager/manager-release.json)
+          if [ "${{ steps.apk.outputs.publish }}" = true ]; then
+            apk="Love-${RELEASE_TAG}.apk"
+            assets+=("release/$apk" "release/$apk.sha256" "release/$apk.signing.json")
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
             --target "$GITHUB_SHA" --title "Love $RELEASE_TAG" --notes-file release/NOTES.md --draft
           gh release edit "$RELEASE_TAG" --draft=false --latest

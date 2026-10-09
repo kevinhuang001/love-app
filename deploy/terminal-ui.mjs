@@ -1,15 +1,9 @@
-// Prompt rendering stays in a short-lived container; Docker operations stay on the host.
-import { createRequire } from 'node:module';
+// Prompt rendering runs directly in the standalone host executable.
+import * as clack from '@clack/prompts';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, readdir } from 'node:fs/promises';
 import { resolve, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const require = createRequire(
-  existsSync('/app/package.json')
-    ? '/app/package.json'
-    : new URL('../package.json', import.meta.url),
-);
-const clack = await import(pathToFileURL(require.resolve('@clack/prompts')).href);
 export const menuOptions = [
   { value: 'configure', label: '部署配置', hint: '初次配置或修改 IP、端口、数据库、HTTPS' },
   { value: 'start', label: '启动应用', hint: '下载已构建镜像并应用部署配置' },
@@ -20,7 +14,6 @@ export const menuOptions = [
   { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才下载，备份可跳过' },
   { value: 'database', label: '数据库管理', hint: '一致性检查、备份、恢复与未使用媒体清理' },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
-  { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
   { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
   { value: 'exit', label: '退出' },
 ];
@@ -192,7 +185,7 @@ export async function prompt({
   }
   throw new Error('未知终端提示');
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   const [kind, output, message, placeholder] = process.argv.slice(2);
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.error('请在交互终端直接运行 ./love。');

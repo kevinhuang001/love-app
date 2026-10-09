@@ -455,9 +455,9 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   );
   return config;
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (import.meta.main) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    console.error('配置向导需要交互终端，请使用 ./love（Docker 会分配 -it）。');
+    console.error('配置向导需要交互终端，请直接运行 ./love。');
     process.exitCode = 1;
   } else
     try {

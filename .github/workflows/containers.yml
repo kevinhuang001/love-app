@@ -61,7 +61,7 @@ jobs:
             assert.equal(run.head_branch, 'main');
             assert.equal(run.head_repository.full_name, process.env.GITHUB_REPOSITORY);
             assert.ok(['push', 'workflow_dispatch'].includes(run.event));
-            for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android'])
+            for (const name of ['test', 'postgres', 'docker (Dockerfile)', 'docker (Dockerfile.cn)', 'android', 'manager', 'manager-arm'])
               assert.ok(jobs.some(job => job.name === name && job.conclusion === 'success'), `${name} must pass`);
             writeFileSync('sha.txt', run.head_sha);
           JS
@@ -104,6 +104,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Read application version
+        id: version
+        run: echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
@@ -122,6 +125,7 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.licenses=MIT
           cache-from: type=gha,scope=love-linux-${{ env.ARCH }}-Dockerfile
           cache-to: type=gha,scope=love-linux-${{ env.ARCH }}-Dockerfile,mode=max,ignore-error=true,timeout=2m

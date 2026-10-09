@@ -1,14 +1,25 @@
 # Love · 我们的日常
 
-只需下载管理脚本即可部署，无需下载源码或本地构建。安装 Docker Engine 与 Compose 插件后，在独立目录运行：
+只需下载独立 `love` 管理程序即可部署，无需源码、本地构建或安装 Bun / Node.js。应用继续使用 Docker Engine 与 Compose 2.24.4+ 部署；管理界面、配置和数据库操作直接在宿主机运行，不创建临时工具容器。
+
+在 Linux 部署主机的独立目录执行（已有部署请在原 `love` 所在目录执行）：
 
 ```sh
-curl -fL https://raw.githubusercontent.com/kevinhuang001/love-app/main/love -o love
-chmod +x love
-./love
+case "$(uname -m)" in
+  x86_64) asset=love-linux-x64 ;;
+  aarch64|arm64) asset=love-linux-arm64 ;;
+  *) echo '支持 Linux amd64 / arm64'; exit 1 ;;
+esac
+base=https://github.com/kevinhuang001/love-app/releases/latest/download
+curl -fL "$base/$asset" -o "$asset"
+curl -fL "$base/SHA256SUMS" -o SHA256SUMS
+grep "  $asset$" SHA256SUMS | sha256sum -c -
+chmod +x "$asset"
+mv -f "$asset" love
+sudo ./love
 ```
 
-脚本只从 GHCR 拉取官方应用镜像，首次自动取出部署工具；使用方向键选择配置、启动、更新、备份恢复或卸载。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。更新先检查 GHCR，仅有新版本时才更新管理脚本和 Docker 镜像；操作前可选择备份或跳过，保留部署配置与数据。
+管理逻辑全部用 JavaScript 编写，以 Bun 编译为单文件二进制，现代终端仍使用 Clack。首次运行将内嵌 `compose*.yml`、`Caddyfile` 与代理配置创建到 `love` 所在目录；`.env`、`backups/` 也在同级目录，从其他目录运行仍使用这一位置。程序只检查官方 GHCR 镜像与 GitHub Release 中的管理工具，有更新才下载。成功启动后清理本项目旧镜像，更新失败保留旧镜像；操作前备份可跳过。数据库、监听地址、HTTPS 和管理员凭据写入 `.env`；邀请码、注册、SMTP 和配额在后台配置。
 
 以聊天为首页的情侣手机应用，同一份 Web 代码运行于浏览器和 Android APK。React + TypeScript + shadcn/ui + Tailwind CSS，Capacitor 8，Node 24 + SQLite / PostgreSQL + Socket.IO。
 
@@ -54,7 +65,7 @@ npm run android:prepare
 
 ## Docker 部署
 
-按本文开头下载 `love` 后直接运行，不需要部署压缩包。管理菜单不提供镜像来源选项或后台业务配置；应用仅使用 `ghcr.io/kevinhuang001/love-app` 的多架构镜像。没有更新时不会拉取镜像层、暂停应用或创建备份。详见 [管理菜单](docs/container-images.md) 与 [配置边界](docs/configuration.md)。
+按本文开头下载 `love` 二进制后直接运行，不需要部署压缩包。管理菜单不提供镜像来源选项或后台业务配置；应用仅使用 `ghcr.io/kevinhuang001/love-app` 的多架构镜像。没有更新时不会拉取镜像层、暂停应用或创建备份，只清理遗留旧 Love 镜像。详见 [管理菜单](docs/container-images.md) 与 [配置边界](docs/configuration.md)。
 
 数据库切换通过“数据库管理”中的“备份数据与配置”和“恢复备份”完成：先备份，再配置或新建目标部署，恢复时自动识别来源并导入当前数据库。支持 SQLite ↔ PostgreSQL 双向及同类型恢复，内置与外部 PostgreSQL 均可；保留当前 `.env`、数据库地址、端口和管理员凭据。“数据库管理”统一提供一致性检查、备份、恢复和清理。“清理未使用媒体”同时支持 SQLite 与 PostgreSQL：暂停应用后预览未被回忆、聊天或头像使用的媒体记录、文件及数据库暂存数据，确认后释放容量；所有未进入聊天/回忆的上传均可清理，正在使用的个人及 AI 头像保留。操作前备份可跳过，既有备份不会修改。PostgreSQL 删除后的空间由数据库复用，物理数据库文件不会立即缩小。
 

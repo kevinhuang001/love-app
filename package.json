@@ -1,6 +1,6 @@
 {
   "name": "love-app",
-  "version": "2.8.1",
+  "version": "2.9.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,12 +15,13 @@
     "dev": "concurrently -k \"npm run dev -w apps/server\" \"npm run dev -w apps/client\"",
     "build": "npm run build -w apps/server && npm run build -w apps/client",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "node --test scripts/android-key.test.mjs scripts/setup.test.mjs scripts/launcher.test.mjs scripts/check-update.test.mjs scripts/terminal-ui.test.mjs scripts/certbot.test.mjs && npm run test -w apps/server && npm run test -w apps/client",
+    "test": "node --import tsx --test scripts/android-key.test.mjs scripts/setup.test.mjs scripts/launcher.test.mjs scripts/check-update.test.mjs scripts/terminal-ui.test.mjs scripts/certbot.test.mjs && npm run test -w apps/server && npm run test -w apps/client",
     "test:e2e": "playwright test",
     "start": "npm run start -w apps/server",
     "android:prepare": "npm run build -w apps/client && node scripts/android.mjs",
     "android:sync": "npm run android:prepare",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "manager:build": "bun scripts/build-manager.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

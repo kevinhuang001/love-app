@@ -9,3 +9,5 @@ data
 config
 playwright-report
 test-results
+
+manager-dist

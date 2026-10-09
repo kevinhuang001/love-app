@@ -46,7 +46,7 @@ test('modern menu exposes named actions and deployment summary without passwords
   );
   assert.match(f.notes[0], /love-ui · postgres · HTTP/);
   assert.ok(!f.notes[0].includes('private-password'));
-  assert.equal(f.calls[0].maxItems, 12);
+  assert.equal(f.calls[0].maxItems, 11);
   assert.ok(menuOptions.some((option) => option.value === 'database'));
   assert.ok(
     menuOptions.every((option) => !['backup', 'restore', 'cleanup'].includes(option.value)),

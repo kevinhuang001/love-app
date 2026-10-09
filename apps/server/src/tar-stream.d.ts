@@ -8,6 +8,16 @@ declare module 'tar-stream' {
     ): this;
     on(event: string, listener: (...args: any[]) => void): this;
   }
-  const tar: { extract(): Extract };
+  type PackHeader = { name: string; size?: number; mode?: number };
+  interface Pack extends Readable {
+    entry(header: PackHeader, callback: (error?: Error | null) => void): Writable;
+    entry(
+      header: PackHeader,
+      body: string | Buffer,
+      callback?: (error?: Error | null) => void,
+    ): Writable;
+    finalize(): void;
+  }
+  const tar: { extract(): Extract; pack(): Pack };
   export default tar;
 }

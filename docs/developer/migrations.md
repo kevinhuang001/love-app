@@ -63,3 +63,5 @@ export const migrations: readonly Migration[] = [initialMigration, coupleLabelMi
 至少覆盖上一版升级、跨多版升级、数据保留、重复启动、失败回滚、历史篡改和高版本拒绝。分别使用 SQLite 和真实 PostgreSQL；并发启动也要验证。
 
 备份导入先校验原版本内容，再在临时副本迁移。原始归档不改写，目标数据在版本和内容检查之前不修改，流程见 [备份格式](backup-format.md)。
+
+表结构演变的执行图见[实现细节](implementation/schema-migrations.md)。备份清单变化另走[备份格式迁移](backup-migrations.md)，不能通过 SQL 增量代替。

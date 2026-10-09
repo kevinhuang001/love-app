@@ -1,6 +1,6 @@
 import { SCHEMA_VERSION } from './migrations.js';
 // Keep in sync with package.json; schema migrations have their own independent version.
-export const APPLICATION_VERSION = '2.9.2';
+export const APPLICATION_VERSION = '2.9.3';
 export function assertBackupVersion(
   applicationVersion: unknown,
   schemaVersion: unknown,

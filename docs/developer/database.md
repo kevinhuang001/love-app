@@ -2,6 +2,8 @@
 
 后端通过 `apps/server/src/db.ts` 的异步 `DB` 接口访问 SQLite 和 PostgreSQL。打开数据库时先完成迁移，随后才返回给业务层。
 
+详细字段分别见 [SQLite 表结构](database-sqlite.md) 和 [PostgreSQL 表结构](database-postgresql.md)。事务与失败处理见[实现细节](implementation/transactions.md)。
+
 ## 接口约定
 
 `prepare(sql)` 提供 `get`、`all`、`run`；`exec` 执行 SQL；`transaction` 包装异步回调。业务查询使用 `?` 参数，不拼接用户值。

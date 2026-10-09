@@ -1,20 +1,18 @@
-import { mkdtemp, rm, readFile, stat, lstat } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { parseEnv } from 'node:util';
 import { openDatabase } from './db.js';
 import {
   exportDatabase,
-  extractBackup,
-  validatePackage,
-  digestFile,
+  prepareBackupImport,
   rekeyBackup,
   auditBackupCredentials,
   restoreSQLite,
   refreshPackageManifest,
 } from './database-backup.js';
 import { restoreToPostgres } from './database-restore.js';
+import { packBackup } from './backup-archive.js';
 
 const arguments_ = process.argv.slice(2),
   operation = arguments_[0];
@@ -40,23 +38,7 @@ function parseDeploymentEnv(text: string) {
   }
   return config;
 }
-async function verifyDirectory(directory: string) {
-  const listed = new Set<string>();
-  const lines = (await readFile(join(directory, 'SHA256SUMS'), 'utf8')).trim().split('\n');
-  for (const line of lines) {
-    const match = line.match(/^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz)$/);
-    if (!match || listed.has(match[2])) throw new Error('备份校验清单无效');
-    listed.add(match[2]);
-    if (
-      !(await lstat(join(directory, match[2]))).isFile() ||
-      (await digestFile(join(directory, match[2]))) !== match[1]
-    )
-      throw new Error(`备份校验失败：${match[2]}`);
-  }
-  if (!listed.has('deployment.env') || !listed.has('data.tar.gz'))
-    throw new Error('备份校验清单不完整');
-  return 'portable';
-}
+
 let db;
 const scratch = await mkdtemp(join(tmpdir(), 'love-backup-'));
 try {
@@ -98,22 +80,12 @@ try {
         `备份校验失败：${credentials.ai} 个 AI 密钥、${credentials.smtp} 个 SMTP 密码无法使用备份密钥解密。未生成完整备份；请修复或重新配置这些凭据后再备份。`,
       );
     privateLog(`已校验 ${report.tables.users} 个用户、${report.mediaFiles} 个媒体文件。`);
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(
-        'tar',
-        ['-C', output, '-czf', '-', 'manifest.json', 'love.sqlite', 'media'],
-        { stdio: ['ignore', 'inherit', 'inherit'] },
-      );
-      child.once('error', reject);
-      child.once('exit', (code) => (code === 0 ? resolve() : reject(new Error('备份打包失败'))));
-    });
+    await packBackup(output, process.stdout);
   } else if (operation === 'inspect' || operation === 'restore') {
     const directory = argument('--directory');
-    await verifyDirectory(directory);
     {
       const packageDirectory = join(scratch, 'data');
-      await extractBackup(join(directory, 'data.tar.gz'), packageDirectory);
-      const source = await validatePackage(packageDirectory);
+      const source = await prepareBackupImport(directory, packageDirectory);
       const config = parseDeploymentEnv(await readFile(join(directory, 'deployment.env'), 'utf8'));
       if (operation === 'inspect') {
         console.log(source.provider);

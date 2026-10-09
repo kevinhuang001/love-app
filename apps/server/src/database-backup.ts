@@ -1,6 +1,6 @@
 import { DatabaseSync, backup, type SQLInputValue } from 'node:sqlite';
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream, constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { createWriteStream, constants } from 'node:fs';
 import {
   mkdir,
   open,
@@ -15,8 +15,6 @@ import {
 } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { createGunzip } from 'node:zlib';
-import tar from 'tar-stream';
 import { openDatabase, type DB } from './db.js';
 import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
 import { APPLICATION_VERSION, assertBackupVersion } from './version.js';
@@ -24,6 +22,17 @@ import { transferTables, restoreToPostgres, type TransferReport } from './databa
 import { MediaRepository } from './media-repository.js';
 import { withSQLiteSnapshot } from './sqlite-snapshot.js';
 import { seal, unseal } from './mail.js';
+import { extractCurrentBackup, verifyBackupDirectory, digestFile } from './backup-archive.js';
+import { convertBackupV1Archive } from './migrations/backup/002.js';
+export { extractCurrentBackup as extractBackup } from './backup-archive.js';
+export { digestFile } from './backup-archive.js';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  BACKUP_FORMAT_VERSION,
+  manifestV2Schema,
+  parseBackupManifest,
+  migrateBackupFormat,
+} from './backup-format.js';
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
 const identities = ['messages', 'access_logs', 'server_logs', 'audit_logs'];
@@ -43,70 +52,6 @@ async function sync(path: string) {
     await f.close();
   }
 }
-export async function digestFile(path: string) {
-  const hash = createHash('sha256');
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    for await (const part of handle.createReadStream({ autoClose: false })) hash.update(part);
-  } finally {
-    await handle.close();
-  }
-  return hash.digest('hex');
-}
-
-// Extract into a private empty directory. No links or special files are accepted, including
-// ignored entries: a malicious archive cannot affect the deployment or its backups.
-export async function extractBackup(archive: string, directory: string) {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const extract = tar.extract(),
-    seen = new Set<string>();
-  extract.on('entry', (header, stream, next) => {
-    stream.on('error', () => {});
-    void (async () => {
-      const path = header.name.replace(/^\.\//, '').replace(/\/$/, '');
-      if (['.', './'].includes(header.name) && header.type === 'directory') {
-        stream.resume();
-        next();
-        return;
-      }
-      if (
-        !path ||
-        path.startsWith('/') ||
-        path.includes('\\') ||
-        /[\x00-\x1f]/.test(path) ||
-        path.split('/').some((p) => p === '..' || !p) ||
-        !['file', 'directory'].includes(header.type)
-      )
-        throw new Error('备份包含不安全路径、链接或特殊文件');
-      if (header.type === 'directory') {
-        stream.resume();
-        next();
-        return;
-      }
-      if (seen.has(path)) throw new Error('备份包含重复文件');
-      seen.add(path);
-      const wanted =
-        ['love.sqlite', 'manifest.json'].includes(path) ||
-        (path.startsWith('media/') && path.split('/').length === 2);
-      if (!wanted) {
-        stream.resume();
-        stream.once('end', next);
-        return;
-      }
-      const output = join(directory, path);
-      await mkdir(dirname(output), { recursive: true, mode: 0o700 });
-      await pipeline(stream, createWriteStream(output, { flags: 'wx', mode: 0o600 }));
-      next();
-    })().catch((error) => {
-      stream.destroy(error);
-      extract.destroy(error);
-    });
-  });
-  await pipeline(createReadStream(archive), createGunzip(), extract);
-  if (!(await exists(join(directory, 'love.sqlite'))))
-    throw new Error('备份不包含 SQLite 数据快照');
-}
-
 export async function exportDatabase({
   db,
   sqlitePath,
@@ -261,67 +206,112 @@ export async function refreshPackageManifest(directory: string, provider: 'sqlit
     join(directory, 'manifest.json'),
     JSON.stringify({
       format: 'love-backup',
-      version: 1,
+      version: BACKUP_FORMAT_VERSION,
       applicationVersion: APPLICATION_VERSION,
       schemaVersion: SCHEMA_VERSION,
       provider,
       createdAt: new Date().toISOString(),
-      databaseSha256: await digestFile(database),
-      report,
+      integrity: {
+        algorithm: 'sha256',
+        reportVersion: 1,
+        databaseSha256: await digestFile(database),
+        report,
+      },
     }) + '\n',
     { mode: 0o600 },
   );
   return report;
 }
 
-export async function validatePackage(directory: string) {
+export async function validatePackage(directory: string, { upgradeSchema = true } = {}) {
   const database = join(directory, 'love.sqlite'),
     media = join(directory, 'media');
-  // Authenticate the original snapshot before applying any migration to this private copy.
-  const m = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
-  if (m.format !== 'love-backup' || m.version !== 1 || !['sqlite', 'postgres'].includes(m.provider))
-    throw new Error('备份清单格式不匹配，不支持旧备份');
-  assertBackupVersion(m.applicationVersion, m.schemaVersion, APPLICATION_VERSION, SCHEMA_VERSION);
-  if (m.databaseSha256 !== (await digestFile(database)))
-    throw new Error('备份清单或内容摘要不匹配');
-  const sqlite = new DatabaseSync(database, { readOnly: true });
-  let sourceVersion;
-  try {
-    sourceVersion = sqliteSchemaVersion(sqlite);
-    if (sourceVersion !== m.schemaVersion) throw new Error('备份清单与数据库版本不一致');
-    if (
-      sqlite.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok' ||
-      sqlite.prepare('PRAGMA foreign_key_check').all().length
-    )
-      throw new Error('备份数据库完整性或关联校验失败');
-  } finally {
-    sqlite.close();
-  }
-  const originalReport = await restoreToPostgres({
-    sourcePath: database,
-    mediaDirectory: media,
-    allowPreviousVersion: true,
-  });
-  if (JSON.stringify(m.report) !== JSON.stringify(originalReport))
-    throw new Error('备份清单或内容摘要不匹配');
-  if (sourceVersion < SCHEMA_VERSION) {
+  const original = parseBackupManifest(
+    JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')),
+  );
+  const metadata = original.manifest as { applicationVersion: string; schemaVersion: number };
+  assertBackupVersion(metadata.applicationVersion, metadata.schemaVersion);
+  let report: TransferReport | undefined;
+  const converted = await migrateBackupFormat(
+    original.manifest,
+    directory,
+    async (value, format) => {
+      const m = value as { applicationVersion: string; schemaVersion: number };
+      assertBackupVersion(m.applicationVersion, m.schemaVersion);
+      const integrity = format.integrity(value);
+      if (integrity.databaseSha256 !== (await digestFile(database)))
+        throw new Error('备份清单或内容摘要不匹配');
+      const sqlite = new DatabaseSync(database, { readOnly: true });
+      try {
+        if (sqliteSchemaVersion(sqlite) !== m.schemaVersion)
+          throw new Error('备份清单与数据库版本不一致');
+        if (
+          sqlite.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok' ||
+          sqlite.prepare('PRAGMA foreign_key_check').all().length
+        )
+          throw new Error('备份数据库完整性或关联校验失败');
+      } finally {
+        sqlite.close();
+      }
+      report = await restoreToPostgres({
+        sourcePath: database,
+        mediaDirectory: media,
+        allowPreviousVersion: true,
+      });
+      if (!isDeepStrictEqual(integrity.report, report)) throw new Error('备份清单或内容摘要不匹配');
+    },
+  );
+  const manifest = manifestV2Schema.parse(converted.manifest);
+  if (upgradeSchema && manifest.schemaVersion < SCHEMA_VERSION) {
     const upgraded = await openDatabase(database);
     await upgraded.close();
-    // Recompute the verified private package after migrations; the archive stays unchanged.
-    const report = await refreshPackageManifest(directory, m.provider);
-    return {
-      provider: m.provider as 'sqlite' | 'postgres',
-      report,
-      applicationVersion: m.applicationVersion as string,
-      schemaVersion: sourceVersion,
-    };
+    report = await refreshPackageManifest(directory, manifest.provider);
+  } else if (converted.sourceVersion < BACKUP_FORMAT_VERSION) {
+    // Persist only after every format conversion and verification succeeded. The caller
+    // passes a private extracted copy; the original backup archive remains untouched.
+    const staged = join(directory, '.manifest-' + randomUUID());
+    try {
+      await writeFile(staged, JSON.stringify(manifest) + '\n', { mode: 0o600, flag: 'wx' });
+      await rename(staged, join(directory, 'manifest.json'));
+    } finally {
+      await rm(staged, { force: true });
+    }
   }
-  const report = originalReport;
   return {
-    provider: m.provider as 'sqlite' | 'postgres',
-    report,
-    applicationVersion: m.applicationVersion as string,
-    schemaVersion: sourceVersion,
+    provider: manifest.provider,
+    report: report!,
+    applicationVersion: metadata.applicationVersion,
+    schemaVersion: metadata.schemaVersion,
+    formatVersion: converted.sourceVersion,
+    targetFormatVersion: BACKUP_FORMAT_VERSION,
+  };
+}
+
+// Dispatch historical archives to their version-owned adapter. The ordinary extractor
+// and target restore path only consume the current Zstandard package.
+export async function prepareBackupImport(sourceDirectory: string, directory: string) {
+  const archiveName = await verifyBackupDirectory(sourceDirectory);
+  let original: Awaited<ReturnType<typeof validatePackage>> | undefined;
+  if (archiveName === 'data.tar.gz') {
+    original = await convertBackupV1Archive(
+      join(sourceDirectory, archiveName),
+      directory,
+      (legacy) => validatePackage(legacy, { upgradeSchema: false }),
+    );
+  } else {
+    await extractCurrentBackup(join(sourceDirectory, archiveName), directory);
+    const parsed = parseBackupManifest(
+      JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')),
+    );
+    if (parsed.version !== BACKUP_FORMAT_VERSION)
+      throw new Error('当前数据归档必须使用当前备份格式；旧归档请通过对应迁移器转换');
+  }
+  const current = await validatePackage(directory);
+  return {
+    ...current,
+    formatVersion: original?.formatVersion ?? current.formatVersion,
+    schemaVersion: original?.schemaVersion ?? current.schemaVersion,
+    applicationVersion: original?.applicationVersion ?? current.applicationVersion,
   };
 }
 

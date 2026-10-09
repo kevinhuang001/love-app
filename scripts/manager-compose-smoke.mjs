@@ -194,8 +194,11 @@ for (const database of ['sqlite', 'postgres']) {
       assert.ok(!calls.slice(marker).some((a) => a.includes('up') && a.at(-1) === 'postgres'));
       // A fresh deployment connects to an existing remote database as-is.
       // The source PostgreSQL belongs to another Compose project and stays running.
-      const bytes = Buffer.from('existing-remote-avatar'),
-        name = 'remote-avatar.webp';
+      const bytes = Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQkAAAAASUVORK5CYII=',
+          'base64',
+        ),
+        name = 'remote-avatar.png';
       await manager.paused(() =>
         manager.withDatabase(async (db, source) => {
           await writeFile(join(source.directory, name), bytes);
@@ -249,6 +252,16 @@ for (const database of ['sqlite', 'postgres']) {
           return runCommand(args, options);
         },
       });
+      // Docker isolates separate bridge networks. This fixture hosts the external
+      // database in a different project, so join its network explicitly; do not
+      // make a blocked private bridge IP look like a reachable remote server.
+      const networkFile = join(externalDirectory, 'remote-test.yml');
+      await writeFile(
+        networkFile,
+        `services:\n  love:\n    networks: [remote]\nnetworks:\n  remote:\n    external: true\n    name: ${project}_default\n`,
+      );
+      const composeArgs = external.composeArgs.bind(external);
+      external.composeArgs = (args) => [...composeArgs([]), '-f', networkFile, ...args];
       external.restore = () => {
         throw new Error('Connecting to a remote database must not restore or replace it');
       };
@@ -296,6 +309,9 @@ for (const database of ['sqlite', 'postgres']) {
         console.log(
           'Fresh external PostgreSQL deployment reused existing accounts, pair, avatars, AI settings and media without importing SQLite.',
         );
+      } catch (error) {
+        await external.compose(['logs', '--tail', '80', 'love']).catch(() => {});
+        throw error;
       } finally {
         await external.compose(['down', '--volumes']).catch(() => {});
       }

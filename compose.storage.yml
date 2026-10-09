@@ -1,0 +1,8 @@
+# Preserve the SQLite source volume when a migrated deployment uses PostgreSQL.
+# This overlay also works with existing compose.yml files downloaded before migration support.
+services:
+  love:
+    volumes:
+      - postgres-work:/app/data
+volumes:
+  postgres-work:

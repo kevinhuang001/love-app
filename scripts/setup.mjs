@@ -73,6 +73,8 @@ export function validateConfig(config) {
     throw new Error('仅支持官方 GHCR 镜像');
   if (!['sqlite', 'postgres', 'external'].includes(config.LOVE_DATABASE))
     throw new Error('数据库选择无效');
+  if (config.LOVE_DATA_VOLUME && !['love-data', 'postgres-work'].includes(config.LOVE_DATA_VOLUME))
+    throw new Error('应用数据卷选择无效');
   if (
     config.LOVE_DATABASE === 'postgres' &&
     (!config.POSTGRES_PASSWORD ||
@@ -155,6 +157,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
     'COMPOSE_PROJECT_NAME',
     'LOVE_DATABASE',
     'DATABASE_PROVIDER',
+    'LOVE_DATA_VOLUME',
     'DATABASE_URL',
     'PG_CONNECTION_TIMEOUT_MS',
     'PG_QUERY_TIMEOUT_MS',

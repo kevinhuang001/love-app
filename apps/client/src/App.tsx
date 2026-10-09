@@ -24,6 +24,7 @@ import { Us } from './pages/Us';
 import { Loading, ErrorState } from './components/common';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Button } from './components/ui/button';
+import { useBackHandler, useNativeBack } from './lib/back-navigation';
 function Space({ session, end }: { session: Session; end: () => Promise<void> }) {
   const cache = useQueryClient(),
     [tab, setTab] = useState('chat'),
@@ -145,6 +146,10 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
     if (tab === 'chat') setUnread(0);
   }, [tab, unread]);
   const paired = Boolean(profile.data?.couple && profile.data.partner);
+  useBackHandler(paired && tab !== 'chat', () => {
+    setTab('chat');
+    return true;
+  });
   useEffect(() => {
     if (!profile.data) return;
     if (!paired) {
@@ -266,7 +271,12 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
   );
 }
 export default function App() {
+  useNativeBack();
   const [adminRoute, setAdminRoute] = useState(window.location.hash === '#admin');
+  useBackHandler(adminRoute, () => {
+    window.location.hash = '';
+    return true;
+  });
   useEffect(() => {
     const change = () => setAdminRoute(window.location.hash === '#admin');
     window.addEventListener('hashchange', change);

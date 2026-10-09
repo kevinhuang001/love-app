@@ -20,6 +20,12 @@ export const menuOptions = [
   { value: 'update', label: '更新软件及管理工具', hint: '检查 GHCR，有更新才备份和下载' },
   { value: 'backup', label: '备份数据与配置' },
   { value: 'restore', label: '恢复备份', hint: '恢复前保存当前状态' },
+  { value: 'migrate', label: 'SQLite → PostgreSQL', hint: '备份、迁移全部数据及媒体，核对后切换' },
+  {
+    value: 'cleanup',
+    label: '清理 SQLite 未引用媒体',
+    hint: '暂停写入并备份，只删除没有数据库引用的文件',
+  },
   { value: 'uninstall', label: '卸载应用', hint: '默认保留数据和备份' },
   { value: 'rollback', label: '回滚上次更新', hint: '恢复镜像，保留当前数据' },
   { value: 'refresh', label: '刷新页面', hint: '清理之前的显示，重新读取部署状态' },
@@ -61,7 +67,7 @@ export async function prompt({
         message: '选择操作',
         options: menuOptions,
         initialValue: existsSync(resolve(directory, '.env')) ? 'status' : 'configure',
-        maxItems: 13,
+        maxItems: 15,
       }),
     );
     if (result === 'exit') ui.outro('已退出部署管理');

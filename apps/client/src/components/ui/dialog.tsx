@@ -6,9 +6,31 @@ import { XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 
 import { Button } from '@/components/ui/button';
+import { useBackHandler } from '@/lib/back-navigation';
 
-function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />;
+function Dialog({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Root>) {
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
+  const visible = open ?? internalOpen;
+  const change = (value: boolean) => {
+    setInternalOpen(value);
+    onOpenChange?.(value);
+  };
+  useBackHandler(
+    visible,
+    () => {
+      change(false);
+      return true;
+    },
+    100,
+  );
+  return (
+    <DialogPrimitive.Root data-slot="dialog" {...props} open={visible} onOpenChange={change} />
+  );
 }
 
 function DialogTrigger({ ...props }: React.ComponentProps<typeof DialogPrimitive.Trigger>) {

@@ -20,12 +20,15 @@ reload() {
   database=$(setting LOVE_DATABASE); database=${database:-sqlite}
   https=$(setting LOVE_HTTPS); tls=$(setting LOVE_TLS_PROVIDER)
   project=$(setting COMPOSE_PROJECT_NAME); project=${project:-love-v4}
+  data_volume=$(setting LOVE_DATA_VOLUME); data_volume=${data_volume:-love-data}
+  case "$data_volume" in love-data|postgres-work) ;; *) printf '应用数据卷配置无效。\n' >&2; return 1;; esac
   case "$image" in ghcr.io/kevinhuang001/love-app:*|ghcr.io/kevinhuang001/love-app@sha256:*) ;; *) image=ghcr.io/kevinhuang001/love-app:latest;; esac
 }
 compose() {
   # Only fixed filenames enter the intentionally split argument list.
   files='-f compose.yml'
   [ "$database" != postgres ] || files="$files -f compose.postgres.yml"
+  [ "$data_volume" != postgres-work ] || files="$files -f compose.storage.yml"
   if [ "$https" = 1 ]; then
     case "$tls" in
       certbot) files="$files -f compose.https.yml -f compose.certbot.yml --profile https";;
@@ -33,7 +36,7 @@ compose() {
       external) ;; *) printf 'HTTPS 方式无效，请重新配置。\n' >&2; return 1;;
     esac
   fi
-  docker compose --project-name "$project" --env-file .env $files "$@"
+  docker compose --project-name "$project" --env-file "${compose_env:-.env}" $files "$@"
 }
 running_app_containers() {
   docker ps --quiet --no-trunc \
@@ -66,6 +69,7 @@ install_file() (
 set_field() (
   # Values passed here are restricted image references / fixed enum fields.
   [ -f .env ] || return 0
+  [ "$(setting "$1")" != "$2" ] || return 0
   staged_env=$(mktemp "$PWD/.love-env.XXXXXXXX") || return 1
   trap 'rm -f -- "$staged_env"' EXIT
   trap 'exit 1' HUP INT TERM
@@ -76,24 +80,24 @@ ensure_image() { docker image inspect "$image" >/dev/null 2>&1 || download_image
 deployment_bundle() {
   [ -n "$work" ] || work=$(mktemp -d "${TMPDIR:-/tmp}/love-deploy.XXXXXXXX") || return 1
   mkdir -p "$work/deploy" || return 1
-  docker run --rm --entrypoint tar "$image" -C /app -cf - love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml deploy Caddyfile > "$work/deploy.tar" || return 1
+  docker run --rm --entrypoint tar "$image" -C /app -cf - love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml compose.storage.yml deploy Caddyfile > "$work/deploy.tar" || return 1
   tar --no-same-owner --no-same-permissions -xf "$work/deploy.tar" -C "$work/deploy" || return 1
-  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh; do
+  for file in love compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml compose.storage.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh; do
     [ -f "$work/deploy/$file" ] && [ ! -L "$work/deploy/$file" ] || { printf '镜像部署配置不完整。\n' >&2; return 1; }
   done
 }
 install_bundle() {
   mkdir -p deploy || return 1
-  for file in compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh love; do
+  for file in compose.yml compose.postgres.yml compose.https.yml compose.certbot.yml compose.storage.yml Caddyfile deploy/terminal-ui.mjs deploy/certbot-proxy.sh deploy/certbot-renew.sh love; do
     mode=600; [ "$file" != love ] || mode=755
     install_file "$work/deploy/$file" "$file" "$mode" || return 1
   done
 }
 update_tools() {
-  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh Caddyfile love; do
+  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh compose.storage.yml Caddyfile love; do
     [ ! -d "$file" ] || { printf '部署文件路径被目录占用：%s\n' "$file" >&2; return 1; }
   done
-  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh Caddyfile love; do
+  for file in deploy/terminal-ui.mjs deploy/certbot-proxy.sh compose.storage.yml Caddyfile love; do
     mode=600; [ "$file" != love ] || mode=755
     install_file "$work/deploy/$file" "$file" "$mode" || return 1
   done
@@ -122,7 +126,7 @@ backup() {
   [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
   compose stop love || return 1
   cp .env "$backup_dir/deployment.env" || { [ -z "$running" ] || compose start love; return 1; }
-  if ! docker run --rm --user 0 --mount "type=volume,src=${project}_love-data,dst=/data,readonly" --entrypoint tar "$image" -C /data -czf - . > "$backup_dir/data.tar.gz"; then
+  if ! docker run --rm --user 0 --mount "type=volume,src=${project}_${data_volume},dst=/data,readonly" --entrypoint tar "$image" -C /data -czf - . > "$backup_dir/data.tar.gz"; then
     [ -z "$running" ] || compose start love; return 1
   fi
   if [ "$database" != sqlite ] && ! compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_dump --format=custom' > "$backup_dir/database.dump"; then
@@ -144,6 +148,8 @@ restore() {
   [ "$saved_project" = "$project" ] || { printf '备份属于其他部署，未覆盖当前数据。\n' >&2; return 1; }
   saved_database=$(sed -n "s/^LOVE_DATABASE=['\"]\{0,1\}\([a-z]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env"); saved_database=${saved_database:-sqlite}
   [ "$saved_database" = "$database" ] || { printf '数据库类型不匹配，未覆盖当前数据。\n' >&2; return 1; }
+  saved_data_volume=$(sed -n "s/^LOVE_DATA_VOLUME='\([a-z-]*\)'$/\1/p" "$restore_dir/deployment.env"); saved_data_volume=${saved_data_volume:-love-data}
+  case "$saved_data_volume" in love-data|postgres-work) ;; *) printf '备份数据卷配置无效。\n' >&2; return 1;; esac
   ui text '这会覆盖当前数据和部署配置。输入 RESTORE 确认' RESTORE || return 1
   [ "$answer" = RESTORE ] || return 0
   backup || return 1
@@ -151,7 +157,7 @@ restore() {
   if [ "$database" != sqlite ]; then
     compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_restore --dbname="$PGDATABASE" --clean --if-exists --no-owner --exit-on-error' < "$restore_dir/database.dump" || return 1
   fi
-  docker run --rm --user 0 -i --mount "type=volume,src=${project}_love-data,dst=/data" --entrypoint sh "$image" -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /data -xzf - && chown -R node:node /data' < "$restore_dir/data.tar.gz" || return 1
+  docker run --rm --user 0 -i --mount "type=volume,src=${project}_${saved_data_volume},dst=/data" --entrypoint sh "$image" -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /data -xzf - && chown -R node:node /data' < "$restore_dir/data.tar.gz" || return 1
   cp "$restore_dir/deployment.env" .env && chmod 600 .env && reload && start
 }
 update() {
@@ -249,6 +255,55 @@ rollback() {
   docker image inspect "$rollback_image" >/dev/null || return 1
   image=$rollback_image; set_field LOVE_IMAGE "$image" && start
 }
+migrate_database() {
+  require_config && ensure_image || return 1
+  [ "$database" = sqlite ] || { printf '当前部署已经使用 PostgreSQL。\n'; return 1; }
+  work=$(mktemp -d "$PWD/.love-migration.XXXXXXXX") || return 1
+  migration_env="$work/target.env"
+  docker run --rm -it --user "$(id -u):$(id -g)" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/database-migration.mjs /setup/.env "/setup/$(basename "$work")/target.env" || return 1
+  backup || return 1
+  source_volume=$data_volume
+  source_running=$running
+  compose stop love || return 1
+  database=$(sed -n "s/^LOVE_DATABASE='\([a-z]*\)'$/\1/p" "$migration_env")
+  data_volume=$(sed -n "s/^LOVE_DATA_VOLUME='\([a-z-]*\)'$/\1/p" "$migration_env")
+  compose_env=$migration_env
+  migration_ok=1
+  if [ "$database" = postgres ]; then compose up -d --no-build --wait postgres || migration_ok=0; fi
+  if [ "$migration_ok" = 1 ]; then
+    compose run --rm -T --no-deps --user 0 --volume "$PWD:/setup" --volume "${project}_${source_volume}:/source:ro" --entrypoint node love /app/apps/server/dist/sqlite-to-postgres-cli.js --source /source/love.sqlite --media /source/media --report "/setup/$(basename "$work")/report.json" || migration_ok=0
+  fi
+  compose_env=''
+  if [ "$migration_ok" != 1 ]; then
+    reload
+    [ -z "$source_running" ] || compose start love
+    printf '迁移未完成，原 SQLite 配置和媒体保留。修复问题后可重新选择迁移。\n' >&2
+    return 1
+  fi
+  cp "$work/report.json" "$backup_dir/postgres-migration.json" || { reload; [ -z "$source_running" ] || compose start love; return 1; }
+  (cd "$backup_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum postgres-migration.json; else shasum -a 256 postgres-migration.json; fi; } >> SHA256SUMS) || { reload; [ -z "$source_running" ] || compose start love; return 1; }
+  install_file "$migration_env" .env || { reload; [ -z "$source_running" ] || compose start love; return 1; }
+  reload && start || {
+    compose stop love || true
+    install_file "$backup_dir/deployment.env" .env && reload || { printf '恢复 SQLite 配置失败，请使用迁移前备份的 deployment.env。\n' >&2; return 1; }
+    [ -z "$source_running" ] || start
+    printf 'PostgreSQL 启动失败，已恢复 SQLite 配置；目标迁移结果保留，可重试。\n' >&2
+    return 1
+  }
+  printf '迁移完成并切换到 PostgreSQL。报告：%s/postgres-migration.json\n原 SQLite 数据卷和迁移前备份均保留。\n' "$backup_dir"
+}
+cleanup_media() {
+  require_config && ensure_image || return 1
+  [ "$database" = sqlite ] || { printf '此操作用于 SQLite 的磁盘媒体。\n'; return 1; }
+  confirm '备份并暂停写入，清理没有数据库引用的媒体及上传临时文件？' || return 0
+  backup || return 1
+  cleanup_running=$running
+  compose stop love || return 1
+  cleanup_status=0
+  compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/unused-media-cli.js --apply || cleanup_status=$?
+  [ -z "$cleanup_running" ] || compose start love || cleanup_status=1
+  return "$cleanup_status"
+}
 uninstall() {
   require_config || return 1
   ui uninstall "$project" || return 1
@@ -288,6 +343,8 @@ while :; do
     update) update || result=$?;;
     backup) backup || result=$?;;
     restore) restore || result=$?;;
+    migrate) migrate_database || result=$?;;
+    cleanup) cleanup_media || result=$?;;
     uninstall) uninstall || result=$?;;
     rollback) rollback || result=$?;;
     *) exit 1;;

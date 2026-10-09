@@ -48,13 +48,25 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  const index=a.indexOf('/setup/deploy/terminal-ui.mjs'),kind=a[index+1],file=a[index+2].replace('/setup/',process.cwd()+'/');
  if(kind==='continue'){fs.writeFileSync(file,'continue');process.exit(0);}
  const queue=fs.readFileSync('answers','utf8').split('\\n'),next=queue.shift();fs.writeFileSync('answers',queue.join('\\n'));
- const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',12:'uninstall',13:'rollback',14:'refresh',0:'exit'};
+ const menus={1:'configure',2:'start',3:'stop',4:'restart',5:'status',6:'logs',7:'update',8:'backup',9:'restore',12:'uninstall',13:'rollback',14:'refresh',15:'migrate',16:'cleanup',0:'exit'};
  let result=next;
  if(kind==='menu')result=menus[next];
  if(kind==='confirm')result=next==='y'?'yes':'no';
  if(kind==='uninstall')result=next==='2'?'volumes':'containers';
  fs.writeFileSync(file,result||'');process.exit(0);
 }
+if(a.includes('/app/scripts/database-migration.mjs')){
+ if(process.env.TEST_MIGRATION_CANCEL==='1')process.exit(130);
+ const out=a.at(-1).replace('/setup/',process.cwd()+'/');
+ const config=fs.readFileSync('.env','utf8').replace("LOVE_DATABASE='sqlite'","LOVE_DATABASE='postgres'");
+ fs.writeFileSync(out,config+"DATABASE_PROVIDER='postgres'\\nLOVE_DATA_VOLUME='postgres-work'\\nPOSTGRES_PASSWORD='fixture-password'\\n");process.exit(0);
+}
+if(a.includes('/app/apps/server/dist/sqlite-to-postgres-cli.js')){
+ if(process.env.TEST_MIGRATION_FAIL==='1')process.exit(1);
+ const out=a.at(-1).replace('/setup/',process.cwd()+'/');fs.writeFileSync(out,JSON.stringify({tables:{users:2},mediaFiles:3}));process.exit(0);
+}
+if(a.includes('/app/apps/server/dist/unused-media-cli.js'))process.exit(process.env.TEST_CLEANUP_FAIL==='1'?1:0);
+if(a[0]==='compose'&&a.includes('up')&&!a.includes('postgres')&&process.env.TEST_MIGRATION_START_FAIL==='1'&&fs.readFileSync('.env','utf8').includes("LOVE_DATABASE='postgres'"))process.exit(1);
 if(a.includes('inspect')&&process.env.TEST_IMAGE_MISSING==='1')process.exit(1);
 if(a[0]==='ps'){console.log(process.env.TEST_RUNNING_IDS);process.exit(0);}
 if(a[0]==='container'&&a[1]==='inspect'){
@@ -78,6 +90,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
     'compose.postgres.yml',
     'compose.https.yml',
     'compose.certbot.yml',
+    'compose.storage.yml',
     'Caddyfile',
     'deploy/terminal-ui.mjs',
     'deploy/certbot-proxy.sh',
@@ -94,6 +107,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
     'compose.postgres.yml',
     'compose.https.yml',
     'compose.certbot.yml',
+    'compose.storage.yml',
     'Caddyfile',
     'deploy',
   ]);
@@ -114,6 +128,10 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
         TEST_CHECK_FAIL: options.checkFail ? '1' : '0',
         TEST_RUNNING_IDS: (options.containers ?? ['a'.repeat(64)]).join('\n'),
         TEST_MIXED_IMAGES: options.mixedImages ? '1' : '0',
+        TEST_MIGRATION_CANCEL: options.migrationCancel ? '1' : '0',
+        TEST_MIGRATION_FAIL: options.migrationFail ? '1' : '0',
+        TEST_MIGRATION_START_FAIL: options.migrationStartFail ? '1' : '0',
+        TEST_CLEANUP_FAIL: options.cleanupFail ? '1' : '0',
         TERM: 'xterm-256color',
       },
       encoding: 'utf8',
@@ -403,4 +421,46 @@ test('deployment writes never follow stale links; failed tool copy cleans temp f
   assert.ok(prompts.every((a) => a.includes('ghcr.io/kevinhuang001/love-app:latest')));
   assert.ok(!(await readdir(join(dir, 'deploy'))).some((name) => name.startsWith('.love-')));
   assert.ok(!(await readdir(dir)).some((name) => name.startsWith('.love-Caddyfile.')));
+});
+
+test('migration stages target config, backs up and stops source, mounts it read-only, then switches only after verification', async (t) => {
+  const { calls, config, result, dir } = await launch(t, base, '15\n0\n');
+  assert.equal(result.status, 0, result.stderr);
+  const migration = calls.find((a) =>
+    a.includes('/app/apps/server/dist/sqlite-to-postgres-cli.js'),
+  );
+  assert.ok(migration.includes('love-test_love-data:/source:ro'));
+  assert.ok(migration.includes('--no-deps'));
+  assert.match(config, /LOVE_DATABASE='postgres'/);
+  assert.match(config, /LOVE_DATA_VOLUME='postgres-work'/);
+  const before = calls.findIndex((a) => a[0] === 'run' && a.includes('tar'));
+  assert.ok(before >= 0 && calls.indexOf(migration) > before);
+  const backup = (await readdir(join(dir, 'backups')))[0];
+  assert.equal(await readFile(join(dir, 'backups', backup, 'deployment.env'), 'utf8'), base);
+  assert.ok((await readdir(join(dir, 'backups', backup))).includes('postgres-migration.json'));
+});
+test('cancelled, failed and unhealthy migrations preserve source configuration and recover a previously running app', async (t) => {
+  for (const options of [
+    { migrationCancel: true },
+    { migrationFail: true },
+    { migrationStartFail: true },
+  ]) {
+    const { calls, config, result } = await launch(t, base, '15\n0\n', options);
+    assert.equal(result.status, 0);
+    assert.equal(config, base);
+    if (options.migrationCancel)
+      assert.ok(!calls.some((a) => a.includes('stop') || a.includes('tar')));
+    else assert.ok(calls.some((a) => a.includes('start') && a.at(-1) === 'love'));
+  }
+});
+test('cleanup backs up before deletion, stops writers, restores running state on failure and never changes database config', async (t) => {
+  for (const cleanupFail of [false, true]) {
+    const { calls, config, result } = await launch(t, base, '16\ny\n0\n', { cleanupFail });
+    assert.equal(result.status, 0);
+    assert.equal(config, base);
+    const cleanup = calls.findIndex((a) => a.includes('/app/apps/server/dist/unused-media-cli.js'));
+    assert.ok(cleanup > calls.findIndex((a) => a[0] === 'run' && a.includes('tar')));
+    assert.ok(calls[cleanup].includes('--apply'));
+    assert.ok(calls.some((a, i) => i > cleanup && a.includes('start') && a.at(-1) === 'love'));
+  }
 });

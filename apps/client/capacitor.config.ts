@@ -1,4 +1,5 @@
 import type { CapacitorConfig } from '@capacitor/cli';
+import { KeyboardResize } from '@capacitor/keyboard';
 const config: CapacitorConfig = {
   appId: 'com.kevinhuang.love',
   appName: 'Love',
@@ -7,7 +8,7 @@ const config: CapacitorConfig = {
   server: { androidScheme: 'https', cleartext: true },
   android: { allowMixedContent: true },
   plugins: {
-    Keyboard: { resize: 'native' },
+    Keyboard: { resize: KeyboardResize.Native },
   },
 };
 export default config;

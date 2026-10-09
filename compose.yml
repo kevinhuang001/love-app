@@ -22,7 +22,7 @@ services:
       AI_ALLOWED_HOSTS: ${AI_ALLOWED_HOSTS:-}
       TRUST_PROXY: ${TRUST_PROXY:-0}
     volumes:
-      - love-data:/app/data
+      - ${LOVE_DATA_VOLUME:-love-data}:/app/data
     restart: unless-stopped
     init: true
   database-tools:
@@ -53,3 +53,4 @@ volumes:
   caddy-data:
   caddy-config:
   love-data:
+  postgres-work:

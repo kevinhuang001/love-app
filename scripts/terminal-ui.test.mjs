@@ -46,7 +46,7 @@ test('modern menu exposes named actions and deployment summary without passwords
   );
   assert.match(f.notes[0], /love-ui · postgres · HTTP/);
   assert.ok(!f.notes[0].includes('private-password'));
-  assert.equal(f.calls[0].maxItems, 13);
+  assert.equal(f.calls[0].maxItems, 15);
   assert.ok(menuOptions.some((option) => option.value === 'refresh'));
   assert.equal(menuOptions.at(-1).value, 'exit');
 });

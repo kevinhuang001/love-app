@@ -46,6 +46,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
     'compose.postgres.yml',
     'compose.https.yml',
     'compose.certbot.yml',
+    'compose.storage.yml',
     'Caddyfile',
     'deploy/terminal-ui.mjs',
   ])
@@ -60,7 +61,15 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
 for (const database of ['sqlite', 'postgres']) {
   const dir = await mkdtemp(join(tmpdir(), 'love-manager-real-')),
     project = 'love-manager-' + database + '-ci';
-  for (const file of ['love', 'compose.yml', 'compose.postgres.yml', 'Caddyfile'])
+  for (const file of [
+    'love',
+    'compose.yml',
+    'compose.postgres.yml',
+    'compose.https.yml',
+    'compose.certbot.yml',
+    'compose.storage.yml',
+    'Caddyfile',
+  ])
     await copyFile(file, join(dir, file));
   const config = {
     COMPOSE_PROJECT_NAME: project,
@@ -94,12 +103,20 @@ for (const database of ['sqlite', 'postgres']) {
     `#!/usr/bin/env node
 const fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),i=a.indexOf('/setup/deploy/terminal-ui.mjs');
 if(i>=0){const file=a[i+2].replace('/setup/',process.cwd()+'/');if(a[i+1]==='continue')fs.writeFileSync(file,'continue');else{const answers=fs.readFileSync(process.env.MANAGER_ANSWERS,'utf8').split('\\n');fs.writeFileSync(file,answers.shift());fs.writeFileSync(process.env.MANAGER_ANSWERS,answers.join('\\n'));}}
+else if(a.includes('/app/scripts/database-migration.mjs')){const out=a.at(-1).replace('/setup/',process.cwd()+'/');fs.copyFileSync(process.env.MANAGER_TARGET_ENV,out);}
 else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});process.exit(r.status??1);}
 `,
   );
   await chmod(join(dir, 'bin/docker'), 0o755);
   const menu = (input) => {
-    const actions = { 2: 'start', 8: 'backup', 9: 'restore', 0: 'exit' };
+    const actions = {
+      2: 'start',
+      8: 'backup',
+      9: 'restore',
+      15: 'migrate',
+      16: 'cleanup',
+      0: 'exit',
+    };
     const values = input
       .trimEnd()
       .split('\n')
@@ -117,6 +134,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         PATH: join(dir, 'bin') + ':' + process.env.PATH,
         MANAGER_DOCKER: realDocker,
         MANAGER_ANSWERS: join(dir, 'answers'),
+        MANAGER_TARGET_ENV: join(dir, 'target.env'),
       },
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
@@ -209,6 +227,96 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
     console.log(
       `Interactive manager ${database}: start, consistent backup, checksums, database/media restore and safety backup verified.`,
     );
+    if (database === 'sqlite') {
+      // Exercise the compiled migration CLI through real Compose, including the read-only
+      // source mount and the switch to a separate temporary-media volume.
+      query(`await db.prepare("INSERT INTO couples(id) VALUES('migration-pair')").run();
+        await db.prepare("INSERT INTO users(id,username,name,password,coupleId,email) VALUES('migration-user','migration_user','用户迁移','fixture-hash','migration-pair','migration@example.test')").run();
+        await fs.mkdir('/app/data/media/tmp',{recursive:true});
+        await fs.writeFile('/app/data/media/kept.preview.webp','referenced-media-fixture');
+        await fs.writeFile('/app/data/media/orphan.mp4','old-unreferenced-file');
+        await fs.writeFile('/app/data/media/tmp/interrupted','old-upload-temp');
+        await db.prepare("INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES('migration-media','migration-pair','migration-user','image','','kept.preview.webp','kept.preview.webp','2026-10-09')").run();
+        await db.prepare("INSERT INTO media_sizes VALUES('migration-media',0,24,0,24)").run();`);
+      menu('16\nyes\n0\n');
+      const cleaned = JSON.parse(
+        query(
+          `console.log(JSON.stringify({kept:await fs.readFile('/app/data/media/kept.preview.webp','utf8'),orphan:await fs.stat('/app/data/media/orphan.mp4').then(()=>true,()=>false),temp:await fs.stat('/app/data/media/tmp/interrupted').then(()=>true,()=>false)}));`,
+        ).trim(),
+      );
+      assert.deepEqual(cleaned, { kept: 'referenced-media-fixture', orphan: false, temp: false });
+      const target = {
+        ...config,
+        LOVE_DATABASE: 'postgres',
+        DATABASE_PROVIDER: 'postgres',
+        LOVE_DATA_VOLUME: 'postgres-work',
+      };
+      await writeFile(
+        join(dir, 'target.env'),
+        Object.entries(target)
+          .map(([key, value]) => `${key}=${quoteEnv(value)}`)
+          .join('\n') + '\n',
+        { mode: 0o600 },
+      );
+      menu('15\n0\n');
+      const migratedCompose = (...args) =>
+        execFileSync(
+          'docker',
+          [
+            ...composeArgs,
+            '-f',
+            join(dir, 'compose.postgres.yml'),
+            '-f',
+            join(dir, 'compose.storage.yml'),
+            ...args,
+          ],
+          {
+            encoding: 'utf8',
+          },
+        );
+      try {
+        const proof = JSON.parse(
+          migratedCompose(
+            'exec',
+            '-T',
+            'love',
+            'node',
+            '--input-type=module',
+            '-e',
+            `import {openDatabase} from '/app/apps/server/dist/db.js';const db=await openDatabase({path:'',provider:'postgres'});try{console.log(JSON.stringify({user:(await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name,files:(await db.prepare("SELECT COUNT(*) n FROM media_files WHERE mediaId='migration-media'").get()).n,content:(await db.prepare("SELECT data FROM media_chunks WHERE name='kept.preview.webp' AND position=0").get()).data.toString()}))}finally{await db.close()}`,
+          ).trim(),
+        );
+        assert.deepEqual(proof, {
+          user: '用户迁移',
+          files: 1,
+          content: 'referenced-media-fixture',
+        });
+        const sourceProof = execFileSync(
+          'docker',
+          [
+            'run',
+            '--rm',
+            '--user',
+            '0',
+            '--volume',
+            `${project}_love-data:/source:ro`,
+            '--entrypoint',
+            'node',
+            'love-ci',
+            '--input-type=module',
+            '-e',
+            `import fs from 'node:fs/promises';console.log(await fs.readFile('/source/media/kept.preview.webp','utf8'));`,
+          ],
+          { encoding: 'utf8' },
+        ).trim();
+        assert.equal(sourceProof, 'referenced-media-fixture');
+        console.log(
+          'Real SQLite cleanup + PostgreSQL migration, immutable source media, and compiled CLI verified.',
+        );
+      } finally {
+        migratedCompose('--profile', 'https', 'down', '--volumes', '--remove-orphans');
+      }
+    }
   } finally {
     if (maintenanceContainer) {
       try {

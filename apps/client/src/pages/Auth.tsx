@@ -14,6 +14,7 @@ import {
   type AuthConfig,
 } from '@/lib/api';
 import type { Session } from '@/lib/types';
+import { useBackHandler } from '@/lib/back-navigation';
 export function Auth({ onSession }: { onSession: (session: Session) => Promise<void> }) {
   const [mode, setMode] = useState<'login' | 'register' | 'reset'>('login'),
     [server, setServer] = useState(localStorage.getItem('love.server') || defaultServer()),
@@ -35,6 +36,10 @@ export function Auth({ onSession }: { onSession: (session: Session) => Promise<v
   const [testing, setTesting] = useState(false),
     [connection, setConnection] = useState('');
   const connectionAbort = useRef<AbortController | null>(null);
+  useBackHandler(mode !== 'login', () => {
+    changeMode('login');
+    return true;
+  });
   const hintsLoaded = useRef(false);
   useEffect(() => {
     let active = true;

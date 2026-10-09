@@ -54,7 +54,17 @@ DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/l
 
 可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 / 7 / 8 数据在启动时原子升级到 schema 9，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥需要随部署配置备份；SQLite 还需备份媒体文件，PostgreSQL 媒体随数据库备份。
 
-## PostgreSQL 超时与重试
+## 从 SQLite 迁移全部数据
+
+更新后运行 `./love`，选择“SQLite → PostgreSQL”，填写内置或外部数据库配置。无需在宿主机安装数据库客户端或 Node.js。迁移前备份并暂停应用，源库结构需为当前版本 9；工具用只读快照读取 SQLite 和可能的 WAL，原数据库和媒体不会修改。
+
+迁移全部 27 张业务表：用户密码哈希、会话、配对、消息及附件、相册、日期、AI 配置及任务、后台设置、邀请码、白名单、存储额度和日志。先处理头像的循环外键，再恢复完整关联；自增序号包含 SQLite 删除记录后的高水位。浮点时长和日志耗时使用 PostgreSQL double precision 保留 SQLite 精度。原媒体按每块 1 MiB 写入数据库，不重新压缩或转码。
+
+目标数据和媒体在同一事务中写入；逐表比较有序内容摘要，逐文件从 PostgreSQL 流式读回核对字节数与 SHA-256，全部通过后提交迁移凭据并替换配置。失败回滚；同源快照可再次核对而不重复写入。目标库已有业务数据或已迁移其他来源时拒绝覆盖。会话和加密凭据继续可用，需要保留原 `.env` 的媒体密钥。
+
+迁移后的临时卷通过 `LOVE_DATA_VOLUME` 与 `compose.storage.yml` 和原 SQLite 卷隔离。备份和恢复使用对应卷；切回 SQLite 应恢复迁移前配置及相应备份，不能只改 URL。菜单提供独立未引用媒体清理，迁移本身不删除源媒体，也不导入无引用文件。
+
+## PostgreSQL 连接参数
 
 以下是部署参数，放在 `.env`；`./love` → 部署配置 → 高级部署选项可修改，重新创建应用容器后生效。
 

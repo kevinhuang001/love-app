@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, readdir } from 'node:fs/promises';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,21 @@ import {
   BACKUP_COMPRESSION_LEVEL,
 } from '../src/backup-archive.js';
 import { extractBackup } from '../src/database-backup.js';
+
+test('an empty media directory survives extraction and can be repacked by migration', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'love-empty-media-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const data = join(root, 'data');
+  await mkdir(join(data, 'media'), { recursive: true });
+  await writeFile(join(data, 'love.sqlite'), 'snapshot');
+  await writeFile(join(data, 'manifest.json'), '{}');
+  await packBackup(data, join(root, 'first.zst'));
+  await extractBackup(join(root, 'first.zst'), join(root, 'out'));
+  assert.deepEqual(await readdir(join(root, 'out', 'media')), []);
+  await packBackup(join(root, 'out'), join(root, 'second.zst'));
+  await extractBackup(join(root, 'second.zst'), join(root, 'again'));
+  assert.equal(await readFile(join(root, 'again', 'love.sqlite'), 'utf8'), 'snapshot');
+});
 
 test('Zstandard level 15 streams a large archive losslessly and detects truncation and checksum corruption', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'love-zstd-'));

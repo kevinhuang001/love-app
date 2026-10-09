@@ -56,6 +56,7 @@ export async function extractCurrentBackup(archive: string, directory: string) {
 // ignored entries: a malicious archive cannot affect the deployment or its backups.
 export async function extractTarArchive(archive: string, directory: string, decoder: Transform) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  await mkdir(join(directory, 'media'), { recursive: true, mode: 0o700 });
   const extract = tar.extract(),
     seen = new Set<string>();
   extract.on('entry', (header, stream, next) => {

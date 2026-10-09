@@ -238,6 +238,10 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         await fs.writeFile('/app/data/media/tmp/interrupted','old-upload-temp');
         await db.prepare("INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES('migration-media','migration-pair','migration-user','image','','kept.preview.webp','kept.preview.webp','2026-10-09')").run();
         await db.prepare("INSERT INTO media_sizes VALUES('migration-media',0,24,0,24)").run();`);
+      // The selector regression above intentionally created a SQLite one-off container.
+      // Remove it before changing providers; Compose exec must inspect the new application.
+      execFileSync('docker', ['rm', '-f', maintenanceContainer], { stdio: 'ignore' });
+      maintenanceContainer = undefined;
       menu('16\nyes\n0\n');
       const cleaned = JSON.parse(
         query(
@@ -258,7 +262,8 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
           .join('\n') + '\n',
         { mode: 0o600 },
       );
-      menu('15\n0\n');
+      const migrationOutput = menu('15\n0\n');
+      assert.match(migrationOutput, /迁移完成并切换到 PostgreSQL/);
       const migratedCompose = (...args) =>
         execFileSync(
           'docker',
@@ -275,15 +280,24 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
           },
         );
       try {
+        const migratedApplication = execFileSync(
+          'sh',
+          ['-c', selector + '\nproject=$1; running_app_containers', 'manager-selector', project],
+          { encoding: 'utf8' },
+        ).trim();
+        assert.match(migratedApplication, /^[a-f0-9]{64}$/);
         const proof = JSON.parse(
-          migratedCompose(
-            'exec',
-            '-T',
-            'love',
-            'node',
-            '--input-type=module',
-            '-e',
-            `import {openDatabase} from '/app/apps/server/dist/db.js';const db=await openDatabase({path:'',provider:'postgres'});try{console.log(JSON.stringify({user:(await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name,files:(await db.prepare("SELECT COUNT(*) n FROM media_files WHERE mediaId='migration-media'").get()).n,content:(await db.prepare("SELECT data FROM media_chunks WHERE name='kept.preview.webp' AND position=0").get()).data.toString()}))}finally{await db.close()}`,
+          execFileSync(
+            'docker',
+            [
+              'exec',
+              migratedApplication,
+              'node',
+              '--input-type=module',
+              '-e',
+              `import {openDatabase} from '/app/apps/server/dist/db.js';const db=await openDatabase({path:'',provider:'postgres'});try{console.log(JSON.stringify({user:(await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name,files:(await db.prepare("SELECT COUNT(*) n FROM media_files WHERE mediaId='migration-media'").get()).n,content:(await db.prepare("SELECT data FROM media_chunks WHERE name='kept.preview.webp' AND position=0").get()).data.toString()}))}finally{await db.close()}`,
+            ],
+            { encoding: 'utf8' },
           ).trim(),
         );
         assert.deepEqual(proof, {

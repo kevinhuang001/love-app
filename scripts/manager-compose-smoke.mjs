@@ -94,7 +94,7 @@ for (const database of ['sqlite', 'postgres']) {
   const manager = new Manager({
     directory,
     executable: join(directory, 'love'),
-    version: '2.9.0',
+    version: JSON.parse(await readFile('package.json', 'utf8')).version,
     source: '0'.repeat(40),
     templates,
     ui,

@@ -18,7 +18,8 @@ import { pipeline } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import tar from 'tar-stream';
 import { openDatabase, type DB } from './db.js';
-import { schema } from './schema.js';
+import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
+import { APPLICATION_VERSION, assertBackupVersion } from './version.js';
 import { transferTables, restoreToPostgres, type TransferReport } from './database-restore.js';
 import { MediaRepository } from './media-repository.js';
 import { withSQLiteSnapshot } from './sqlite-snapshot.js';
@@ -54,7 +55,7 @@ export async function digestFile(path: string) {
 }
 
 // Extract into a private empty directory. No links or special files are accepted, including
-// ignored legacy entries: a malicious archive cannot affect the deployment or its backups.
+// ignored entries: a malicious archive cannot affect the deployment or its backups.
 export async function extractBackup(archive: string, directory: string) {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const extract = tar.extract(),
@@ -85,7 +86,7 @@ export async function extractBackup(archive: string, directory: string) {
       if (seen.has(path)) throw new Error('备份包含重复文件');
       seen.add(path);
       const wanted =
-        ['love.sqlite', 'love.sqlite-wal', 'love.sqlite-shm', 'manifest.json'].includes(path) ||
+        ['love.sqlite', 'manifest.json'].includes(path) ||
         (path.startsWith('media/') && path.split('/').length === 2);
       if (!wanted) {
         stream.resume();
@@ -140,9 +141,11 @@ export async function exportDatabase({
     });
   } else {
     const source = db!;
+    const initialized = await openDatabase(output);
+    await initialized.close();
     const sqlite = new DatabaseSync(output);
     try {
-      sqlite.exec(schema + '; PRAGMA user_version=9; BEGIN; PRAGMA defer_foreign_keys=ON;');
+      sqlite.exec('PRAGMA foreign_keys=ON; BEGIN; PRAGMA defer_foreign_keys=ON;');
       await source.transaction(
         async () => {
           for (const table of transferTables) {
@@ -245,8 +248,13 @@ export async function exportDatabase({
       source.close();
     }
   }
+  return refreshPackageManifest(directory, provider);
+}
+
+export async function refreshPackageManifest(directory: string, provider: 'sqlite' | 'postgres') {
+  const database = join(directory, 'love.sqlite');
   const report = await restoreToPostgres({
-    sourcePath: output,
+    sourcePath: database,
     mediaDirectory: join(directory, 'media'),
   });
   await writeFile(
@@ -254,9 +262,11 @@ export async function exportDatabase({
     JSON.stringify({
       format: 'love-backup',
       version: 1,
+      applicationVersion: APPLICATION_VERSION,
+      schemaVersion: SCHEMA_VERSION,
       provider,
       createdAt: new Date().toISOString(),
-      databaseSha256: await digestFile(output),
+      databaseSha256: await digestFile(database),
       report,
     }) + '\n',
     { mode: 0o600 },
@@ -267,20 +277,52 @@ export async function exportDatabase({
 export async function validatePackage(directory: string) {
   const database = join(directory, 'love.sqlite'),
     media = join(directory, 'media');
-  const report = await restoreToPostgres({ sourcePath: database, mediaDirectory: media });
-  if (await exists(join(directory, 'manifest.json'))) {
-    const m = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
+  // Authenticate the original snapshot before applying any migration to this private copy.
+  const m = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'));
+  if (m.format !== 'love-backup' || m.version !== 1 || !['sqlite', 'postgres'].includes(m.provider))
+    throw new Error('备份清单格式不匹配，不支持旧备份');
+  assertBackupVersion(m.applicationVersion, m.schemaVersion, APPLICATION_VERSION, SCHEMA_VERSION);
+  if (m.databaseSha256 !== (await digestFile(database)))
+    throw new Error('备份清单或内容摘要不匹配');
+  const sqlite = new DatabaseSync(database, { readOnly: true });
+  let sourceVersion;
+  try {
+    sourceVersion = sqliteSchemaVersion(sqlite);
+    if (sourceVersion !== m.schemaVersion) throw new Error('备份清单与数据库版本不一致');
     if (
-      m.format !== 'love-backup' ||
-      m.version !== 1 ||
-      !['sqlite', 'postgres'].includes(m.provider) ||
-      m.databaseSha256 !== (await digestFile(database)) ||
-      JSON.stringify(m.report) !== JSON.stringify(report)
+      sqlite.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok' ||
+      sqlite.prepare('PRAGMA foreign_key_check').all().length
     )
-      throw new Error('备份清单或内容摘要不匹配');
-    return { provider: m.provider as 'sqlite' | 'postgres', report };
+      throw new Error('备份数据库完整性或关联校验失败');
+  } finally {
+    sqlite.close();
   }
-  return { provider: 'sqlite' as const, report };
+  const originalReport = await restoreToPostgres({
+    sourcePath: database,
+    mediaDirectory: media,
+    allowPreviousVersion: true,
+  });
+  if (JSON.stringify(m.report) !== JSON.stringify(originalReport))
+    throw new Error('备份清单或内容摘要不匹配');
+  if (sourceVersion < SCHEMA_VERSION) {
+    const upgraded = await openDatabase(database);
+    await upgraded.close();
+    // Recompute the verified private package after migrations; the archive stays unchanged.
+    const report = await refreshPackageManifest(directory, m.provider);
+    return {
+      provider: m.provider as 'sqlite' | 'postgres',
+      report,
+      applicationVersion: m.applicationVersion as string,
+      schemaVersion: sourceVersion,
+    };
+  }
+  const report = originalReport;
+  return {
+    provider: m.provider as 'sqlite' | 'postgres',
+    report,
+    applicationVersion: m.applicationVersion as string,
+    schemaVersion: sourceVersion,
+  };
 }
 
 function backupKeys(sqlite: DatabaseSync, sourceSecret: string) {

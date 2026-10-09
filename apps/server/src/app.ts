@@ -1,3 +1,5 @@
+import { SCHEMA_VERSION } from './migrations.js';
+import { APPLICATION_VERSION } from './version.js';
 import { presence } from './presence.js';
 import { today } from '@love/calendar';
 import { readAlbum } from './album.js';
@@ -92,14 +94,11 @@ export async function createApp(options: AppOptions = {}) {
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
   const mediaRepository = new MediaRepository(db, uploads);
   try {
-    await mediaRepository.migrate();
+    await mediaRepository.cleanupStaleUploads();
   } catch (error) {
     await db.close();
     throw error;
   }
-  await db.exec(
-    'CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY, value TEXT NOT NULL)',
-  );
   if (
     !options.mediaSecret &&
     !(await db.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get())
@@ -297,7 +296,8 @@ export async function createApp(options: AppOptions = {}) {
   app.get('/api/health', (_req, res) =>
     res.json({
       status: 'ok',
-      version: '2.9.2',
+      version: APPLICATION_VERSION,
+      schemaVersion: SCHEMA_VERSION,
       notifications: 'local',
       database: db.provider,
     }),

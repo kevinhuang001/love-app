@@ -79,7 +79,8 @@ test('first configuration is selected initially and destructive confirmations de
 });
 test('backup picker orders newest first, skips non-directories and supports cancellation', async (t) => {
   const f = await fixture(t);
-  assert.equal(await prompt({ ...f, kind: 'backup' }), '');
+  assert.equal(await prompt({ ...f, kind: 'backup' }), 'manual');
+  assert.equal(f.calls.at(-1).options.at(-1).value, '');
   await mkdir(join(f.directory, 'backups'));
   await mkdir(join(f.directory, 'backups', '20261008T010000Z-1'));
   await mkdir(join(f.directory, 'backups', '20261008T020000Z-1'));

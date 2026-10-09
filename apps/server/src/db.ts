@@ -3,10 +3,10 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import pg from 'pg';
-import { schema } from './schema.js';
-import { postgresMediaSchema } from './media-repository.js';
 import { PostgresConnection, postgresSettings } from './postgres.js';
-import { pairAIUpgrade, scheduleTimeUpgrade, messageAttachmentsUpgrade } from './migrations.js';
+import { migrateDatabase } from './migrations.js';
+import { postgresSQL } from './sql.js';
+export { postgresSQL } from './sql.js';
 export type User = {
   id: string;
   username: string;
@@ -47,27 +47,6 @@ class Queue {
     }
   }
 }
-// Convert syntax outside quoted SQL text only. All user values remain driver parameters.
-export function postgresSQL(sql: string): string {
-  let index = 0;
-  return sql.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|\?|[A-Za-z_][A-Za-z_0-9]*/g, (token) => {
-    if (token === '?') return '$' + ++index;
-    if (token.startsWith("'") || token.startsWith('"')) return token;
-    if (token.toLowerCase() === 'instr') return 'strpos';
-    if (token === 'INTEGER') return 'BIGINT';
-    return /[a-z][A-Z]/.test(token) ? '"' + token + '"' : token;
-  });
-}
-function pgSchema() {
-  const now = `(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
-  return postgresSQL(
-    schema
-      .replaceAll('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
-      .replaceAll("(strftime('%Y-%m-%dT%H:%M:%fZ','now'))", now)
-      // PostgreSQL requires the target table to exist before this circular foreign key.
-      .replace('avatarMediaId TEXT REFERENCES media(id)', 'avatarMediaId TEXT'),
-  );
-}
 export async function openDatabase(input: string | DatabaseOptions): Promise<DB> {
   const options = typeof input === 'string' ? { path: input } : input;
   const url = /^postgres(?:ql)?:\/\//.test(options.path);
@@ -79,31 +58,9 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     if (options.path !== ':memory:') mkdirSync(dirname(options.path), { recursive: true });
     const sqlite = new DatabaseSync(options.path);
     try {
-      const version = Number(sqlite.prepare('PRAGMA user_version').get()!.user_version);
-      if (
-        version !== 0 &&
-        version !== 4 &&
-        version !== 5 &&
-        version !== 6 &&
-        version !== 7 &&
-        version !== 8 &&
-        version !== 9
-      )
-        throw new Error('数据库结构版本不匹配，请使用新的数据目录');
       sqlite.exec(
         'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;',
       );
-      sqlite.exec('BEGIN IMMEDIATE');
-      try {
-        sqlite.exec(schema);
-        if (version === 4) sqlite.exec(pairAIUpgrade);
-        if (version === 4 || version === 5) sqlite.exec(scheduleTimeUpgrade);
-        if (version > 0 && version < 9) sqlite.exec(messageAttachmentsUpgrade);
-        sqlite.exec('PRAGMA user_version=9; COMMIT;');
-      } catch (error) {
-        sqlite.exec('ROLLBACK');
-        throw error;
-      }
     } catch (error) {
       sqlite.close();
       throw error;
@@ -147,7 +104,13 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
             ),
       close: () => queue.run(() => sqlite.close()),
     };
-    return db;
+    try {
+      await migrateDatabase(db);
+      return db;
+    } catch (error) {
+      await db.close();
+      throw error;
+    }
   }
   if (options.schema && !/^[a-z][a-z0-9_]{0,62}$/.test(options.schema))
     throw new Error('无效的数据库 schema');
@@ -201,36 +164,7 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
   };
   try {
     if (options.schema) await query(`CREATE SCHEMA IF NOT EXISTS "${options.schema}"`);
-    await db.transaction(async () => {
-      await db.exec('CREATE TABLE IF NOT EXISTS database_meta(version BIGINT PRIMARY KEY)');
-      const version = await db.prepare('SELECT version FROM database_meta').get();
-      if (
-        version &&
-        version.version !== 4 &&
-        version.version !== 5 &&
-        version.version !== 6 &&
-        version.version !== 7 &&
-        version.version !== 8 &&
-        version.version !== 9
-      )
-        throw new Error('数据库结构版本不匹配');
-      await db.exec(pgSchema());
-      await db.exec(postgresMediaSchema);
-      if (version?.version === 4) {
-        await db.exec(pairAIUpgrade);
-      }
-      if (version?.version === 4 || version?.version === 5) {
-        await db.exec(scheduleTimeUpgrade);
-      }
-      if (version && Number(version.version) < 9) await db.exec(messageAttachmentsUpgrade);
-      if (version?.version !== 9) await db.exec('DELETE FROM database_meta');
-      await db.exec(`DO $$ BEGIN
-        IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='users_avatar_fk' AND conrelid='users'::regclass) THEN
-          ALTER TABLE users ADD CONSTRAINT users_avatar_fk FOREIGN KEY ("avatarMediaId") REFERENCES media(id);
-        END IF;
-      END $$;`);
-      await db.prepare('INSERT INTO database_meta VALUES(9) ON CONFLICT DO NOTHING').run();
-    });
+    await migrateDatabase(db);
     return db;
   } catch (error) {
     await pool.end();

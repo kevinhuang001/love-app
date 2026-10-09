@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { DB, Row } from './db.js';
+import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
 import { MediaRepository } from './media-repository.js';
 import { commitMedia } from './media-storage.js';
 
@@ -74,19 +75,23 @@ export async function restoreToPostgres({
   mediaDirectory,
   target,
   progress = () => {},
+  allowPreviousVersion = false,
 }: {
   sourcePath: string;
   mediaDirectory: string;
   target?: DB;
   progress?: (message: string) => void;
+  allowPreviousVersion?: boolean;
 }): Promise<TransferReport> {
   if (target && target.provider !== 'postgres') throw new Error('目标必须是 PostgreSQL');
   const source = new DatabaseSync(sourcePath, { readOnly: true });
   const repository = target ? new MediaRepository(target, mediaDirectory) : undefined;
   try {
     source.exec('BEGIN'); // A stable read snapshot; never upgrades or modifies the source.
-    if (source.prepare('PRAGMA user_version').get()!.user_version !== 9)
-      throw new Error('源 SQLite 结构版本不是 9，请先在原 SQLite 部署完成软件更新');
+    const sourceVersion = sqliteSchemaVersion(source);
+    const previous = allowPreviousVersion && !target && sourceVersion < SCHEMA_VERSION;
+    if (sourceVersion !== SCHEMA_VERSION && !previous)
+      throw new Error('源 SQLite 需要先执行数据库迁移');
     if (source.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok')
       throw new Error('源 SQLite 完整性检查失败');
     if (source.prepare('PRAGMA foreign_key_check').all().length)
@@ -95,14 +100,22 @@ export async function restoreToPostgres({
       .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .all()
       .map((row) => String(row.name))
-      .filter((name) => name !== 'media_uploads');
+      .filter((name) => !['media_uploads', 'schema_migrations'].includes(name));
     if (
-      names.length !== transferTables.length ||
-      names.some((name) => !transferTables.includes(name as (typeof transferTables)[number]))
+      !previous &&
+      (names.length !== transferTables.length ||
+        names.some((name) => !transferTables.includes(name as (typeof transferTables)[number])))
     )
       throw new Error('源 SQLite 表结构与当前应用不一致');
     const tables: Table[] = [];
-    for (const name of transferTables) {
+    for (const name of previous
+      ? [
+          ...transferTables.filter((name) => names.includes(name)),
+          ...names
+            .filter((name) => !transferTables.includes(name as (typeof transferTables)[number]))
+            .sort(),
+        ]
+      : transferTables) {
       const info = source.prepare(`PRAGMA table_info(${quote(name)})`).all();
       const columns = info.map((column) => String(column.name));
       const primary = info

@@ -1,3 +1,4 @@
+// Migration 001 is immutable once published. Append new migrations instead of editing it.
 // Shared schema; driver supplies PostgreSQL identity and timestamp definitions.
 export const schema = `
 CREATE TABLE IF NOT EXISTS media_uploads(id TEXT PRIMARY KEY, coupleId TEXT NOT NULL, ownerId TEXT NOT NULL, metadata TEXT NOT NULL, createdAt TEXT NOT NULL);
@@ -40,3 +41,39 @@ CREATE TABLE IF NOT EXISTS server_config(key TEXT PRIMARY KEY,value TEXT NOT NUL
   CREATE INDEX IF NOT EXISTS access_logs_created ON access_logs(createdAt,id);
   CREATE TABLE IF NOT EXISTS server_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,createdAt TEXT NOT NULL,level TEXT NOT NULL,event TEXT NOT NULL,details TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY AUTOINCREMENT,createdAt TEXT NOT NULL,adminId TEXT NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL,details TEXT NOT NULL);`;
+
+export const postgresMediaSchema = `
+CREATE TABLE IF NOT EXISTS media_files(
+  name TEXT PRIMARY KEY, "mediaId" TEXT REFERENCES media(id) ON DELETE CASCADE,
+  bytes BIGINT NOT NULL CHECK(bytes>0), sha256 TEXT NOT NULL,
+  complete BIGINT NOT NULL DEFAULT 0 CHECK(complete IN (0,1)), "updatedAt" TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS media_files_owner ON media_files("mediaId");
+CREATE TABLE IF NOT EXISTS media_chunks(
+  name TEXT NOT NULL REFERENCES media_files(name) ON DELETE CASCADE,
+  position BIGINT NOT NULL CHECK(position>=0), data BYTEA NOT NULL,
+  PRIMARY KEY(name,position), CHECK(octet_length(data)>0 AND octet_length(data)<=1048576));
+ALTER TABLE media_chunks ALTER COLUMN data SET STORAGE EXTERNAL;`;
+
+import { postgresSQL } from '../sql.js';
+function pgSchema() {
+  const now = `(to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
+  return postgresSQL(
+    schema
+      .replaceAll('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
+      .replaceAll("(strftime('%Y-%m-%dT%H:%M:%fZ','now'))", now)
+      // PostgreSQL requires the target table to exist before this circular foreign key.
+      .replace('avatarMediaId TEXT REFERENCES media(id)', 'avatarMediaId TEXT'),
+  );
+}
+
+export const initialMigration = {
+  version: 1,
+  name: '001_initial',
+  sqlite: schema,
+  postgres:
+    pgSchema() +
+    postgresMediaSchema +
+    `
+ALTER TABLE users ADD CONSTRAINT users_avatar_fk FOREIGN KEY ("avatarMediaId") REFERENCES media(id);
+`,
+};

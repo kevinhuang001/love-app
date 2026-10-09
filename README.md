@@ -66,7 +66,7 @@ npm run android:prepare
 
 CI 会实际构建并启动 Docker 镜像，检查 Web 字体、PNG 验证码、管理员权限、账号、配额、日志、聊天、农历待办及重启持久化。此配置不会自动连接或部署到你的服务器。
 
-PostgreSQL 模式统一保存所有业务数据、图片、视频和头像，支持分块读取与视频拖动；现有磁盘媒体启动时自动迁移。SQLite 仍使用磁盘媒体。
+PostgreSQL 模式统一保存所有业务数据、图片、视频和头像，支持分块读取与视频拖动。SQLite 仍使用磁盘媒体。
 
 ## 部署与接口
 
@@ -78,7 +78,7 @@ PostgreSQL 模式统一保存所有业务数据、图片、视频和头像，支
 - [API、Socket.IO 与 AI 工具](docs/api.md)
 - [架构、目录和测试](docs/architecture.md)
 
-后端支持 SQLite 与 PostgreSQL，当前使用 schema 9，现有 schema 4 / 5 / 6 / 7 / 8 启动时原子升级，日期增加时分秒，AI 配置按配对共享；不提供旧 API 别名或 schema 3 及更早版本兼容。登录页底部展开“服务器设置”配置 URL。
+后端支持 SQLite 与 PostgreSQL。数据库迁移从版本 1 重新开始，001 保存当前完整表结构。启动时在事务和数据库锁保护下按顺序执行未应用的增量，并在 `schema_migrations` 中记录编号、名称、SHA-256 校验和及时间；迁移失败不启动应用。已发布增量不可修改。此前 schema 4～9、无迁移历史的数据库与旧备份不再支持，也不自动标记为版本 1。详见 [迁移规范](docs/migrations.md)。登录页底部展开“服务器设置”配置 URL。
 
 ## License
 

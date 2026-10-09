@@ -21,7 +21,10 @@ import {
   rekeyBackup,
   auditBackupCredentials,
   restoreSQLite,
+  refreshPackageManifest,
 } from '../apps/server/src/database-backup.ts';
+import { SCHEMA_VERSION } from '../apps/server/src/migrations.ts';
+import { assertBackupVersion } from '../apps/server/src/version.ts';
 import { restoreToPostgres } from '../apps/server/src/database-restore.ts';
 import {
   inspectMediaCleanup,
@@ -197,9 +200,17 @@ export class Manager {
     }
   }
   async configure() {
+    const initializing = !existsSync(join(this.directory, '.env'));
     await setup({ output: join(this.directory, '.env'), ui: this.ui, env: {} });
     await this.reload();
     await this.installTemplates(true);
+    if (
+      initializing &&
+      this.database !== 'external' &&
+      (await this.confirm('初始化时导入备份？仅支持低版本或同版本备份。'))
+    ) {
+      if (!(await this.restore({ initializing: true }))) return;
+    }
     if (await this.confirm('立即应用配置并启动？')) await this.start();
   }
   async requireConfig() {
@@ -322,7 +333,16 @@ export class Manager {
       else delete process.env[key];
     return { root, directory, provider, path, uid: owner.uid, gid: owner.gid };
   }
+  async databaseImageVersion() {
+    await this.ensureImage();
+    const [image] = JSON.parse(await this.docker(['image', 'inspect', this.image], true));
+    const version = image.Config?.Labels?.['org.opencontainers.image.version'] || this.version;
+    if (version !== this.version)
+      throw new Error('应用镜像与管理程序版本不一致，请先完成更新再操作数据库');
+    return version;
+  }
   async withDatabase(action) {
+    await this.databaseImageVersion();
     const location = await this.databaseLocation();
     const db = await openDatabase({ provider: location.provider, path: location.path });
     try {
@@ -391,19 +411,25 @@ export class Manager {
     else if (policy === 'skip') this.log('已跳过操作前备份。');
     else throw new Error('PROMPT_CANCELLED');
   }
-  async restore() {
+  async restore({ initializing = false } = {}) {
     await this.requireConfig();
     const name = await this.ask('backup');
-    if (!name) return;
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('备份目录无效');
-    const source = join(this.directory, 'backups', name);
+    if (!name) return false;
+    const source =
+      name === 'manual'
+        ? resolve(
+            await this.ask(
+              'text',
+              '备份目录路径（包含 SHA256SUMS、deployment.env 和 data.tar.gz）',
+            ),
+          )
+        : join(this.directory, 'backups', name);
+    if (name !== 'manual' && !/^[a-zA-Z0-9_-]+$/.test(name)) throw new Error('备份目录无效');
     if (!(await lstat(source)).isDirectory() || (await lstat(source)).isSymbolicLink())
       throw new Error('备份目录无效');
     const entries = new Set();
     for (const line of (await readFile(join(source, 'SHA256SUMS'), 'utf8')).trim().split('\n')) {
-      const m = line.match(
-        /^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz|database\.dump|postgres-migration\.json)$/,
-      );
+      const m = line.match(/^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz)$/);
       if (
         !m ||
         entries.has(m[2]) ||
@@ -415,15 +441,22 @@ export class Manager {
     }
     if (!entries.has('deployment.env') || !entries.has('data.tar.gz'))
       throw new Error('备份校验清单不完整');
-    if (existsSync(join(source, 'database.dump')))
-      throw new Error('旧 PGDMP 备份需先用旧管理工具导出为统一数据包；此程序不启动临时数据库容器');
     const temp = await mkdtemp(join(tmpdir(), 'love-restore-'));
     try {
       await extractBackup(join(source, 'data.tar.gz'), temp);
       const original = await validatePackage(temp),
         t = original.report.tables;
+      const targetVersion = await this.databaseImageVersion();
+      assertBackupVersion(
+        original.applicationVersion,
+        original.schemaVersion,
+        targetVersion,
+        SCHEMA_VERSION,
+      );
       this.note(
         [
+          ['备份版本', `应用 v${original.applicationVersion} / 数据库 ${original.schemaVersion}`],
+          ['目标版本', `应用 v${targetVersion} / 数据库 ${SCHEMA_VERSION}`],
           ['账号与配对', `${t.users} 个用户 / ${t.couples} 对配对`],
           ['聊天消息', `${t.messages} 条`],
           ['媒体内容', `${t.media} 条记录 / ${original.report.mediaFiles} 个文件`],
@@ -459,7 +492,11 @@ export class Manager {
         'RESTORE'
       )
         return;
-      await this.optionalBackup();
+      if (!initializing) await this.optionalBackup();
+      else {
+        if (this.database === 'postgres') await this.compose(['up', '-d', '--wait', 'postgres']);
+        await this.compose(['create', '--no-build', 'love']);
+      }
       await this.paused(async () => {
         const location = await this.databaseLocation();
         rekeyBackup(
@@ -468,7 +505,7 @@ export class Manager {
           this.config.MEDIA_SIGNING_SECRET || '',
           { resetUnreadable: reset },
         );
-        await rm(join(temp, 'manifest.json'), { force: true });
+        await refreshPackageManifest(temp, original.provider);
         if (location.provider === 'postgres')
           await this.withDatabase((db) =>
             restoreToPostgres({
@@ -481,6 +518,7 @@ export class Manager {
         else await restoreSQLite(temp, location.path);
         this.log('恢复完成，部署配置保持当前值。');
       });
+      return true;
     } finally {
       await rm(temp, { recursive: true, force: true });
     }

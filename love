@@ -159,8 +159,8 @@ convert_legacy_backup() (
   printf '读取旧版 PostgreSQL 备份：启动隔离的临时读取容器，完成后删除；当前外部数据库配置不变。\n' >&2
   docker network create "$network" >/dev/null || exit 1
   docker run -d --name "$reader" --network "$network" -e POSTGRES_PASSWORD=backup-reader-private-network --mount "type=bind,src=$restore_dir,dst=/backup,readonly" postgres:18-alpine >/dev/null || exit 1
-  docker exec "$reader" sh -c 'i=0; until pg_isready -U postgres >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 60 ] || exit 1; sleep 1; done' || exit 1
-  docker exec "$reader" pg_restore --dbname=postgres --username=postgres --no-owner --no-privileges --exit-on-error --single-transaction /backup/database.dump || exit 1
+  docker exec "$reader" sh -c 'i=0; until pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 60 ] || exit 1; sleep 1; done' || exit 1
+  docker exec -e PGPASSWORD=backup-reader-private-network "$reader" pg_restore --host=127.0.0.1 --clean --if-exists --dbname=postgres --username=postgres --no-owner --no-privileges --exit-on-error --single-transaction /backup/database.dump || exit 1
   docker run --rm --network "$network" --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" -e DATABASE_PROVIDER=postgres -e PGHOST="$reader" -e PGPORT=5432 -e PGDATABASE=postgres -e PGUSER=postgres -e PGPASSWORD=backup-reader-private-network --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js legacy-export --directory /backup > "$work/data.tar.gz" || exit 1
 )
 restore() {

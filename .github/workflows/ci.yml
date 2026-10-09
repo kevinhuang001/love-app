@@ -107,12 +107,16 @@ jobs:
           LOVE_DOMAIN: love.example.com
       - run: npm ci --no-audit --no-fund
       - uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
       - name: Build tested image with layer cache
         uses: docker/build-push-action@v6
         env:
           DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
+          network: host
+          allow: network.host
           file: ${{ matrix.dockerfile }}
           load: true
           tags: love-ci

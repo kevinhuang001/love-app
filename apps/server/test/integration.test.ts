@@ -591,7 +591,7 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
   const media = s.db.prepare(
     'INSERT INTO media(id,coupleId,ownerId,kind,original,preview,thumbnail,createdAt) VALUES(?,?,?,?,?,?,?,?)',
   );
-  media.run(
+  await media.run(
     imageId,
     coupleId,
     a.user.id,
@@ -601,7 +601,7 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
     'test.webp',
     '2026-01-01',
   );
-  media.run(
+  await media.run(
     videoId,
     coupleId,
     b.user.id,
@@ -611,7 +611,7 @@ test('album filters, ordering and cursor pagination preserve isolation beyond 20
     'test.webp',
     '2026-01-01',
   );
-  media.run(
+  await media.run(
     otherMedia,
     otherCouple,
     c.user.id,

@@ -63,7 +63,9 @@ if(a.includes('/app/scripts/database-migration.mjs')){
 }
 if(a.includes('/app/apps/server/dist/sqlite-to-postgres-cli.js')){
  if(process.env.TEST_MIGRATION_FAIL==='1')process.exit(1);
- const out=a.at(-1).replace('/setup/',process.cwd()+'/');fs.writeFileSync(out,JSON.stringify({tables:{users:2},mediaFiles:3}));process.exit(0);
+ const out=a.at(-1).replace('/setup/',process.cwd()+'/');
+ if(!fs.existsSync(out)||fs.statSync(out).uid!==process.getuid()){console.error('report must be created by the host user');process.exit(1);}
+ fs.writeFileSync(out,JSON.stringify({tables:{users:2},mediaFiles:3}));process.exit(0);
 }
 if(a.includes('/app/apps/server/dist/unused-media-cli.js'))process.exit(process.env.TEST_CLEANUP_FAIL==='1'?1:0);
 if(a[0]==='compose'&&a.includes('up')&&!a.includes('postgres')&&process.env.TEST_MIGRATION_START_FAIL==='1'&&fs.readFileSync('.env','utf8').includes("LOVE_DATABASE='postgres'"))process.exit(1);

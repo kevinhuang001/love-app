@@ -261,6 +261,8 @@ migrate_database() {
   work=$(mktemp -d "$PWD/.love-migration.XXXXXXXX") || return 1
   migration_env="$work/target.env"
   docker run --rm -it --user "$(id -u):$(id -g)" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/database-migration.mjs /setup/.env "/setup/$(basename "$work")/target.env" || return 1
+  # Keep the private report owned by the host user when the root container writes it.
+  : > "$work/report.json" || return 1
   backup || return 1
   source_volume=$data_volume
   source_running=$running

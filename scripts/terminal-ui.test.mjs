@@ -72,6 +72,20 @@ test('backup picker orders newest first, skips non-directories and supports canc
   );
 });
 
+test('partial credential recovery lists an explicit recovery option and defaults to cancellation', async (t) => {
+  const f = await fixture(t);
+  assert.equal(await prompt({ ...f, kind: 'recovery-policy' }), 'cancel');
+  assert.deepEqual(
+    f.calls.at(-1).options.map((o) => o.value),
+    ['recover', 'cancel'],
+  );
+  assert.match(f.calls.at(-1).options[0].hint, /仅清空.*无法解密凭据/);
+  assert.equal(
+    await prompt({ ...f, kind: 'recovery-policy', ui: { ...f.ui, select: async () => 'recover' } }),
+    'recover',
+  );
+});
+
 test('operation backup policy defaults to skipping, permits explicit backup and cancellation', async (t) => {
   const f = await fixture(t);
   assert.equal(await prompt({ ...f, kind: 'backup-policy' }), 'skip');

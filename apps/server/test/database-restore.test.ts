@@ -7,6 +7,7 @@ import {
   validatePackage,
   restoreSQLite,
   rekeyBackup,
+  auditBackupCredentials,
   recoverSQLiteRestore,
 } from '../src/database-backup.js';
 import { test, type TestContext } from 'node:test';
@@ -474,8 +475,10 @@ test('backup extractor rejects links, traversal and malformed packages', async (
   await assert.rejects(extractBackup(archive, join(s.dir, 'out')), /不安全路径|链接/);
 });
 
-for (const changedBackupKey of [false, true]) {
-  test(`restore CLI preserves current env and authenticates legacy SQLite credentials (${changedBackupKey ? 'recreated env' : 'original env'})`, async (t) => {
+for (const mode of ['original env', 'recreated env', 'lost original key']) {
+  test(`restore CLI preserves current env and recovers legacy SQLite (${mode})`, async (t) => {
+    const changedBackupKey = mode !== 'original env',
+      missingKey = mode === 'lost original key';
     const s = await fixture(t, false),
       packageDir = join(s.dir, 'portable'),
       archiveDir = join(s.dir, 'archive');
@@ -483,7 +486,7 @@ for (const changedBackupKey of [false, true]) {
     await source
       .prepare("INSERT INTO server_config VALUES('control',?)")
       .run(JSON.stringify({ smtp: { password: seal('smtp-password', secret) } }));
-    if (changedBackupKey)
+    if (changedBackupKey && !missingKey)
       await source.prepare("INSERT INTO server_config VALUES('mediaSecret',?)").run(secret);
     await source.close();
     await exportDatabase({
@@ -522,7 +525,8 @@ for (const changedBackupKey of [false, true]) {
       DATABASE_PATH: join(destination, 'love.sqlite'),
       MEDIA_SIGNING_SECRET: key,
     };
-    const cli = (operation) =>
+    const archiveBefore = await readFile(join(archiveDir, 'data.tar.gz'));
+    const cli = (operation, flags: string[] = []) =>
       spawnSync(
         process.execPath,
         [
@@ -532,13 +536,21 @@ for (const changedBackupKey of [false, true]) {
           operation,
           '--directory',
           archiveDir,
+          ...flags,
         ],
         { env, encoding: 'utf8' },
       );
     const inspect = cli('inspect');
-    assert.equal(inspect.status, 0, inspect.stderr);
+    assert.equal(inspect.status, missingKey ? 2 : 0, inspect.stderr);
     assert.equal(inspect.stdout.trim(), 'sqlite');
-    const restored = cli('restore');
+    assert.match(inspect.stderr, /2 个用户.*1 对配对/);
+    if (missingKey) {
+      assert.match(inspect.stderr, /无法恢复：1 个 AI 密钥、1 个 SMTP 密码/);
+      const blocked = cli('restore');
+      assert.equal(blocked.status, 1);
+      await assert.rejects(readFile(env.DATABASE_PATH), { code: 'ENOENT' });
+    }
+    const restored = cli('restore', missingKey ? ['--reset-unreadable-credentials'] : []);
     assert.equal(restored.status, 0, restored.stderr);
     assert.equal(await readFile(join(destination, '.env'), 'utf8'), currentEnv);
     const db = new DatabaseSync(env.DATABASE_PATH, { readOnly: true });
@@ -550,12 +562,15 @@ for (const changedBackupKey of [false, true]) {
           ),
           key,
         ),
-        'private-ai-key',
+        missingKey ? '' : 'private-ai-key',
       );
       const control = JSON.parse(
         String(db.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value),
       );
-      assert.equal(unseal(control.smtp.password, key), 'smtp-password');
+      assert.equal(unseal(control.smtp.password, key), missingKey ? '' : 'smtp-password');
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get()!.n, 2);
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM messages').get()!.n, 1);
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM media').get()!.n, 2);
       assert.equal(db.prepare('SELECT COUNT(*) n FROM captchas').get()!.n, 0);
       assert.equal(db.prepare('SELECT COUNT(*) n FROM registration_invites').get()!.n, 1);
     } finally {
@@ -565,6 +580,13 @@ for (const changedBackupKey of [false, true]) {
       await readFile(join(archiveDir, 'deployment.env'), 'utf8'),
       `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${backupKey}'\n`,
     );
+    assert.deepEqual(await readFile(join(archiveDir, 'data.tar.gz')), archiveBefore);
+    for (const name of await readdir(s.mediaDirectory))
+      assert.deepEqual(
+        await readFile(join(destination, 'media', name)),
+        await readFile(join(s.mediaDirectory, name)),
+      );
+    if (missingKey) assert.match(restored.stderr, /重置了 1 个.*AI 密钥、1 个 SMTP 密码/);
   });
 }
 
@@ -634,6 +656,112 @@ test('old credential decryption never depends on the current deployment key', as
     () => rekeyBackup(s.sourcePath, 'backup-missing-its-original-key', secret),
     /备份未包含.*正确密钥/,
   );
+  assert.deepEqual(await readFile(s.sourcePath), before);
+});
+
+test('credential reset preserves decryptable credentials and every unrelated business table', async (t) => {
+  const s = await fixture(t, false);
+  const source = new DatabaseSync(s.sourcePath);
+  source.prepare("INSERT INTO server_config VALUES('control',?)").run(
+    JSON.stringify({
+      smtp: { password: seal('lost-smtp', 'lost-key'), host: 'smtp.example', port: 587 },
+      registrationMode: 'invite',
+    }),
+  );
+  const unchangedTables = transferTables.filter(
+    (table) => !['couple_ai_settings', 'server_config', 'captchas', 'email_codes'].includes(table),
+  );
+  const before = unchangedTables.map((table) => source.prepare(`SELECT * FROM ${table}`).all());
+  source.close();
+  assert.deepEqual(auditBackupCredentials(s.sourcePath, secret), { ai: 0, smtp: 1 });
+  const currentKey = 'new-restore-key-at-least-32-characters';
+  assert.deepEqual(rekeyBackup(s.sourcePath, secret, currentKey, { resetUnreadable: true }), {
+    ai: 0,
+    smtp: 1,
+  });
+  const restored = new DatabaseSync(s.sourcePath, { readOnly: true });
+  try {
+    assert.equal(
+      unseal(
+        String(restored.prepare('SELECT secret FROM couple_ai_settings').get()!.secret),
+        currentKey,
+      ),
+      'private-ai-key',
+    );
+    const control = JSON.parse(
+      String(restored.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value),
+    );
+    assert.equal(control.smtp.password, '');
+    assert.equal(control.smtp.host, 'smtp.example');
+    assert.equal(control.registrationMode, 'invite');
+    assert.deepEqual(
+      unchangedTables.map((table) => restored.prepare(`SELECT * FROM ${table}`).all()),
+      before,
+    );
+  } finally {
+    restored.close();
+  }
+});
+
+test(
+  'best-effort credential recovery imports users and database media into PostgreSQL',
+  onlyPG,
+  async (t) => {
+    const s = await fixture(t);
+    const targetKey = 'new-postgres-restore-secret-at-least-32';
+    assert.deepEqual(
+      rekeyBackup(s.sourcePath, 'missing-original-backup-key', targetKey, {
+        resetUnreadable: true,
+      }),
+      { ai: 1, smtp: 0 },
+    );
+    const report = await restoreToPostgres({
+      sourcePath: s.sourcePath,
+      mediaDirectory: s.mediaDirectory,
+      target: s.target,
+    });
+    assert.equal(report.tables.users, 2);
+    assert.equal(
+      (await s.target.prepare('SELECT secret FROM couple_ai_settings').get())!.secret,
+      '',
+    );
+    const repository = new MediaRepository(s.target, join(s.dir, 'missing-on-disk'));
+    for (const [name, contents] of s.contents) {
+      const info = await repository.info(name);
+      assert.ok(info);
+      const chunks: Buffer[] = [];
+      for await (const chunk of repository.stream(name)) chunks.push(Buffer.from(chunk));
+      assert.deepEqual(Buffer.concat(chunks), contents);
+    }
+  },
+);
+
+test('backup CLI rejects unrecoverable credentials before emitting an archive and leaves the source unchanged', async (t) => {
+  const s = await fixture(t, false);
+  const before = await readFile(s.sourcePath);
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      fileURLToPath(new URL('../src/database-backup-cli.ts', import.meta.url)),
+      'backup',
+    ],
+    {
+      env: {
+        ...process.env,
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_URL: '',
+        DATABASE_PATH: s.sourcePath,
+        UPLOADS_PATH: s.mediaDirectory,
+        MEDIA_SIGNING_SECRET: 'new-key-without-the-original-secret',
+      },
+      encoding: 'utf8',
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /备份校验失败.*AI 密钥/);
   assert.deepEqual(await readFile(s.sourcePath), before);
 });
 

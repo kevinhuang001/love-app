@@ -277,32 +277,68 @@ export async function validatePackage(directory: string) {
   return { provider: 'sqlite' as const, report };
 }
 
+function backupKeys(sqlite: DatabaseSync, sourceSecret: string) {
+  const stored = sqlite.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get();
+  return [...new Set([sourceSecret, stored?.value])].filter(
+    (key): key is string => typeof key === 'string' && key.length > 0,
+  );
+}
+function decryptCredential(ciphertext: string, candidates: string[]) {
+  for (const key of candidates) {
+    try {
+      return { key, plaintext: unseal(ciphertext, key) };
+    } catch {
+      /* Try only keys carried by the backup. */
+    }
+  }
+  return undefined;
+}
+export function auditBackupCredentials(path: string, sourceSecret: string) {
+  const sqlite = new DatabaseSync(path, { readOnly: true });
+  try {
+    const candidates = backupKeys(sqlite, sourceSecret);
+    let ai = 0,
+      smtp = 0;
+    for (const row of sqlite
+      .prepare("SELECT secret FROM couple_ai_settings WHERE secret<>''")
+      .iterate())
+      if (!decryptCredential(String(row.secret), candidates)) ai++;
+    const config = sqlite.prepare("SELECT value FROM server_config WHERE key='control'").get();
+    const value = config ? JSON.parse(String(config.value)) : undefined;
+    if (value?.smtp?.password && !decryptCredential(value.smtp.password, candidates)) smtp++;
+    return { ai, smtp };
+  } finally {
+    sqlite.close();
+  }
+}
+
 // Re-encrypt private credentials in the scratch copy so current .env stays byte-for-byte intact.
-export function rekeyBackup(path: string, sourceSecret: string, targetSecret: string) {
+export function rekeyBackup(
+  path: string,
+  sourceSecret: string,
+  targetSecret: string,
+  options: { resetUnreadable?: boolean } = {},
+) {
   if (!targetSecret) throw new Error('当前部署缺少媒体密钥');
   const sqlite = new DatabaseSync(path);
   try {
-    const storedSecret = sqlite
-      .prepare("SELECT value FROM server_config WHERE key='mediaSecret'")
-      .get();
-    const candidates = [...new Set([sourceSecret, storedSecret?.value])].filter(
-      (key): key is string => typeof key === 'string' && key.length > 0,
-    );
+    const candidates = backupKeys(sqlite, sourceSecret);
     // Older deployments may have encrypted credentials with the database-generated
     // key before MEDIA_SIGNING_SECRET was configured. Accept a candidate only after
     // AES-GCM authentication; never guess a key or discard encrypted credentials.
     let changedKey = sourceSecret !== targetSecret;
+    const reset = { ai: 0, smtp: 0 };
     const reseal = (ciphertext: string, label: string) => {
-      for (const key of candidates) {
-        let plaintext: string;
-        try {
-          plaintext = unseal(ciphertext, key);
-        } catch {
-          continue;
-        }
-        if (key === targetSecret) return ciphertext;
+      const decrypted = decryptCredential(ciphertext, candidates);
+      if (decrypted) {
+        if (decrypted.key === targetSecret) return ciphertext;
         changedKey = true;
-        return seal(plaintext, targetSecret);
+        return seal(decrypted.plaintext, targetSecret);
+      }
+      if (options.resetUnreadable) {
+        reset[label === 'AI 密钥' ? 'ai' : 'smtp']++;
+        changedKey = true;
+        return '';
       }
       throw new Error(
         `备份中的${label}无法解密：备份配置及备份数据库内保存的旧密钥均无法验证。` +
@@ -331,6 +367,7 @@ export function rekeyBackup(path: string, sourceSecret: string, targetSecret: st
     // Pending verification codes are tied to the source HMAC key and are transient.
     if (changedKey) sqlite.exec('DELETE FROM captchas; DELETE FROM email_codes;');
     sqlite.exec('COMMIT; PRAGMA wal_checkpoint(TRUNCATE);');
+    return reset;
   } catch (error) {
     if (sqlite.isTransaction) sqlite.exec('ROLLBACK');
     throw error;

@@ -163,6 +163,18 @@ convert_legacy_backup() (
   docker exec -e PGPASSWORD=backup-reader-private-network "$reader" pg_restore --host=127.0.0.1 --clean --if-exists --dbname=postgres --username=postgres --no-owner --no-privileges --exit-on-error --single-transaction /backup/database.dump || exit 1
   docker run --rm --network "$network" --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" -e DATABASE_PROVIDER=postgres -e PGHOST="$reader" -e PGPORT=5432 -e PGDATABASE=postgres -e PGUSER=postgres -e PGPASSWORD=backup-reader-private-network --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js legacy-export --directory /backup > "$work/data.tar.gz" || exit 1
 )
+inspect_restore_package() {
+  restore_format=$(docker run --rm --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js inspect --directory /backup)
+  inspect_status=$?
+  case "$inspect_status" in 0|2) ;; *) return 1;; esac
+  case "$restore_format" in sqlite|postgres|legacy-postgres) ;; *) printf '无法识别备份类型。\n' >&2; return 1;; esac
+  credential_reset_flag=''
+  if [ "$inspect_status" = 2 ]; then
+    ui recovery-policy || return 1
+    [ "$answer" = recover ] || return 1
+    credential_reset_flag=--reset-unreadable-credentials
+  fi
+}
 restore() {
   require_config && ensure_image || return 1
   ui backup || return 1
@@ -170,8 +182,7 @@ restore() {
   case "$name" in ''|*[!a-zA-Z0-9_-]*) return 0;; esac
   restore_dir="$PWD/backups/$name"
   [ -d "$restore_dir" ] && [ ! -L "$restore_dir" ] || { printf '备份目录不存在或无效。\n' >&2; return 1; }
-  restore_format=$(docker run --rm --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js inspect --directory /backup) || return 1
-  case "$restore_format" in sqlite|postgres|legacy-postgres) ;; *) printf '无法识别备份类型。\n' >&2; return 1;; esac
+  inspect_restore_package || return 1
   ui text '将备份数据导入当前数据库，保留当前部署配置。输入 RESTORE 确认' RESTORE || return 1
   [ "$answer" = RESTORE ] || return 0
   if [ "$restore_format" = legacy-postgres ]; then
@@ -181,12 +192,14 @@ restore() {
     cp "$restore_dir/deployment.env" "$work/deployment.env" || return 1
     (cd "$work" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; else shasum -a 256 deployment.env data.tar.gz; fi; } > SHA256SUMS) || return 1
     restore_dir=$work
+    inspect_restore_package || return 1
   fi
   optional_backup || return 1
   restore_running=$(running_app_containers) || return 1
   [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
   compose stop love || return 1
-  if ! compose run --rm -T --no-deps --user 0 --volume "$restore_dir:/backup:ro" --entrypoint node love /app/apps/server/dist/database-backup-cli.js restore --directory /backup; then
+  # This optional argument is a fixed flag set only by the explicit recovery confirmation.
+  if ! compose run --rm -T --no-deps --user 0 --volume "$restore_dir:/backup:ro" --entrypoint node love /app/apps/server/dist/database-backup-cli.js restore --directory /backup $credential_reset_flag; then
     printf '恢复失败；当前数据和部署配置保留。\n' >&2
     [ -z "$restore_running" ] || compose start love
     return 1

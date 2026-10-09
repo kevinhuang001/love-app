@@ -92,6 +92,21 @@ export async function prompt({
         ],
       }),
     );
+  if (kind === 'recovery-policy')
+    return ask(
+      select({
+        message: '部分加密凭据无法恢复，请选择处理方式',
+        initialValue: 'cancel',
+        options: [
+          {
+            value: 'recover',
+            label: '恢复所有可恢复内容',
+            hint: '仅清空上面列出的无法解密凭据，恢复后重新填写',
+          },
+          { value: 'cancel', label: '取消恢复，保留当前数据' },
+        ],
+      }),
+    );
   if (kind === 'confirm')
     return (await ask(
       ui.confirm({ message, initialValue: false, active: '确认', inactive: '取消' }),

@@ -56,7 +56,7 @@ if(a.includes('/setup/deploy/terminal-ui.mjs')){
  fs.writeFileSync(file,result||'');process.exit(0);
 }
 if(a.includes('/app/apps/server/dist/database-backup-cli.js')){
- if(a.includes('inspect')){console.log(process.env.TEST_BACKUP_PROVIDER||'sqlite');process.exit(0);}
+ if(a.includes('inspect')){console.log(process.env.TEST_BACKUP_PROVIDER||'sqlite');process.exit(process.env.TEST_UNREADABLE_CREDENTIALS==='1'?2:0);}
  if(a.includes('backup')){process.stdout.write('fixture-portable-backup');process.exit(process.env.TEST_BACKUP_FAIL==='1'?1:0);}
  if(a.includes('restore'))process.exit(process.env.TEST_RESTORE_FAIL==='1'?1:0);
 }
@@ -125,6 +125,7 @@ else if(a[0]==='run'&&a.includes('tar'))process.stdout.write('fixture-media-back
         TEST_RESTORE_FAIL: options.restoreFail ? '1' : '0',
         TEST_BACKUP_FAIL: options.backupFail ? '1' : '0',
         TEST_BACKUP_PROVIDER: options.backupProvider || 'sqlite',
+        TEST_UNREADABLE_CREDENTIALS: options.unreadableCredentials ? '1' : '0',
         TEST_CLEANUP_FAIL: options.cleanupFail ? '1' : '0',
         TERM: 'xterm-256color',
       },
@@ -462,6 +463,38 @@ test('restore detects source type, preserves external configuration, backs up an
       assert.ok(calls.some((a, i) => i > restore && a.includes(restoreFail ? 'start' : 'up')));
     }
 });
+test('unreadable credential recovery is opt-in and cancellation does not stop or mutate the app', async (t) => {
+  for (const recover of [false, true]) {
+    const current =
+      base.replace("'sqlite'", "'external'") +
+      "DATABASE_PROVIDER='postgres'\nDATABASE_URL='postgresql://external.example/love'\n";
+    const { calls, config, result } = await launch(
+      t,
+      current,
+      recover
+        ? '9\noriginal-backup\nrecover\nRESTORE\nskip\n0\n'
+        : '9\noriginal-backup\ncancel\n0\n',
+      {
+        unreadableCredentials: true,
+        prepare: (dir) => mkdir(join(dir, 'backups', 'original-backup'), { recursive: true }),
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(config, current);
+    const restore = calls.find(
+      (a) => a.includes('/app/apps/server/dist/database-backup-cli.js') && a.includes('restore'),
+    );
+    assert.equal(Boolean(restore), recover);
+    if (recover) assert.ok(restore.includes('--reset-unreadable-credentials'));
+    else assert.ok(!calls.some((a) => a.includes('stop') || a.includes('up')));
+    assert.ok(
+      !calls.some(
+        (a) => a.includes('backup') && a.includes('/app/apps/server/dist/database-backup-cli.js'),
+      ),
+    );
+  }
+});
+
 test('cleanup backs up before deletion, stops writers, restores running state on failure and never changes database config', async (t) => {
   for (const cleanupFail of [false, true]) {
     const { calls, config, result } = await launch(t, base, '16\ny\nbackup\n0\n', { cleanupFail });

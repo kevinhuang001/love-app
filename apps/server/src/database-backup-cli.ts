@@ -11,6 +11,7 @@ import {
   validatePackage,
   digestFile,
   rekeyBackup,
+  auditBackupCredentials,
   restoreSQLite,
 } from './database-backup.js';
 import { restoreToPostgres } from './database-restore.js';
@@ -111,6 +112,14 @@ try {
       mediaDirectory,
       directory: output,
     });
+    const credentials = auditBackupCredentials(
+      join(output, 'love.sqlite'),
+      process.env.MEDIA_SIGNING_SECRET || '',
+    );
+    if (credentials.ai || credentials.smtp)
+      throw new Error(
+        `备份校验失败：${credentials.ai} 个 AI 密钥、${credentials.smtp} 个 SMTP 密码无法使用备份密钥解密。未生成完整备份；请修复或重新配置这些凭据后再备份。`,
+      );
     privateLog(`已校验 ${report.tables.users} 个用户、${report.mediaFiles} 个媒体文件。`);
     await new Promise<void>((resolve, reject) => {
       const child = spawn(
@@ -153,15 +162,32 @@ try {
       const packageDirectory = join(scratch, 'data');
       await extractBackup(join(directory, 'data.tar.gz'), packageDirectory);
       const source = await validatePackage(packageDirectory);
-      if (operation === 'inspect') console.log(source.provider);
-      else {
-        const config = parseDeploymentEnv(
-          await readFile(join(directory, 'deployment.env'), 'utf8'),
+      const config = parseDeploymentEnv(await readFile(join(directory, 'deployment.env'), 'utf8'));
+      if (operation === 'inspect') {
+        console.log(source.provider);
+        const tables = source.report.tables;
+        privateLog(
+          `可恢复：${tables.users} 个用户、${tables.couples} 对配对、${tables.messages} 条消息、${tables.media} 条媒体记录（${source.report.mediaFiles} 个文件）、${tables.anniversaries} 个纪念日、${tables.todos} 个 To Do。`,
         );
-        rekeyBackup(
+        privateLog(
+          '头像、AI 名称与设置、邀请码、容量限额及其他业务设置随数据恢复；部署配置保持当前值。待验证邮件和验证码可能需要重新申请。',
+        );
+        const credentials = auditBackupCredentials(
+          join(packageDirectory, 'love.sqlite'),
+          config.MEDIA_SIGNING_SECRET,
+        );
+        if (credentials.ai || credentials.smtp) {
+          privateLog(
+            `无法恢复：${credentials.ai} 个 AI 密钥、${credentials.smtp} 个 SMTP 密码（备份未包含正确解密密钥）。其他数据与可解密的凭据均可恢复。`,
+          );
+          process.exitCode = 2;
+        } else privateLog('加密凭据验证通过，可完整恢复。');
+      } else {
+        const reset = rekeyBackup(
           join(packageDirectory, 'love.sqlite'),
           config.MEDIA_SIGNING_SECRET,
           process.env.MEDIA_SIGNING_SECRET || '',
+          { resetUnreadable: arguments_.includes('--reset-unreadable-credentials') },
         );
         // The original manifest was verified above; the private snapshot may now contain rekeyed credentials.
         await rm(join(packageDirectory, 'manifest.json'), { force: true });
@@ -179,6 +205,10 @@ try {
         privateLog(
           `恢复校验通过：${report.tables.users} 个用户、${report.tables.couples} 对配对、${report.mediaFiles} 个媒体文件。`,
         );
+        if (reset.ai || reset.smtp)
+          privateLog(
+            `按确认重置了 ${reset.ai} 个无法解密的 AI 密钥、${reset.smtp} 个 SMTP 密码，请在设置中重新填写；其他内容已恢复。`,
+          );
       }
     }
   } else throw new Error('未知的备份操作');

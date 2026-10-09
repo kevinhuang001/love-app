@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -18,12 +18,29 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-dejavu-core
-      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/love-apt/*.deb
+          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('scripts/ci-media-tools.sh') }}
+          restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-
+      - name: Ensure test media tools
+        timeout-minutes: 10
+        run: bash scripts/ci-media-tools.sh
+      - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium and system dependencies
+        timeout-minutes: 5
+        run: |
+          # Playwright also uses apt; avoid the mirror that stalled the previous run.
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g;s|https://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+            fi
+          done
+          printf '%s\n' 'Acquire::Retries "1";' 'Acquire::http::Timeout "20";' 'Acquire::https::Timeout "20";' | sudo tee /etc/apt/apt.conf.d/99-love-ci-network >/dev/null
+          npx playwright install --with-deps --only-shell chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: always()
@@ -38,7 +55,7 @@ jobs:
           name: love-web
           path: apps/client/dist/
   postgres:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -57,25 +74,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/love-apt/*.deb
+          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('scripts/ci-media-tools.sh') }}
+          restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-
       - name: Ensure PostgreSQL test media tools
-        run: |
-          ready=false
-          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null && test -r /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf; then
-            love_encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null)
-            if [[ "$love_encoders" == *libx264* && "$love_encoders" == *libwebp* && "$love_encoders" == *aac* ]]; then ready=true; fi
-          fi
-          if [ "$ready" != true ]; then
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-            sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y ffmpeg fonts-dejavu-core
-          fi
-          ffmpeg -version
-          ffprobe -version
-      - run: npm ci
+        timeout-minutes: 10
+        run: bash scripts/ci-media-tools.sh
+      - run: npm ci --no-audit --no-fund
       - run: npm test -w apps/server
         env:
           TEST_DATABASE_URL: postgres://love:ci-postgres-test-password@localhost:5432/love_test
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -88,12 +100,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: npm
       - run: docker compose --profile https config --quiet
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           LOVE_DOMAIN: love.example.com
-      - run: npm ci
-      - run: docker build -f "$LOVE_DOCKERFILE" -t love-ci .
+      - run: npm ci --no-audit --no-fund
+      - uses: docker/setup-buildx-action@v3
+      - name: Build tested image with layer cache
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          tags: love-ci
+          cache-from: type=gha,scope=love-linux-amd64-${{ matrix.dockerfile }}
+          cache-to: type=gha,scope=love-linux-amd64-${{ matrix.dockerfile }},mode=max,ignore-error=true,timeout=2m
       - name: Verify domestic mirror configuration
         if: matrix.dockerfile == 'Dockerfile.cn'
         run: |
@@ -148,8 +172,8 @@ jobs:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           POSTGRES_PASSWORD: 'ci-postgres''pa"ss$word#\literal'
   android:
-    needs: [test, postgres, docker]
-    runs-on: ubuntu-latest
+    # Build independently; release workflows still require every CI job to pass.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
       LOVE_VERSION_CODE: ${{ github.run_number }}
@@ -171,7 +195,7 @@ jobs:
         with:
           packages: platform-tools platforms;android-36 build-tools;36.0.0
           log-accepted-android-sdk-licenses: false
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm run android:prepare
       - name: Prepare persistent APK signing key
         id: signing

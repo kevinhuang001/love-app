@@ -26,7 +26,7 @@ concurrency:
 jobs:
   source:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.event == 'push')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
@@ -84,7 +84,7 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -104,12 +104,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Build native image
-        run: |
-          docker build -t "$IMAGE:sha-$SOURCE_SHA-$ARCH" -t love-image-ci \
-            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
-            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-            --label 'org.opencontainers.image.licenses=MIT' .
+      - uses: docker/setup-buildx-action@v3
+      - name: Build native image with layer cache
+        uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: .
+          load: true
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ env.SOURCE_SHA }}-${{ env.ARCH }}
+            love-image-ci
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha,scope=love-linux-${{ env.ARCH }}-Dockerfile
+          cache-to: type=gha,scope=love-linux-${{ env.ARCH }}-Dockerfile,mode=max,ignore-error=true,timeout=2m
       - name: Test image and persisted data
         run: |
           docker run -d --name love-smoke -p 127.0.0.1:3000:3000 \
@@ -135,7 +146,7 @@ jobs:
   publish:
     needs: [source, build]
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

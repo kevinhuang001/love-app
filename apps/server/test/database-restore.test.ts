@@ -474,93 +474,157 @@ test('backup extractor rejects links, traversal and malformed packages', async (
   await assert.rejects(extractBackup(archive, join(s.dir, 'out')), /不安全路径|链接/);
 });
 
-test('restore CLI identifies legacy SQLite and rekeys AI/SMTP secrets while leaving current env intact', async (t) => {
-  const s = await fixture(t, false),
-    packageDir = join(s.dir, 'portable'),
-    archiveDir = join(s.dir, 'archive');
-  const source = await openDatabase(s.sourcePath);
-  await source
-    .prepare("INSERT INTO server_config VALUES('control',?)")
-    .run(JSON.stringify({ smtp: { password: seal('smtp-password', secret) } }));
-  await source.close();
-  await exportDatabase({
-    sqlitePath: s.sourcePath,
-    mediaDirectory: s.mediaDirectory,
-    directory: packageDir,
-  });
-  await rm(join(packageDir, 'manifest.json')); // an old SQLite data.tar.gz needs no manifest
-  await mkdir(archiveDir);
-  execFileSync('tar', ['-C', packageDir, '-czf', join(archiveDir, 'data.tar.gz'), '.']);
-  await writeFile(
-    join(archiveDir, 'deployment.env'),
-    `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${secret}'\n`,
-  );
-  const checksums = await Promise.all(
-    ['deployment.env', 'data.tar.gz'].map(
-      async (name) =>
-        createHash('sha256')
-          .update(await readFile(join(archiveDir, name)))
-          .digest('hex') +
-        '  ' +
-        name,
-    ),
-  );
-  await writeFile(join(archiveDir, 'SHA256SUMS'), checksums.join('\n') + '\n');
-  const destination = join(s.dir, 'destination'),
-    key = 'different-destination-encryption-key-32';
-  await mkdir(destination);
-  const currentEnv = "DATABASE_PROVIDER='sqlite'\nADMIN_USERNAME='new_admin'\n";
-  await writeFile(join(destination, '.env'), currentEnv);
-  const env = {
-    ...process.env,
-    DATABASE_PROVIDER: 'sqlite',
-    DATABASE_URL: '',
-    DATABASE_PATH: join(destination, 'love.sqlite'),
-    MEDIA_SIGNING_SECRET: key,
-  };
-  const cli = (operation) =>
-    spawnSync(
-      process.execPath,
-      [
-        '--import',
-        'tsx',
-        fileURLToPath(new URL('../src/database-backup-cli.ts', import.meta.url)),
-        operation,
-        '--directory',
-        archiveDir,
-      ],
-      { env, encoding: 'utf8' },
+for (const changedBackupKey of [false, true]) {
+  test(`restore CLI preserves current env and authenticates legacy SQLite credentials (${changedBackupKey ? 'recreated env' : 'original env'})`, async (t) => {
+    const s = await fixture(t, false),
+      packageDir = join(s.dir, 'portable'),
+      archiveDir = join(s.dir, 'archive');
+    const source = await openDatabase(s.sourcePath);
+    await source
+      .prepare("INSERT INTO server_config VALUES('control',?)")
+      .run(JSON.stringify({ smtp: { password: seal('smtp-password', secret) } }));
+    if (changedBackupKey)
+      await source.prepare("INSERT INTO server_config VALUES('mediaSecret',?)").run(secret);
+    await source.close();
+    await exportDatabase({
+      sqlitePath: s.sourcePath,
+      mediaDirectory: s.mediaDirectory,
+      directory: packageDir,
+    });
+    await rm(join(packageDir, 'manifest.json')); // an old SQLite data.tar.gz needs no manifest
+    await mkdir(archiveDir);
+    execFileSync('tar', ['-C', packageDir, '-czf', join(archiveDir, 'data.tar.gz'), '.']);
+    const backupKey = changedBackupKey ? 'recreated-backup-env-secret-at-least-32' : secret;
+    await writeFile(
+      join(archiveDir, 'deployment.env'),
+      `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${backupKey}'\n`,
     );
-  const inspect = cli('inspect');
-  assert.equal(inspect.status, 0, inspect.stderr);
-  assert.equal(inspect.stdout.trim(), 'sqlite');
-  const restored = cli('restore');
-  assert.equal(restored.status, 0, restored.stderr);
-  assert.equal(await readFile(join(destination, '.env'), 'utf8'), currentEnv);
-  const db = new DatabaseSync(env.DATABASE_PATH, { readOnly: true });
+    const checksums = await Promise.all(
+      ['deployment.env', 'data.tar.gz'].map(
+        async (name) =>
+          createHash('sha256')
+            .update(await readFile(join(archiveDir, name)))
+            .digest('hex') +
+          '  ' +
+          name,
+      ),
+    );
+    await writeFile(join(archiveDir, 'SHA256SUMS'), checksums.join('\n') + '\n');
+    const destination = join(s.dir, 'destination'),
+      key = 'different-destination-encryption-key-32';
+    await mkdir(destination);
+    const currentEnv = "DATABASE_PROVIDER='sqlite'\nADMIN_USERNAME='new_admin'\n";
+    await writeFile(join(destination, '.env'), currentEnv);
+    const env = {
+      ...process.env,
+      DATABASE_PROVIDER: 'sqlite',
+      DATABASE_URL: '',
+      DATABASE_PATH: join(destination, 'love.sqlite'),
+      MEDIA_SIGNING_SECRET: key,
+    };
+    const cli = (operation) =>
+      spawnSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          fileURLToPath(new URL('../src/database-backup-cli.ts', import.meta.url)),
+          operation,
+          '--directory',
+          archiveDir,
+        ],
+        { env, encoding: 'utf8' },
+      );
+    const inspect = cli('inspect');
+    assert.equal(inspect.status, 0, inspect.stderr);
+    assert.equal(inspect.stdout.trim(), 'sqlite');
+    const restored = cli('restore');
+    assert.equal(restored.status, 0, restored.stderr);
+    assert.equal(await readFile(join(destination, '.env'), 'utf8'), currentEnv);
+    const db = new DatabaseSync(env.DATABASE_PATH, { readOnly: true });
+    try {
+      assert.equal(
+        unseal(
+          String(
+            db.prepare("SELECT secret FROM couple_ai_settings WHERE coupleId='pair'").get()!.secret,
+          ),
+          key,
+        ),
+        'private-ai-key',
+      );
+      const control = JSON.parse(
+        String(db.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value),
+      );
+      assert.equal(unseal(control.smtp.password, key), 'smtp-password');
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM captchas').get()!.n, 0);
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM registration_invites').get()!.n, 1);
+    } finally {
+      db.close();
+    }
+    assert.equal(
+      await readFile(join(archiveDir, 'deployment.env'), 'utf8'),
+      `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${backupKey}'\n`,
+    );
+  });
+}
+
+test('restore authenticates the historical database key when the backup env key changed', async (t) => {
+  const s = await fixture(t, false),
+    currentKey = 'current-deployment-secret-at-least-32',
+    envKey = 'changed-backup-env-secret-at-least-32';
+  const sqlite = new DatabaseSync(s.sourcePath);
+  sqlite.prepare("INSERT INTO server_config VALUES('mediaSecret',?)").run(secret);
+  // Mixed historical keys are possible when env configuration changed over time.
+  sqlite
+    .prepare("INSERT INTO server_config VALUES('control',?)")
+    .run(JSON.stringify({ smtp: { password: seal('smtp-password', envKey) } }));
+  sqlite.close();
+  rekeyBackup(s.sourcePath, envKey, currentKey);
+  const restored = new DatabaseSync(s.sourcePath, { readOnly: true });
   try {
     assert.equal(
       unseal(
-        String(
-          db.prepare("SELECT secret FROM couple_ai_settings WHERE coupleId='pair'").get()!.secret,
-        ),
-        key,
+        String(restored.prepare('SELECT secret FROM couple_ai_settings').get()!.secret),
+        currentKey,
       ),
       'private-ai-key',
     );
     const control = JSON.parse(
-      String(db.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value),
+      String(restored.prepare("SELECT value FROM server_config WHERE key='control'").get()!.value),
     );
-    assert.equal(unseal(control.smtp.password, key), 'smtp-password');
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM captchas').get()!.n, 0);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM registration_invites').get()!.n, 1);
+    assert.equal(unseal(control.smtp.password, currentKey), 'smtp-password');
+    assert.equal(
+      restored.prepare("SELECT value FROM server_config WHERE key='mediaSecret'").get()!.value,
+      currentKey,
+    );
+    assert.equal(restored.prepare('SELECT COUNT(*) n FROM users').get()!.n, 2);
+    assert.equal(restored.prepare('SELECT COUNT(*) n FROM captchas').get()!.n, 0);
   } finally {
-    db.close();
+    restored.close();
   }
-  assert.equal(
-    await readFile(join(archiveDir, 'deployment.env'), 'utf8'),
-    `LOVE_DATABASE='sqlite'\nMEDIA_SIGNING_SECRET='${secret}'\n`,
+});
+
+test('restore checks encrypted credentials even when source and destination keys match', async (t) => {
+  const s = await fixture(t, false);
+  const wrongKey = 'incorrect-key-present-in-both-env-files';
+  const before = await readFile(s.sourcePath);
+  assert.throws(() => rekeyBackup(s.sourcePath, wrongKey, wrongKey), /AI 密钥无法解密/);
+  assert.deepEqual(await readFile(s.sourcePath), before);
+});
+
+test('failed SMTP authentication leaves every credential and business row unchanged', async (t) => {
+  const s = await fixture(t, false);
+  const sqlite = new DatabaseSync(s.sourcePath);
+  sqlite
+    .prepare("INSERT INTO server_config VALUES('control',?)")
+    .run(JSON.stringify({ smtp: { password: seal('unrecoverable', 'missing-original-key') } }));
+  sqlite.close();
+  const before = await readFile(s.sourcePath);
+  assert.throws(
+    () => rekeyBackup(s.sourcePath, secret, 'current-secret-at-least-32-characters'),
+    /SMTP 密码无法解密/,
   );
+  assert.deepEqual(await readFile(s.sourcePath), before);
 });
 
 test('interrupted SQLite file switch rolls back database and media before startup', async (t) => {

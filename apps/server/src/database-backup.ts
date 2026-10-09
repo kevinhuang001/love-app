@@ -279,31 +279,61 @@ export async function validatePackage(directory: string) {
 
 // Re-encrypt private credentials in the scratch copy so current .env stays byte-for-byte intact.
 export function rekeyBackup(path: string, sourceSecret: string, targetSecret: string) {
-  if (!sourceSecret || !targetSecret) throw new Error('备份或当前部署缺少媒体密钥');
-  if (sourceSecret === targetSecret) return;
+  if (!targetSecret) throw new Error('当前部署缺少媒体密钥');
   const sqlite = new DatabaseSync(path);
   try {
-    sqlite.exec('BEGIN');
-    for (const row of sqlite
+    const storedSecret = sqlite
+      .prepare("SELECT value FROM server_config WHERE key='mediaSecret'")
+      .get();
+    const candidates = [...new Set([sourceSecret, storedSecret?.value, targetSecret])].filter(
+      (key): key is string => typeof key === 'string' && key.length > 0,
+    );
+    // Older deployments may have encrypted credentials with the database-generated
+    // key before MEDIA_SIGNING_SECRET was configured. Accept a candidate only after
+    // AES-GCM authentication; never guess a key or discard encrypted credentials.
+    let changedKey = sourceSecret !== targetSecret;
+    const reseal = (ciphertext: string, label: string) => {
+      for (const key of candidates) {
+        let plaintext: string;
+        try {
+          plaintext = unseal(ciphertext, key);
+        } catch {
+          continue;
+        }
+        if (key === targetSecret) return ciphertext;
+        changedKey = true;
+        return seal(plaintext, targetSecret);
+      }
+      throw new Error(
+        `备份中的${label}无法解密：备份配置、数据库内保存的旧密钥及当前密钥均无法验证。` +
+          '请使用加密这些凭据时的 MEDIA_SIGNING_SECRET；当前数据未修改。',
+      );
+    };
+    // Authenticate every credential before writing even the private snapshot.
+    const settings = sqlite
       .prepare("SELECT coupleId,secret FROM couple_ai_settings WHERE secret<>''")
-      .iterate())
+      .all()
+      .map((row) => ({ coupleId: row.coupleId, secret: reseal(String(row.secret), 'AI 密钥') }));
+    const config = sqlite.prepare("SELECT value FROM server_config WHERE key='control'").get();
+    const value = config ? JSON.parse(String(config.value)) : undefined;
+    if (value?.smtp?.password) value.smtp.password = reseal(value.smtp.password, 'SMTP 密码');
+    sqlite.exec('BEGIN');
+    for (const row of settings)
       sqlite
         .prepare('UPDATE couple_ai_settings SET secret=? WHERE coupleId=?')
-        .run(seal(unseal(String(row.secret), sourceSecret), targetSecret), row.coupleId);
-    const config = sqlite.prepare("SELECT value FROM server_config WHERE key='control'").get();
-    if (config) {
-      const value = JSON.parse(String(config.value));
-      if (value.smtp?.password)
-        value.smtp.password = seal(unseal(value.smtp.password, sourceSecret), targetSecret);
+        .run(row.secret, row.coupleId);
+    if (value) {
       sqlite
         .prepare("UPDATE server_config SET value=? WHERE key='control'")
         .run(JSON.stringify(value));
     }
     sqlite.prepare("UPDATE server_config SET value=? WHERE key='mediaSecret'").run(targetSecret);
     // Pending verification codes are tied to the source HMAC key and are transient.
-    sqlite.exec(
-      'DELETE FROM captchas; DELETE FROM email_codes; COMMIT; PRAGMA wal_checkpoint(TRUNCATE);',
-    );
+    if (changedKey) sqlite.exec('DELETE FROM captchas; DELETE FROM email_codes;');
+    sqlite.exec('COMMIT; PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch (error) {
+    if (sqlite.isTransaction) sqlite.exec('ROLLBACK');
+    throw error;
   } finally {
     sqlite.close();
   }

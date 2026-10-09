@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, createHash } from 'node:crypto';
-import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import request from 'supertest';
 import sharp from 'sharp';
@@ -137,63 +137,5 @@ test(
     } finally {
       await reopened.close();
     }
-  },
-);
-
-test(
-  'existing PostgreSQL disk media migrates all variants atomically and deletes source files only after commit',
-  pgOnly,
-  async (t) => {
-    const s = await setup(t),
-      a = await s.register('migrate_a'),
-      b = await s.register('migrate_b');
-    await s.pair(a.token, b.token);
-    const image = await sharp({
-      create: { width: 640, height: 480, channels: 3, background: '#426554' },
-    })
-      .png()
-      .toBuffer();
-    const media = (
-      await request(s.app)
-        .post('/api/media')
-        .auth(a.token, { type: 'bearer' })
-        .attach('file', image, { filename: 'legacy.png', contentType: 'image/png' })
-        .expect(201)
-    ).body;
-    await s
-      .api(a.token)
-      .post('/api/moments', { mediaId: media.id, title: 'legacy fixture', date: '2026-10-09' })
-      .expect(201);
-    const row = (await s.db.prepare('SELECT * FROM media WHERE id=?').get(media.id))!;
-    const names = [row.original, row.preview, row.thumbnail].map(String),
-      data = await Promise.all(names.map((name) => s.mediaRepository.read(name)));
-    await s.db.prepare('DELETE FROM media_files WHERE mediaId=?').run(media.id);
-    for (let i = 0; i < names.length; i++) await writeFile(join(s.dir, 'media', names[i]), data[i]);
-    const prepare = s.db.prepare.bind(s.db);
-    let writes = 0;
-    const mock = t.mock.method(s.db, 'prepare', (sql: string) => {
-      const statement = prepare(sql);
-      return sql.startsWith('WITH saved AS')
-        ? {
-            ...statement,
-            run: async (...values: unknown[]) => {
-              if (++writes === 2) throw new Error('injected migration failure');
-              return statement.run(...values);
-            },
-          }
-        : statement;
-    });
-    await assert.rejects(s.mediaRepository.migrate(), /injected migration failure/);
-    mock.mock.restore();
-    assert.equal(
-      (await s.db.prepare('SELECT COUNT(*) n FROM media_files WHERE mediaId=?').get(media.id))!.n,
-      0,
-    );
-    for (const name of names) assert.ok((await readdir(join(s.dir, 'media'))).includes(name));
-    await s.mediaRepository.migrate();
-    for (let i = 0; i < names.length; i++)
-      assert.deepEqual(await s.mediaRepository.read(names[i]), data[i]);
-    assert.deepEqual(await readdir(join(s.dir, 'media')), ['tmp']);
-    await request(s.app).get(media.previewUrl).expect(200);
   },
 );

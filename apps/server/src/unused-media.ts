@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { readdir, lstat, unlink } from 'node:fs/promises';
 import { join, basename } from 'node:path';
+import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
 import { withSQLiteSnapshot } from './sqlite-snapshot.js';
 
 type Candidate = { name: string; bytes: number; ino: number; dev: number; mtime: number };
@@ -10,7 +11,7 @@ export async function cleanUnusedSQLiteMedia(sourcePath: string, directory: stri
     const referenced = new Set<string>();
     try {
       if (
-        db.prepare('PRAGMA user_version').get()!.user_version !== 9 ||
+        sqliteSchemaVersion(db) !== SCHEMA_VERSION ||
         db.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok' ||
         db.prepare('PRAGMA foreign_key_check').all().length
       )

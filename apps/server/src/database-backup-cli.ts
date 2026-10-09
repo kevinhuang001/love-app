@@ -1,10 +1,9 @@
-import { mkdtemp, rm, readFile, stat, lstat, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, stat, lstat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseEnv } from 'node:util';
 import { openDatabase } from './db.js';
-import { MediaRepository } from './media-repository.js';
 import {
   exportDatabase,
   extractBackup,
@@ -13,6 +12,7 @@ import {
   rekeyBackup,
   auditBackupCredentials,
   restoreSQLite,
+  refreshPackageManifest,
 } from './database-backup.js';
 import { restoreToPostgres } from './database-restore.js';
 
@@ -44,9 +44,7 @@ async function verifyDirectory(directory: string) {
   const listed = new Set<string>();
   const lines = (await readFile(join(directory, 'SHA256SUMS'), 'utf8')).trim().split('\n');
   for (const line of lines) {
-    const match = line.match(
-      /^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz|database\.dump|postgres-migration\.json)$/,
-    );
+    const match = line.match(/^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.gz)$/);
     if (!match || listed.has(match[2])) throw new Error('备份校验清单无效');
     listed.add(match[2]);
     if (
@@ -57,27 +55,6 @@ async function verifyDirectory(directory: string) {
   }
   if (!listed.has('deployment.env') || !listed.has('data.tar.gz'))
     throw new Error('备份校验清单不完整');
-  if (
-    await stat(join(directory, 'database.dump')).then(
-      () => true,
-      (e) => {
-        if (e.code === 'ENOENT') return false;
-        throw e;
-      },
-    )
-  ) {
-    if (!listed.has('database.dump')) throw new Error('数据库备份未纳入校验');
-    const { open } = await import('node:fs/promises');
-    const handle = await open(join(directory, 'database.dump'), 'r');
-    try {
-      const header = Buffer.alloc(5);
-      await handle.read(header, 0, 5, 0);
-      if (header.toString() !== 'PGDMP') throw new Error('不支持的 PostgreSQL 备份格式');
-    } finally {
-      await handle.close();
-    }
-    return 'legacy-postgres';
-  }
   return 'portable';
 }
 let db;
@@ -130,35 +107,10 @@ try {
       child.once('error', reject);
       child.once('exit', (code) => (code === 0 ? resolve() : reject(new Error('备份打包失败'))));
     });
-  } else if (operation === 'legacy-export') {
-    const directory = argument('--directory');
-    await verifyDirectory(directory);
-    const legacy = join(scratch, 'legacy');
-    await extractBackup(join(directory, 'data.tar.gz'), legacy).catch(async (error) => {
-      // PostgreSQL volumes need not contain a SQLite file. The extractor still checked every path.
-      if (error.message !== '备份不包含 SQLite 数据快照') throw error;
-    });
-    db = await openDatabase({ path: process.env.DATABASE_URL || '', provider: 'postgres' });
-    await mkdir(join(legacy, 'media'), { recursive: true });
-    await new MediaRepository(db, join(legacy, 'media')).migrate();
-    const output = join(scratch, 'data');
-    await exportDatabase({ db, mediaDirectory: join(legacy, 'media'), directory: output });
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(
-        'tar',
-        ['-C', output, '-czf', '-', 'manifest.json', 'love.sqlite', 'media'],
-        { stdio: ['ignore', 'inherit', 'inherit'] },
-      );
-      child.once('error', reject);
-      child.once('exit', (code) => (code === 0 ? resolve() : reject(new Error('备份打包失败'))));
-    });
   } else if (operation === 'inspect' || operation === 'restore') {
     const directory = argument('--directory');
-    const format = await verifyDirectory(directory);
-    if (format === 'legacy-postgres') {
-      if (operation === 'restore') throw new Error('请先将旧 PostgreSQL 备份转换为统一数据包');
-      console.log(format);
-    } else {
+    await verifyDirectory(directory);
+    {
       const packageDirectory = join(scratch, 'data');
       await extractBackup(join(directory, 'data.tar.gz'), packageDirectory);
       const source = await validatePackage(packageDirectory);
@@ -190,7 +142,7 @@ try {
           { resetUnreadable: arguments_.includes('--reset-unreadable-credentials') },
         );
         // The original manifest was verified above; the private snapshot may now contain rekeyed credentials.
-        await rm(join(packageDirectory, 'manifest.json'), { force: true });
+        await refreshPackageManifest(packageDirectory, source.provider);
         privateLog(`自动恢复：${source.provider} → ${provider}；保留当前部署配置。`);
         let report;
         if (provider === 'postgres') {

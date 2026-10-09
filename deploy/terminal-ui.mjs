@@ -84,7 +84,7 @@ export async function prompt({
         options: [
           { value: 'check', label: '一致性检查', hint: '表关系、媒体完整性与容量，支持深入校验' },
           { value: 'backup', label: '备份数据与配置' },
-          { value: 'restore', label: '恢复备份', hint: '自动转换至当前数据库，保留部署配置' },
+          { value: 'restore', label: '恢复备份', hint: '低/同版本导入，自动迁移，保留部署配置' },
           {
             value: 'cleanup',
             label: '清理未使用媒体',
@@ -184,15 +184,12 @@ export async function prompt({
       .map((e) => e.name)
       .sort()
       .reverse();
-    if (!names.length) {
-      ui.log.info('还没有可用备份，请先选择“备份数据与配置”。');
-      return '';
-    }
     return ask(
       select({
         message: '选择要恢复的备份',
         options: [
           ...names.map((name) => ({ value: name, label: name })),
+          { value: 'manual', label: '指定备份目录路径', hint: '导入从其他服务器复制的备份' },
           { value: '', label: '返回' },
         ],
         maxItems: 8,

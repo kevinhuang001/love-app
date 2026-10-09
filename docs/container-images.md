@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/install
 
 备份期间暂停本部署应用，结束或失败恢复原来的运行状态。SQLite 快照处理 WAL；PostgreSQL 使用 repeatable-read 快照。备份含密码和密钥，请保管好。外部数据库备份不会启动内置 PostgreSQL。
 
-恢复自动支持 SQLite → SQLite / PostgreSQL、PostgreSQL → SQLite / PostgreSQL，也支持此前 SQLite 快照备份与无内层 manifest 的清理后备份。恢复仅使用备份携带的配置或数据库旧密钥解密，不依赖当前 `.env` 的旧值、不覆盖当前部署配置。无法解密凭据会列出并提供恢复其余内容的选项，头像和业务数据仍保留。旧 PGDMP 自定义备份需要先用旧版管理工具转换成统一数据包；新工具不启动临时数据库容器解码 PGDMP。
+恢复支持 SQLite → SQLite / PostgreSQL、PostgreSQL → SQLite / PostgreSQL，仅接受含 `manifest.json` 和迁移历史的版本化备份。清单保存应用版本、数据库版本与摘要；高版本软件或数据库生成的备份不能导入低版本软件，旧格式不再兼容。低版本快照先在私有副本上执行迁移再导入，原归档不变。首次初始化非外部数据库时询问是否导入，可从本地备份列表或指定目录选择。恢复仅使用备份携带的密钥解密，再以当前密钥重加密；部署配置保留。无法解密凭据会列出并提供恢复其余内容的选项。
 
 PostgreSQL 在一个事务中导入并核对全部业务表和媒体；失败回滚。SQLite 在目标卷暂存并通过持久化恢复日志切换，中断后回滚未完成切换。原备份只读，恢复前备份仍可跳过。
 

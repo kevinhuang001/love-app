@@ -7,22 +7,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { registerMediaDirectory } from './media-drafts.js';
 import type { DB } from './db.js';
 import { HttpError } from './errors.js';
-import { commitMedia, removeMediaFiles, syncMediaFiles } from './media-storage.js';
+import { syncMediaFiles } from './media-storage.js';
 import { isTransientPostgresError, postgresSettings } from './postgres.js';
 
 export const MEDIA_CHUNK_BYTES = 1024 * 1024;
-export const postgresMediaSchema = `
-CREATE TABLE IF NOT EXISTS media_files(
-  name TEXT PRIMARY KEY, "mediaId" TEXT REFERENCES media(id) ON DELETE CASCADE,
-  bytes BIGINT NOT NULL CHECK(bytes>0), sha256 TEXT NOT NULL,
-  complete BIGINT NOT NULL DEFAULT 0 CHECK(complete IN (0,1)), "updatedAt" TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS media_files_owner ON media_files("mediaId");
-CREATE TABLE IF NOT EXISTS media_chunks(
-  name TEXT NOT NULL REFERENCES media_files(name) ON DELETE CASCADE,
-  position BIGINT NOT NULL CHECK(position>=0), data BYTEA NOT NULL,
-  PRIMARY KEY(name,position), CHECK(octet_length(data)>0 AND octet_length(data)<=1048576));
-ALTER TABLE media_chunks ALTER COLUMN data SET STORAGE EXTERNAL;`;
-
 export class MediaRepository {
   constructor(
     readonly db: DB,
@@ -186,52 +174,10 @@ export class MediaRepository {
     for await (const part of this.stream(name)) hash.update(part);
     return { ...info, sha256: hash.digest('hex') };
   }
-  async migrate() {
+  async cleanupStaleUploads() {
     if (this.db.provider !== 'postgres') return;
-    // Stale unbound chunks have no quota rows or public media references. Active uploads
-    // refresh their lease each chunk; startup never deletes recently staged data.
     await this.db
       .prepare('DELETE FROM media_files WHERE mediaId IS NULL AND updatedAt<?')
       .run(new Date(Date.now() - 86400000).toISOString());
-    let after = '';
-    while (true) {
-      const rows = await this.db
-        .prepare('SELECT id,original,preview,thumbnail FROM media WHERE id>? ORDER BY id LIMIT 50')
-        .all(after);
-      if (!rows.length) break;
-      for (const row of rows) {
-        const names = [
-          ...new Set([row.original, row.preview, row.thumbnail].filter(Boolean).map(String)),
-        ];
-        const complete = async () => {
-          for (const name of names) {
-            const saved = await this.db
-              .prepare('SELECT bytes FROM media_files WHERE name=? AND mediaId=? AND complete=1')
-              .get(name, row.id);
-            if (!saved) return false;
-          }
-          return true;
-        };
-        if (!(await complete()))
-          await commitMedia(this.db, complete, async () => {
-            // Serialize upgrade across app instances. Files are kept until all variants commit.
-            if (await complete()) return;
-            for (const name of names) {
-              const saved = await this.db
-                .prepare('SELECT mediaId,complete FROM media_files WHERE name=?')
-                .get(name);
-              if (saved?.mediaId === row.id && saved.complete) continue;
-              await this.db
-                .prepare('DELETE FROM media_files WHERE name=? AND mediaId IS NULL')
-                .run(name);
-              const [size] = await syncMediaFiles(this.directory, [name]);
-              await this.stage([name], [size], true);
-              await this.bind(String(row.id), [name]);
-            }
-          });
-        await removeMediaFiles(names.map((name) => this.path(name)));
-      }
-      after = String(rows.at(-1)!.id);
-    }
   }
 }

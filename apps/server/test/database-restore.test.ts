@@ -282,112 +282,6 @@ async function fixture(t: TestContext, postgres = true) {
   };
 }
 
-async function upgradeLegacyScheduleLayout(path: string, emptyTodos = false) {
-  const sqlite = new DatabaseSync(path);
-  sqlite.exec(`
-    ALTER TABLE couples DROP COLUMN startTime;
-    ALTER TABLE anniversaries DROP COLUMN time;
-    ALTER TABLE todos DROP COLUMN time;
-    ALTER TABLE messages ADD COLUMN mediaId TEXT REFERENCES media(id);
-    UPDATE messages SET mediaId='video' WHERE id=41;
-    DELETE FROM message_media;
-    PRAGMA user_version=5;
-  `);
-  sqlite.close();
-  const upgraded = await openDatabase(path);
-  try {
-    await upgraded.prepare("UPDATE todos SET time='21:22:23'").run();
-    if (emptyTodos) await upgraded.prepare('DELETE FROM todos').run();
-    return (await upgraded.prepare('PRAGMA table_info(todos)').all()).map((row) => row.name);
-  } finally {
-    await upgraded.close();
-  }
-}
-
-test('legacy schedule upgrade keeps appended column layout, avatar references and portable backup media', async (t) => {
-  const s = await fixture(t, false);
-  const columns = await upgradeLegacyScheduleLayout(s.sourcePath);
-  assert.equal(columns.at(-1), 'time');
-  const source = new DatabaseSync(s.sourcePath, { readOnly: true });
-  try {
-    assert.equal(source.prepare('PRAGMA user_version').get()!.user_version, 9);
-    assert.equal(
-      source.prepare("SELECT avatarMediaId FROM users WHERE id='usera'").get()!.avatarMediaId,
-      'avatar',
-    );
-  } finally {
-    source.close();
-  }
-  const directory = join(s.dir, 'old-layout-backup');
-  await exportDatabase({ sqlitePath: s.sourcePath, mediaDirectory: s.mediaDirectory, directory });
-  const snapshot = await validatePackage(directory);
-  assert.equal(snapshot.report.mediaFiles, 4);
-  for (const [name, contents] of s.contents)
-    assert.deepEqual(await readFile(join(directory, 'media', name)), contents);
-});
-
-for (const emptyTodos of [false, true]) {
-  test(
-    `upgraded legacy SQLite restores into fresh PostgreSQL by column names (${emptyTodos ? 'empty todos' : 'populated todos'})`,
-    onlyPG,
-    async (t) => {
-      const s = await fixture(t);
-      // Reproduce the real v5 -> v9 upgrade: schedule columns are appended by ALTER TABLE.
-      const sourceColumns = await upgradeLegacyScheduleLayout(s.sourcePath, emptyTodos);
-      const targetColumns = (
-        await s.target
-          .prepare(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='todos' ORDER BY ordinal_position",
-          )
-          .all()
-      ).map((row) => row.column_name);
-      assert.notDeepEqual(sourceColumns, targetColumns);
-      assert.deepEqual([...sourceColumns].sort(), [...targetColumns].sort());
-      assert.deepEqual(
-        rekeyBackup(
-          s.sourcePath,
-          'missing-old-backup-key',
-          'new-restore-key-at-least-32-characters',
-          { resetUnreadable: true },
-        ),
-        { ai: 1, smtp: 0 },
-      );
-      const before = await readFile(s.sourcePath);
-      const report = await s.migrate();
-      assert.equal(report.tables.todos, emptyTodos ? 0 : 1);
-      assert.deepEqual(await readFile(s.sourcePath), before);
-      if (!emptyTodos) {
-        const todo = (await s.target.prepare('SELECT * FROM todos').get())!;
-        assert.equal(todo.time, '21:22:23');
-        assert.equal(todo.calendar, 'lunar');
-        assert.equal(todo.repeat, 'yearly');
-      }
-      assert.equal(
-        (await s.target.prepare("SELECT avatarMediaId FROM users WHERE id='usera'").get())!
-          .avatarMediaId,
-        'avatar',
-      );
-      assert.equal(
-        (await s.target.prepare('SELECT avatarMediaId FROM couple_ai_settings').get())!
-          .avatarMediaId,
-        'avatar',
-      );
-      assert.equal(
-        (await s.target.prepare('SELECT secret FROM couple_ai_settings').get())!.secret,
-        '',
-      );
-      assert.equal(
-        (await s.target.prepare('SELECT assistantAvatarMediaId FROM messages').get())!
-          .assistantAvatarMediaId,
-        'avatar',
-      );
-      const repository = new MediaRepository(s.target, join(s.dir, 'no-disk-media'));
-      for (const [name, contents] of s.contents)
-        assert.deepEqual(await repository.read(name), contents);
-    },
-  );
-}
-
 test(
   'genuinely different target columns are rejected before any target data change',
   onlyPG,
@@ -597,7 +491,7 @@ test('backup extractor rejects links, traversal and malformed packages', async (
 });
 
 for (const mode of ['original env', 'recreated env', 'lost original key']) {
-  test(`restore CLI preserves current env and recovers legacy SQLite (${mode})`, async (t) => {
+  test(`restore CLI preserves current env and recovers versioned SQLite (${mode})`, async (t) => {
     const changedBackupKey = mode !== 'original env',
       missingKey = mode === 'lost original key';
     const s = await fixture(t, false),
@@ -615,7 +509,6 @@ for (const mode of ['original env', 'recreated env', 'lost original key']) {
       mediaDirectory: s.mediaDirectory,
       directory: packageDir,
     });
-    await rm(join(packageDir, 'manifest.json')); // an old SQLite data.tar.gz needs no manifest
     await mkdir(archiveDir);
     execFileSync('tar', ['-C', packageDir, '-czf', join(archiveDir, 'data.tar.gz'), '.']);
     const backupKey = changedBackupKey ? 'recreated-backup-env-secret-at-least-32' : secret;
@@ -971,3 +864,115 @@ test(
       assert.deepEqual(await readFile(join(s.dir, 'restored-sqlite', 'media', name)), data);
   },
 );
+
+test('versioned packages reject future software, future schema, inconsistent history and missing manifests before replacing the target', async (t) => {
+  const s = await fixture(t, false),
+    directory = join(s.dir, 'versioned');
+  await exportDatabase({ sqlitePath: s.sourcePath, mediaDirectory: s.mediaDirectory, directory });
+  const destination = join(s.dir, 'target', 'love.sqlite');
+  const target = await openDatabase(destination);
+  await target.prepare("INSERT INTO server_config VALUES('proof','retained')").run();
+  await target.close();
+  const before = await readFile(destination),
+    manifestPath = join(directory, 'manifest.json');
+  const original = await readFile(manifestPath, 'utf8');
+  for (const change of [
+    { applicationVersion: '99.0.0' },
+    { schemaVersion: 99 },
+    { schemaVersion: 0 },
+  ]) {
+    await writeFile(manifestPath, JSON.stringify({ ...JSON.parse(original), ...change }));
+    await assert.rejects(restoreSQLite(directory, destination), /版本/);
+    assert.deepEqual(await readFile(destination), before);
+  }
+  await rm(manifestPath);
+  await assert.rejects(restoreSQLite(directory, destination), /ENOENT/);
+  assert.deepEqual(await readFile(destination), before);
+  await writeFile(manifestPath, original);
+  const sqlite = new DatabaseSync(join(directory, 'love.sqlite'));
+  sqlite.exec("UPDATE schema_migrations SET checksum='modified'");
+  sqlite.close();
+  const changed = JSON.parse(original);
+  changed.databaseSha256 = createHash('sha256')
+    .update(await readFile(join(directory, 'love.sqlite')))
+    .digest('hex');
+  await writeFile(manifestPath, JSON.stringify(changed));
+  await assert.rejects(restoreSQLite(directory, destination), /迁移校验和/);
+  assert.deepEqual(await readFile(destination), before);
+});
+
+test('a later software build validates a version 1 backup, migrates its private copy, and restores data without changing the archive', async (t) => {
+  const { cp } = await import('node:fs/promises');
+  const s = await fixture(t, false),
+    original = join(s.dir, 'version1');
+  await exportDatabase({
+    sqlitePath: s.sourcePath,
+    mediaDirectory: s.mediaDirectory,
+    directory: original,
+  });
+  const before = await readFile(join(original, 'love.sqlite'));
+  const copy = join(s.dir, 'private');
+  await cp(original, copy, { recursive: true });
+  const runtime = join(s.dir, 'future');
+  await mkdir(runtime);
+  await writeFile(join(runtime, 'package.json'), '{"type":"module"}');
+  await symlink(
+    fileURLToPath(new URL('../../../node_modules', import.meta.url)),
+    join(runtime, 'node_modules'),
+  );
+  await cp(fileURLToPath(new URL('../src', import.meta.url)), join(runtime, 'src'), {
+    recursive: true,
+  });
+  const registryPath = join(runtime, 'src', 'migrations.ts');
+  const delta =
+    "ALTER TABLE couples ADD COLUMN label TEXT NOT NULL DEFAULT ''; UPDATE couples SET label='v2 migrated';";
+  await writeFile(
+    registryPath,
+    (await readFile(registryPath, 'utf8')).replace(
+      '[initialMigration];',
+      `[initialMigration, {version:2,name:'002_label',sqlite:${JSON.stringify(delta)},postgres:${JSON.stringify(delta)}}];`,
+    ),
+  );
+  const versionPath = join(runtime, 'src', 'version.ts');
+  await writeFile(
+    versionPath,
+    (await readFile(versionPath, 'utf8')).replace("'2.9.2'", "'2.10.0'"),
+  );
+  const destination = join(s.dir, 'future-target', 'love.sqlite');
+  const modulePath = new URL('src/database-backup.ts', 'file://' + runtime + '/').href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      `
+    import { validatePackage, restoreSQLite } from ${JSON.stringify(modulePath)};
+    const original = await validatePackage(${JSON.stringify(copy)});
+    if(original.schemaVersion !== 1) throw new Error('wrong original version');
+    await restoreSQLite(${JSON.stringify(copy)}, ${JSON.stringify(destination)});
+  `,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const sqlite = new DatabaseSync(destination, { readOnly: true });
+  try {
+    assert.equal(sqlite.prepare('SELECT label FROM couples').get()!.label, 'v2 migrated');
+    assert.deepEqual(
+      sqlite
+        .prepare('SELECT version FROM schema_migrations ORDER BY version')
+        .all()
+        .map((r) => r.version),
+      [1, 2],
+    );
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM users').get()!.n, 2);
+    assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM message_media').get()!.n, 1);
+  } finally {
+    sqlite.close();
+  }
+  assert.deepEqual(await readFile(join(original, 'love.sqlite')), before);
+  for (const [name, data] of s.contents)
+    assert.deepEqual(await readFile(join(s.dir, 'future-target', 'media', name)), data);
+});

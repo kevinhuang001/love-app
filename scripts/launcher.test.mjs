@@ -238,3 +238,20 @@ test('a stale love.next does not block atomic binary replacement', async (t) => 
   );
   assert.equal(await readFile(f.executable, 'utf8'), 'replacement');
 });
+test('HTTPS starts the selected certificate services; HTTP and external proxies do not activate the HTTPS profile', async (t) => {
+  const f = await fixture(t);
+  for (const provider of ['certbot', 'caddy']) {
+    f.manager.config.LOVE_HTTPS = '1';
+    f.manager.config.LOVE_TLS_PROVIDER = provider;
+    const args = f.manager.composeArgs(['up', '-d', '--wait']);
+    assert.ok(args.includes('--profile'));
+    assert.ok(args.includes('https'));
+    assert.ok(args.includes(join(f.directory, 'compose.https.yml')));
+    assert.equal(args.includes(join(f.directory, 'compose.certbot.yml')), provider === 'certbot');
+  }
+  f.manager.config.LOVE_TLS_PROVIDER = 'external';
+  assert.ok(!f.manager.composeArgs(['up', '-d']).includes('--profile'));
+  f.manager.config.LOVE_HTTPS = '0';
+  f.manager.config.LOVE_TLS_PROVIDER = 'none';
+  assert.ok(!f.manager.composeArgs(['up', '-d']).includes('--profile'));
+});

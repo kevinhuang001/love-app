@@ -7,10 +7,10 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 const base = 'https://github.com/kevinhuang001/love-app/releases/download/';
 const api = 'https://api.github.com/repos/kevinhuang001/love-app/releases/latest';
-async function get(url, request) {
+async function get(url, request, timeout = 30_000) {
   const r = await request(url, {
     headers: { 'User-Agent': 'Love-Manager', Accept: 'application/vnd.github+json' },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeout),
   });
   if (!r.ok) throw new Error(`管理工具更新检查失败 (${r.status})`);
   return r;
@@ -56,22 +56,35 @@ export async function latestManager({ request = fetch, arch = process.arch } = {
     url: base + release.tag_name + '/' + name,
   };
 }
-export async function installManager(release, destination, { request = fetch } = {}) {
+export async function installManager(
+  release,
+  destination,
+  { request = fetch, onProgress = () => {} } = {},
+) {
   const temp = dirname(destination) + '/.love-binary-' + randomUUID();
   try {
-    const r = await get(release.url, request),
+    const r = await get(release.url, request, 15 * 60_000),
       hash = createHash('sha256');
+    let bytes = 0,
+      reported = 0;
     await pipeline(
       Readable.fromWeb(r.body),
       new Transform({
         transform(chunk, _, next) {
           hash.update(chunk);
+          bytes += chunk.length;
+          if (bytes - reported >= 1048576) {
+            reported = bytes;
+            onProgress(bytes);
+          }
           next(null, chunk);
         },
       }),
       createWriteStream(temp, { flags: 'wx', mode: 0o700 }),
     );
     if (hash.digest('hex') !== release.sha256) throw new Error('管理工具下载校验失败，原程序保留');
+    if (release.bytes && bytes !== release.bytes)
+      throw new Error('管理程序大小校验失败，原程序保留');
     await chmod(temp, 0o755);
     const f = await open(temp, 'r');
     try {

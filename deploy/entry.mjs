@@ -4,6 +4,7 @@ import { templates } from './templates.mjs';
 import pkg from '../package.json';
 import { managerSelfTest } from '../scripts/manager-self-test.mjs';
 const source = typeof LOVE_SOURCE_SHA === 'string' ? LOVE_SOURCE_SHA : 'development';
+process.umask(0o077);
 const info = { version: pkg.version, source, platform: process.platform, arch: process.arch };
 if (process.argv.includes('--version')) console.log(JSON.stringify(info));
 else if (process.argv.includes('--self-test')) await managerSelfTest();

@@ -102,7 +102,7 @@ export class PostgresConnection {
       await this.pause(attempt);
     }
   }
-  async transaction<T>(action: () => Promise<T> | T): Promise<T> {
+  async transaction<T>(action: () => Promise<T> | T, options?: { snapshot?: boolean }): Promise<T> {
     if (this.context.getStore()) return action();
     // Retry BEGIN/lock acquisition only; callbacks may have external or filesystem side effects.
     for (let attempt = 0; ; attempt++) {
@@ -112,8 +112,10 @@ export class PostgresConnection {
       let started = false,
         failed = false;
       try {
-        await client.query('BEGIN');
-        await client.query('SELECT pg_advisory_xact_lock(1279874629)');
+        await client.query(
+          options?.snapshot ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN',
+        );
+        if (!options?.snapshot) await client.query('SELECT pg_advisory_xact_lock(1279874629)');
         started = true;
         return await this.context.run(client, async () => {
           const value = await action();

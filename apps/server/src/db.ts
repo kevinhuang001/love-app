@@ -28,7 +28,7 @@ export interface DB {
   readonly provider: 'sqlite' | 'postgres';
   prepare(sql: string): Statement;
   exec(sql: string): Promise<void>;
-  transaction<T>(action: () => Promise<T> | T): Promise<T>;
+  transaction<T>(action: () => Promise<T> | T, options?: { snapshot?: boolean }): Promise<T>;
   close(): Promise<void>;
 }
 class Queue {
@@ -196,7 +196,7 @@ export async function openDatabase(input: string | DatabaseOptions): Promise<DB>
     exec: async (sql) => {
       await query(sql);
     },
-    transaction: (action) => connection.transaction(action),
+    transaction: (action, options) => connection.transaction(action, options),
     close: () => pool.end(),
   };
   try {

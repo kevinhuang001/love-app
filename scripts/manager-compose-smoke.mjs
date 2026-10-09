@@ -1,5 +1,6 @@
 // Exercise the real shell menu and actual SQLite / PostgreSQL backup restoration.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
   mkdtemp,
@@ -103,7 +104,6 @@ for (const database of ['sqlite', 'postgres']) {
     `#!/usr/bin/env node
 const fs=require('node:fs'),cp=require('node:child_process'),a=process.argv.slice(2),i=a.indexOf('/setup/deploy/terminal-ui.mjs');
 if(i>=0){const file=a[i+2].replace('/setup/',process.cwd()+'/');if(a[i+1]==='continue')fs.writeFileSync(file,'continue');else{const answers=fs.readFileSync(process.env.MANAGER_ANSWERS,'utf8').split('\\n');fs.writeFileSync(file,answers.shift());fs.writeFileSync(process.env.MANAGER_ANSWERS,answers.join('\\n'));}}
-else if(a.includes('/app/scripts/database-migration.mjs')){const out=a.at(-1).replace('/setup/',process.cwd()+'/');fs.copyFileSync(process.env.MANAGER_TARGET_ENV,out);}
 else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});process.exit(r.status??1);}
 `,
   );
@@ -113,7 +113,6 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
       2: 'start',
       8: 'backup',
       9: 'restore',
-      15: 'migrate',
       16: 'cleanup',
       0: 'exit',
     };
@@ -203,12 +202,6 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
     assert.ok(
       (await readFile(join(dir, 'backups', name, 'SHA256SUMS'), 'utf8')).includes('data.tar.gz'),
     );
-    if (database === 'postgres')
-      assert.ok(
-        (await readFile(join(dir, 'backups', name, 'database.dump')))
-          .subarray(0, 5)
-          .equals(Buffer.from('PGDMP')),
-      );
     query(
       `await db.prepare("UPDATE server_config SET value='after' WHERE key='backup-proof'").run();await fs.writeFile('/app/data/after-backup-marker','after');`,
     );
@@ -218,7 +211,7 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         `console.log(JSON.stringify({value:(await db.prepare("SELECT value FROM server_config WHERE key='backup-proof'").get()).value,marker:await fs.stat('/app/data/after-backup-marker').then(()=>true,()=>false)}));`,
       ).trim(),
     );
-    assert.deepEqual(proof, { value: 'before', marker: false });
+    assert.deepEqual(proof, { value: 'before', marker: true });
     assert.equal(
       (await readdir(join(dir, 'backups'))).length,
       2,
@@ -227,9 +220,74 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
     console.log(
       `Interactive manager ${database}: start, consistent backup, checksums, database/media restore and safety backup verified.`,
     );
+    if (database === 'postgres') {
+      const legacyDirectory = join(dir, 'backups', 'legacy-postgres');
+      await mkdir(legacyDirectory);
+      const dump = execFileSync(
+        'docker',
+        [
+          ...composeArgs,
+          'exec',
+          '-T',
+          'postgres',
+          'sh',
+          '-c',
+          'pg_dump --format=custom -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+        ],
+        { maxBuffer: 32 * 1024 * 1024 },
+      );
+      const data = execFileSync(
+        'docker',
+        [
+          'run',
+          '--rm',
+          '--user',
+          '0',
+          '--mount',
+          `type=volume,src=${project}_love-data,dst=/data,readonly`,
+          '--entrypoint',
+          'tar',
+          'love-ci',
+          '-C',
+          '/data',
+          '-czf',
+          '-',
+          '.',
+        ],
+        { maxBuffer: 32 * 1024 * 1024 },
+      );
+      await writeFile(join(legacyDirectory, 'database.dump'), dump);
+      await writeFile(join(legacyDirectory, 'data.tar.gz'), data);
+      await copyFile(join(dir, '.env'), join(legacyDirectory, 'deployment.env'));
+      const hashes = await Promise.all(
+        ['deployment.env', 'data.tar.gz', 'database.dump'].map(
+          async (name) =>
+            createHash('sha256')
+              .update(await readFile(join(legacyDirectory, name)))
+              .digest('hex') +
+            '  ' +
+            name,
+        ),
+      );
+      await writeFile(join(legacyDirectory, 'SHA256SUMS'), hashes.join('\n') + '\n');
+      query(
+        `await db.prepare("UPDATE server_config SET value='changed' WHERE key='backup-proof'").run();`,
+      );
+      const beforeConfig = await readFile(join(dir, '.env'), 'utf8');
+      const restored = menu('9\nlegacy-postgres\nRESTORE\n0\n');
+      assert.match(restored, /恢复完成/);
+      assert.equal(await readFile(join(dir, '.env'), 'utf8'), beforeConfig);
+      assert.equal(
+        query(
+          `console.log((await db.prepare("SELECT value FROM server_config WHERE key='backup-proof'").get()).value);`,
+        ).trim(),
+        'before',
+      );
+      console.log(
+        'Legacy PGDMP backup decoded in a disposable database and restored successfully.',
+      );
+    }
     if (database === 'sqlite') {
-      // Exercise the compiled migration CLI through real Compose, including the read-only
-      // source mount and the switch to a separate temporary-media volume.
       query(`await db.prepare("INSERT INTO couples(id) VALUES('migration-pair')").run();
         await db.prepare("INSERT INTO users(id,username,name,password,coupleId,email) VALUES('migration-user','migration_user','用户迁移','fixture-hash','migration-pair','migration@example.test')").run();
         await fs.mkdir('/app/data/media/tmp',{recursive:true});
@@ -249,86 +307,101 @@ else {const r=cp.spawnSync(process.env.MANAGER_DOCKER,a,{stdio:'inherit'});proce
         ).trim(),
       );
       assert.deepEqual(cleaned, { kept: 'referenced-media-fixture', orphan: false, temp: false });
-      const target = {
-        ...config,
-        LOVE_DATABASE: 'postgres',
-        DATABASE_PROVIDER: 'postgres',
-        LOVE_DATA_VOLUME: 'postgres-work',
-      };
-      await writeFile(
-        join(dir, 'target.env'),
-        Object.entries(target)
-          .map(([key, value]) => `${key}=${quoteEnv(value)}`)
-          .join('\n') + '\n',
-        { mode: 0o600 },
+      const beforeSqliteBackup = new Set(await readdir(join(dir, 'backups')));
+      menu('8\n0\n');
+      const sqliteBackup = (await readdir(join(dir, 'backups'))).find(
+        (name) => !beforeSqliteBackup.has(name),
       );
-      const migrationOutput = menu('15\n0\n');
-      assert.match(migrationOutput, /迁移完成并切换到 PostgreSQL/);
-      const migratedCompose = (...args) =>
-        execFileSync(
-          'docker',
-          [
-            ...composeArgs,
-            '-f',
-            join(dir, 'compose.postgres.yml'),
-            '-f',
-            join(dir, 'compose.storage.yml'),
-            ...args,
-          ],
-          {
-            encoding: 'utf8',
-          },
-        );
+      const originalSourceConfig = await readFile(join(dir, '.env'), 'utf8');
+      const externalName = project + '-external';
+      execFileSync(
+        'docker',
+        [
+          'run',
+          '-d',
+          '--name',
+          externalName,
+          '--network',
+          project + '_default',
+          '-e',
+          'POSTGRES_PASSWORD=external-test-password',
+          'postgres:18-alpine',
+        ],
+        { stdio: 'ignore' },
+      );
       try {
-        const migratedApplication = execFileSync(
+        execFileSync('docker', [
+          'exec',
+          externalName,
           'sh',
-          ['-c', selector + '\nproject=$1; running_app_containers', 'manager-selector', project],
-          { encoding: 'utf8' },
-        ).trim();
-        assert.match(migratedApplication, /^[a-f0-9]{64}$/);
-        const proof = JSON.parse(
+          '-c',
+          'i=0; until pg_isready -U postgres >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 60 ] || exit 1; sleep 1; done',
+        ]);
+        const target = {
+          ...config,
+          LOVE_DATABASE: 'external',
+          DATABASE_PROVIDER: 'postgres',
+          LOVE_DATA_VOLUME: 'postgres-work',
+          DATABASE_URL:
+            'postgresql://postgres:external-test-password@' + externalName + ':5432/postgres',
+          MEDIA_SIGNING_SECRET: 'new-external-deployment-key-at-least-32',
+        };
+        const targetEnv =
+          Object.entries(target)
+            .map(([k, v]) => k + '=' + quoteEnv(v))
+            .join('\n') + '\n';
+        await writeFile(join(dir, '.env'), targetEnv);
+        const output = menu('9\n' + sqliteBackup + '\nRESTORE\n0\n');
+        assert.match(output, /恢复完成/);
+        assert.equal(await readFile(join(dir, '.env'), 'utf8'), targetEnv);
+        const convertedCompose = (...args) =>
           execFileSync(
             'docker',
-            [
-              'exec',
-              migratedApplication,
-              'node',
-              '--input-type=module',
-              '-e',
-              `import {openDatabase} from '/app/apps/server/dist/db.js';const db=await openDatabase({path:'',provider:'postgres'});try{console.log(JSON.stringify({user:(await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name,files:(await db.prepare("SELECT COUNT(*) n FROM media_files WHERE mediaId='migration-media'").get()).n,content:(await db.prepare("SELECT data FROM media_chunks WHERE name='kept.preview.webp' AND position=0").get()).data.toString()}))}finally{await db.close()}`,
-            ],
+            [...composeArgs, '-f', join(dir, 'compose.storage.yml'), ...args],
             { encoding: 'utf8' },
-          ).trim(),
-        );
-        assert.deepEqual(proof, {
-          user: '用户迁移',
-          files: 1,
-          content: 'referenced-media-fixture',
-        });
-        const sourceProof = execFileSync(
-          'docker',
-          [
-            'run',
-            '--rm',
-            '--user',
-            '0',
-            '--volume',
-            `${project}_love-data:/source:ro`,
-            '--entrypoint',
+          );
+        const convertedQuery = (code) =>
+          convertedCompose(
+            'exec',
+            '-T',
+            'love',
             'node',
-            'love-ci',
             '--input-type=module',
             '-e',
-            `import fs from 'node:fs/promises';console.log(await fs.readFile('/source/media/kept.preview.webp','utf8'));`,
-          ],
-          { encoding: 'utf8' },
-        ).trim();
-        assert.equal(sourceProof, 'referenced-media-fixture');
+            `import {openDatabase} from '/app/apps/server/dist/db.js';import {MediaRepository} from '/app/apps/server/dist/media-repository.js';const db=await openDatabase({path:process.env.DATABASE_URL,provider:'postgres'});try{${code}}finally{await db.close()}`,
+          );
+        const proof = JSON.parse(
+          convertedQuery(
+            `console.log(JSON.stringify({name:(await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name,content:(await new MediaRepository(db,'/app/data/media').read('kept.preview.webp')).toString()}));`,
+          ).trim(),
+        );
+        assert.deepEqual(proof, { name: '用户迁移', content: 'referenced-media-fixture' });
+        const beforePgBackup = new Set(await readdir(join(dir, 'backups')));
+        menu('8\n0\n');
+        const pgBackup = (await readdir(join(dir, 'backups'))).find(
+          (name) => !beforePgBackup.has(name),
+        );
+        await writeFile(join(dir, '.env'), originalSourceConfig);
+        const back = menu('9\n' + pgBackup + '\nRESTORE\n0\n');
+        assert.match(back, /恢复完成/);
+        assert.equal(await readFile(join(dir, '.env'), 'utf8'), originalSourceConfig);
+        assert.equal(
+          query(
+            `console.log((await fs.readFile('/app/data/media/kept.preview.webp')).toString());`,
+          ).trim(),
+          'referenced-media-fixture',
+        );
+        assert.equal(
+          query(
+            `console.log((await db.prepare("SELECT name FROM users WHERE id='migration-user'").get()).name);`,
+          ).trim(),
+          '用户迁移',
+        );
         console.log(
-          'Real SQLite cleanup + PostgreSQL migration, immutable source media, and compiled CLI verified.',
+          'Real SQLite → external PostgreSQL → SQLite backup restoration, current config preservation and media bytes verified.',
         );
       } finally {
-        migratedCompose('--profile', 'https', 'down', '--volumes', '--remove-orphans');
+        execFileSync('docker', ['rm', '-f', externalName], { stdio: 'ignore' });
       }
     }
   } finally {

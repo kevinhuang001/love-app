@@ -54,15 +54,13 @@ DATABASE_URL=postgresql://love:URL编码后的密码@database.example.com:5432/l
 
 可以显式设为 `DATABASE_PROVIDER=sqlite` 并清空 URL，恢复使用 `DATABASE_PATH` 指定的 SQLite 文件。切换数据库不搬迁数据，两种后端拥有各自的账号和内容；现有 schema 4 / 5 / 6 / 7 / 8 数据在启动时原子升级到 schema 9，将日期时间默认补为 00:00:00；schema 4 的 AI 配置归入配对空间；SQLite 与 PostgreSQL 均支持该升级。媒体密钥需要随部署配置备份；SQLite 还需备份媒体文件，PostgreSQL 媒体随数据库备份。
 
-## 从 SQLite 迁移全部数据
+## 备份恢复与数据库转换
 
-更新后运行 `./love`，选择“SQLite → PostgreSQL”，填写内置或外部数据库配置。无需在宿主机安装数据库客户端或 Node.js。迁移前备份并暂停应用，源库结构需为当前版本 9；工具用只读快照读取 SQLite 和可能的 WAL，原数据库和媒体不会修改。
+运行 `./love` → “备份数据与配置”，再配置目标部署和数据库，选择“恢复备份”。自动识别 SQLite / PostgreSQL，双向转换及同类型恢复均支持，包括新配置的外部 PostgreSQL，不要求从 SQLite 部署运行迁移向导。当前 `.env`、外部数据库 URL、管理员凭据和密钥保持不变。
 
-迁移全部 27 张业务表：用户密码哈希、会话、配对、消息及附件、相册、日期、AI 配置及任务、后台设置、邀请码、白名单、存储额度和日志。先处理头像的循环外键，再恢复完整关联；自增序号包含 SQLite 删除记录后的高水位。浮点时长和日志耗时使用 PostgreSQL double precision 保留 SQLite 精度。原媒体按每块 1 MiB 写入数据库，不重新压缩或转码。
+统一数据包包含全部 27 张业务表及引用的原文件、压缩预览、缩略图和头像，保留密码哈希、会话、配对、消息、日期、AI 配置、邀请码、后台设置、配额和日志。自增序号保留删除后的高水位；PostgreSQL double precision 保留 SQLite 浮点精度。媒体按每块 1 MiB 读写，不重新压缩或转码；恢复前会验证关联、行数、字节数与 SHA-256。
 
-目标数据和媒体在同一事务中写入；逐表比较有序内容摘要，逐文件从 PostgreSQL 流式读回核对字节数与 SHA-256，全部通过后提交迁移凭据并替换配置。失败回滚；同源快照可再次核对而不重复写入。目标库已有业务数据或已迁移其他来源时拒绝覆盖。会话和加密凭据继续可用，需要保留原 `.env` 的媒体密钥。
-
-迁移后的临时卷通过 `LOVE_DATA_VOLUME` 与 `compose.storage.yml` 和原 SQLite 卷隔离。备份和恢复使用对应卷；切回 SQLite 应恢复迁移前配置及相应备份，不能只改 URL。菜单提供独立未引用媒体清理，迁移本身不删除源媒体，也不导入无引用文件。
+AI 与 SMTP 加密凭据在私有副本中用当前密钥重新加密，原备份不修改。恢复允许替换目标现有内容，覆盖前另存安全备份；PostgreSQL 事务失败回滚全部表和媒体，SQLite 使用暂存数据和持久化日志处理文件切换。详见 [备份操作](container-images.md#切换数据库与恢复备份)。
 
 ## PostgreSQL 连接参数
 
@@ -93,11 +91,9 @@ PostgreSQL 将原图/原视频（按配对保留设置）、压缩预览、缩�
 
 ## PostgreSQL 备份
 
-```sh
-docker compose -p love-v4 -f compose.yml -f compose.postgres.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB"' > love-postgres.sql
-```
+默认使用 `./love` 的统一备份恢复，不需要在宿主机安装数据库客户端。内置和外部 PostgreSQL 均通过应用镜像直接备份全部业务及数据库媒体，不下载额外客户端镜像；保存的 `deployment.env` 用于读取原密钥，恢复不会覆盖当前部署配置。
 
-恢复时使用同一数据库用户及数据库名，将 SQL 输入 `psql`，并恢复 `.env` 的媒体密钥；PostgreSQL 备份已包含所有媒体二进制，不需要恢复媒体目录。SQLite 仍需同时恢复数据库和媒体目录。不要把数据库备份或 `.env` 放到公开仓库。
+已有管理脚本生成的 PGDMP 自定义格式备份也能读取，使用隔离临时数据库解码后导入当前数据库；不同 PostgreSQL 服务端版本不再需要直接往目标恢复原生 dump。请安全保管备份，不要公开数据库内容和密钥。
 
 ## 验证
 

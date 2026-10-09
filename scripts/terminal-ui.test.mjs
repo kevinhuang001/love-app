@@ -46,7 +46,7 @@ test('modern menu exposes named actions and deployment summary without passwords
   );
   assert.match(f.notes[0], /love-ui · postgres · HTTP/);
   assert.ok(!f.notes[0].includes('private-password'));
-  assert.equal(f.calls[0].maxItems, 15);
+  assert.equal(f.calls[0].maxItems, 14);
   assert.ok(menuOptions.some((option) => option.value === 'refresh'));
   assert.equal(menuOptions.at(-1).value, 'exit');
 });
@@ -55,7 +55,7 @@ test('first configuration is selected initially and destructive confirmations de
   assert.equal(await prompt({ ...f, kind: 'menu', env: {} }), 'configure');
   assert.equal(await prompt({ ...f, kind: 'confirm', message: '删除？' }), 'no');
   assert.equal(await prompt({ ...f, kind: 'uninstall', message: 'love-ui' }), 'containers');
-  assert.ok(menuOptions.every((option) => !['source', 'manage'].includes(option.value)));
+  assert.ok(menuOptions.every((option) => !['source', 'manage', 'migrate'].includes(option.value)));
 });
 test('backup picker orders newest first, skips non-directories and supports cancellation', async (t) => {
   const f = await fixture(t);

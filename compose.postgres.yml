@@ -12,13 +12,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-  database-tools:
-    environment:
-      PGHOST: postgres
-      PGPORT: '5432'
-      PGDATABASE: ${POSTGRES_DB:-love}
-      PGUSER: ${POSTGRES_USER:-love}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Run ./love to configure PostgreSQL}
   postgres:
     image: postgres:18-alpine
     environment:

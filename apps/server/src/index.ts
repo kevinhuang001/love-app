@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { recoverSQLiteRestore } from './database-backup.js';
 import { createApp } from './app.js';
 const production = process.env.NODE_ENV === 'production';
 if (
@@ -13,6 +14,11 @@ if (
   throw new Error('DATABASE_PROVIDER 必须为 sqlite 或 postgres');
 if (production && (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD))
   throw new Error('生产环境必须配置 ADMIN_USERNAME 与 ADMIN_PASSWORD');
+if (
+  process.env.DATABASE_PROVIDER !== 'postgres' &&
+  !/^postgres(?:ql)?:\/\//.test(process.env.DATABASE_URL || '')
+)
+  await recoverSQLiteRestore(process.env.DATABASE_PATH || '../../data/love.sqlite');
 const server = await createApp({
   database: process.env.DATABASE_URL || process.env.DATABASE_PATH || '../../data/love.sqlite',
   databaseProvider: (process.env.DATABASE_PROVIDER || undefined) as

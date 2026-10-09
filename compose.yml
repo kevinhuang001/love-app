@@ -25,12 +25,6 @@ services:
       - ${LOVE_DATA_VOLUME:-love-data}:/app/data
     restart: unless-stopped
     init: true
-  database-tools:
-    image: postgres:18-alpine
-    profiles: [management]
-    environment:
-      PGDATABASE: ${DATABASE_URL:-}
-    entrypoint: []
   proxy:
     image: caddy:2-alpine
     profiles: [https]

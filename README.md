@@ -56,7 +56,7 @@ npm run android:prepare
 
 按本文开头下载 `love` 后直接运行，不需要部署压缩包。管理菜单不提供镜像来源选项或后台业务配置；应用仅使用 `ghcr.io/kevinhuang001/love-app` 的多架构镜像。没有更新时不会拉取镜像层、暂停应用或创建备份。详见 [管理菜单](docs/container-images.md) 与 [配置边界](docs/configuration.md)。
 
-数据库切换请使用菜单“SQLite → PostgreSQL”：自动备份，暂停写入，迁移全部表和媒体，逐表及逐文件校验后切换配置。支持 Compose 内置和外部 PostgreSQL，保留原 SQLite 数据卷。“清理 SQLite 未引用媒体”可备份后删除没有媒体记录引用的文件及上传临时文件。
+数据库切换通过“备份数据与配置”和“恢复备份”完成：先备份，再配置或新建目标部署，恢复时自动识别来源并导入当前数据库。支持 SQLite ↔ PostgreSQL 双向及同类型恢复，内置与外部 PostgreSQL 均可；保留当前 `.env`、数据库地址、端口和管理员凭据。“清理 SQLite 未引用媒体”可备份后删除没有媒体记录引用的文件及上传临时文件。
 
 向导支持 HTTP（包括 `0.0.0.0` 公网监听）、HTTPS 自定义端口、Certbot 自动申请与续期、Caddy 或外部代理。HTTPS 后端只在容器网络内开放。Dockerfile 和国内镜像 Dockerfile.cn 供开发者及 CI 使用，用户部署不再本地构建。
 

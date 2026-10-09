@@ -118,47 +118,72 @@ start() {
   compose up -d --no-build --pull missing --remove-orphans --wait
 }
 backup() {
-  require_config || return 1
-  ensure_image || return 1
-  backup_dir="$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)-$$"
-  mkdir -p "$backup_dir" || return 1
+  require_config && ensure_image || return 1
+  backup_dir=$(mktemp -d "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX" 2>/dev/null) || {
+    mkdir -p "$PWD/backups" || return 1
+    backup_dir=$(mktemp -d "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX") || return 1
+  }
+  backup_image=$image
+  if ! docker run --rm --entrypoint sh "$backup_image" -c 'test -f /app/apps/server/dist/database-backup-cli.js'; then
+    printf '正在获取统一备份工具镜像…\n'
+    backup_image=ghcr.io/kevinhuang001/love-app:latest
+    docker pull "$backup_image" || return 1
+  fi
   running=$(running_app_containers) || return 1
   [ "$database" != postgres ] || compose up -d --no-build --wait postgres || return 1
   compose stop love || return 1
   cp .env "$backup_dir/deployment.env" || { [ -z "$running" ] || compose start love; return 1; }
-  if ! docker run --rm --user 0 --mount "type=volume,src=${project}_${data_volume},dst=/data,readonly" --entrypoint tar "$image" -C /data -czf - . > "$backup_dir/data.tar.gz"; then
+  if ! LOVE_IMAGE="$backup_image" compose run --rm -T --no-deps --user 0 --entrypoint node love /app/apps/server/dist/database-backup-cli.js backup > "$backup_dir/data.tar.gz"; then
     [ -z "$running" ] || compose start love; return 1
   fi
-  if [ "$database" != sqlite ] && ! compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_dump --format=custom' > "$backup_dir/database.dump"; then
-    [ -z "$running" ] || compose start love; return 1
-  fi
-  (cd "$backup_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; [ ! -f database.dump ] || sha256sum database.dump; else shasum -a 256 deployment.env data.tar.gz; [ ! -f database.dump ] || shasum -a 256 database.dump; fi; } > SHA256SUMS) || { [ -z "$running" ] || compose start love; return 1; }
+  (cd "$backup_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; else shasum -a 256 deployment.env data.tar.gz; fi; } > SHA256SUMS) || { [ -z "$running" ] || compose start love; return 1; }
   [ -z "$running" ] || compose start love || return 1
-  printf '备份完成：%s（包含密码和密钥，请妥善保管）。\n' "$backup_dir"
+  printf '备份完成：%s（统一数据包，包含密码和密钥，请妥善保管）。\n' "$backup_dir"
 }
+# Old PGDMP archives can only be decoded by PostgreSQL. Use an isolated, disposable
+# reader on a private network: never restore a native dump into the production DB.
+convert_legacy_backup() (
+  reader="love-backup-reader-$$"
+  network="$reader-net"
+  trap 'docker rm -fv "$reader" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true' EXIT
+  trap 'exit 1' HUP INT TERM
+  printf '读取旧版 PostgreSQL 备份：启动隔离的临时读取容器，完成后删除；当前外部数据库配置不变。\n' >&2
+  docker network create "$network" >/dev/null || exit 1
+  docker run -d --name "$reader" --network "$network" -e POSTGRES_PASSWORD=backup-reader-private-network --mount "type=bind,src=$restore_dir,dst=/backup,readonly" postgres:18-alpine >/dev/null || exit 1
+  docker exec "$reader" sh -c 'i=0; until pg_isready -U postgres >/dev/null 2>&1; do i=$((i+1)); [ "$i" -lt 60 ] || exit 1; sleep 1; done' || exit 1
+  docker exec "$reader" pg_restore --dbname=postgres --username=postgres --no-owner --no-privileges --exit-on-error --single-transaction /backup/database.dump || exit 1
+  docker run --rm --network "$network" --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" -e DATABASE_PROVIDER=postgres -e PGHOST="$reader" -e PGPORT=5432 -e PGDATABASE=postgres -e PGUSER=postgres -e PGPASSWORD=backup-reader-private-network --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js legacy-export --directory /backup > "$work/data.tar.gz" || exit 1
+)
 restore() {
-  require_config || return 1
+  require_config && ensure_image || return 1
   ui backup || return 1
   name=$answer
   case "$name" in ''|*[!a-zA-Z0-9_-]*) return 0;; esac
   restore_dir="$PWD/backups/$name"
-  [ -f "$restore_dir/SHA256SUMS" ] && [ -f "$restore_dir/deployment.env" ] || { printf '备份不存在或不完整。\n' >&2; return 1; }
-  (cd "$restore_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi; }) || return 1
-  saved_project=$(sed -n "s/^COMPOSE_PROJECT_NAME=['\"]\{0,1\}\([a-zA-Z0-9_.-]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env" | tail -1); saved_project=${saved_project:-love-v4}
-  [ "$saved_project" = "$project" ] || { printf '备份属于其他部署，未覆盖当前数据。\n' >&2; return 1; }
-  saved_database=$(sed -n "s/^LOVE_DATABASE=['\"]\{0,1\}\([a-z]*\)['\"]\{0,1\}$/\1/p" "$restore_dir/deployment.env"); saved_database=${saved_database:-sqlite}
-  [ "$saved_database" = "$database" ] || { printf '数据库类型不匹配，未覆盖当前数据。\n' >&2; return 1; }
-  saved_data_volume=$(sed -n "s/^LOVE_DATA_VOLUME='\([a-z-]*\)'$/\1/p" "$restore_dir/deployment.env"); saved_data_volume=${saved_data_volume:-love-data}
-  case "$saved_data_volume" in love-data|postgres-work) ;; *) printf '备份数据卷配置无效。\n' >&2; return 1;; esac
-  ui text '这会覆盖当前数据和部署配置。输入 RESTORE 确认' RESTORE || return 1
+  [ -d "$restore_dir" ] && [ ! -L "$restore_dir" ] || { printf '备份目录不存在或无效。\n' >&2; return 1; }
+  restore_format=$(docker run --rm --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" --entrypoint node "$image" /app/apps/server/dist/database-backup-cli.js inspect --directory /backup) || return 1
+  case "$restore_format" in sqlite|postgres|legacy-postgres) ;; *) printf '无法识别备份类型。\n' >&2; return 1;; esac
+  ui text '将备份数据导入当前数据库，保留当前部署配置。输入 RESTORE 确认' RESTORE || return 1
   [ "$answer" = RESTORE ] || return 0
-  backup || return 1
-  compose stop love || return 1
-  if [ "$database" != sqlite ]; then
-    compose --profile management run --rm -T --no-deps database-tools sh -c 'exec pg_restore --dbname="$PGDATABASE" --clean --if-exists --no-owner --exit-on-error' < "$restore_dir/database.dump" || return 1
+  if [ "$restore_format" = legacy-postgres ]; then
+    [ -z "$work" ] || rm -rf -- "$work"
+    work=$(mktemp -d "$PWD/.love-restore.XXXXXXXX") || return 1
+    convert_legacy_backup || return 1
+    cp "$restore_dir/deployment.env" "$work/deployment.env" || return 1
+    (cd "$work" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum deployment.env data.tar.gz; else shasum -a 256 deployment.env data.tar.gz; fi; } > SHA256SUMS) || return 1
+    restore_dir=$work
   fi
-  docker run --rm --user 0 -i --mount "type=volume,src=${project}_${saved_data_volume},dst=/data" --entrypoint sh "$image" -c 'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && tar -C /data -xzf - && chown -R node:node /data' < "$restore_dir/data.tar.gz" || return 1
-  cp "$restore_dir/deployment.env" .env && chmod 600 .env && reload && start
+  backup || return 1
+  restore_running=$running
+  compose stop love || return 1
+  if ! compose run --rm -T --no-deps --user 0 --mount "type=bind,src=$restore_dir,dst=/backup,readonly" --entrypoint node love /app/apps/server/dist/database-backup-cli.js restore --directory /backup; then
+    printf '恢复失败；当前数据、部署配置和安全备份保留。\n' >&2
+    [ -z "$restore_running" ] || compose start love
+    return 1
+  fi
+  # Recreated containers pick up the same current .env, never deployment.env from the backup.
+  start || { printf '数据已恢复，启动失败；请检查连接和日志。恢复前备份：%s\n' "$backup_dir" >&2; return 1; }
+  printf '恢复完成，当前数据库与部署配置保持不变。\n'
 }
 update() {
   require_config && ensure_image || return 1
@@ -255,45 +280,6 @@ rollback() {
   docker image inspect "$rollback_image" >/dev/null || return 1
   image=$rollback_image; set_field LOVE_IMAGE "$image" && start
 }
-migrate_database() {
-  require_config && ensure_image || return 1
-  [ "$database" = sqlite ] || { printf '当前部署已经使用 PostgreSQL。\n'; return 1; }
-  work=$(mktemp -d "$PWD/.love-migration.XXXXXXXX") || return 1
-  migration_env="$work/target.env"
-  docker run --rm -it --user "$(id -u):$(id -g)" -v "$PWD:/setup" --entrypoint node "$image" /app/scripts/database-migration.mjs /setup/.env "/setup/$(basename "$work")/target.env" || return 1
-  # Keep the private report owned by the host user when the root container writes it.
-  : > "$work/report.json" || return 1
-  backup || return 1
-  source_volume=$data_volume
-  source_running=$running
-  compose stop love || return 1
-  database=$(sed -n "s/^LOVE_DATABASE='\([a-z]*\)'$/\1/p" "$migration_env")
-  data_volume=$(sed -n "s/^LOVE_DATA_VOLUME='\([a-z-]*\)'$/\1/p" "$migration_env")
-  compose_env=$migration_env
-  migration_ok=1
-  if [ "$database" = postgres ]; then compose up -d --no-build --wait postgres || migration_ok=0; fi
-  if [ "$migration_ok" = 1 ]; then
-    compose run --rm -T --no-deps --user 0 --volume "$PWD:/setup" --volume "${project}_${source_volume}:/source:ro" --entrypoint node love /app/apps/server/dist/sqlite-to-postgres-cli.js --source /source/love.sqlite --media /source/media --report "/setup/$(basename "$work")/report.json" || migration_ok=0
-  fi
-  compose_env=''
-  if [ "$migration_ok" != 1 ]; then
-    reload
-    [ -z "$source_running" ] || compose start love
-    printf '迁移未完成，原 SQLite 配置和媒体保留。修复问题后可重新选择迁移。\n' >&2
-    return 1
-  fi
-  cp "$work/report.json" "$backup_dir/postgres-migration.json" || { reload; [ -z "$source_running" ] || compose start love; return 1; }
-  (cd "$backup_dir" && { if command -v sha256sum >/dev/null 2>&1; then sha256sum postgres-migration.json; else shasum -a 256 postgres-migration.json; fi; } >> SHA256SUMS) || { reload; [ -z "$source_running" ] || compose start love; return 1; }
-  install_file "$migration_env" .env || { reload; [ -z "$source_running" ] || compose start love; return 1; }
-  reload && start || {
-    compose stop love || true
-    install_file "$backup_dir/deployment.env" .env && reload || { printf '恢复 SQLite 配置失败，请使用迁移前备份的 deployment.env。\n' >&2; return 1; }
-    [ -z "$source_running" ] || start
-    printf 'PostgreSQL 启动失败，已恢复 SQLite 配置；目标迁移结果保留，可重试。\n' >&2
-    return 1
-  }
-  printf '迁移完成并切换到 PostgreSQL。报告：%s/postgres-migration.json\n原 SQLite 数据卷和迁移前备份均保留。\n' "$backup_dir"
-}
 cleanup_media() {
   require_config && ensure_image || return 1
   [ "$database" = sqlite ] || { printf '此操作用于 SQLite 的磁盘媒体。\n'; return 1; }
@@ -345,7 +331,6 @@ while :; do
     update) update || result=$?;;
     backup) backup || result=$?;;
     restore) restore || result=$?;;
-    migrate) migrate_database || result=$?;;
     cleanup) cleanup_media || result=$?;;
     uninstall) uninstall || result=$?;;
     rollback) rollback || result=$?;;

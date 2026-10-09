@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { basename, join } from 'node:path';
@@ -37,15 +37,6 @@ export const transferTables = [
   'server_logs',
   'audit_logs',
 ] as const;
-const bootstrapTables = new Set<string>([
-  'administrators',
-  'server_config',
-  'admin_sessions',
-  'captchas',
-  'access_logs',
-  'server_logs',
-  'audit_logs',
-]);
 const identities = ['messages', 'access_logs', 'server_logs', 'audit_logs'];
 const quote = (identifier: string) => '"' + identifier.replaceAll('"', '""') + '"';
 type Table = {
@@ -78,7 +69,7 @@ async function streamHash(stream: AsyncIterable<Buffer | string>) {
   return { bytes, digest: hash.digest('hex') };
 }
 
-export async function migrateSQLiteToPostgres({
+export async function restoreToPostgres({
   sourcePath,
   mediaDirectory,
   target,
@@ -86,12 +77,12 @@ export async function migrateSQLiteToPostgres({
 }: {
   sourcePath: string;
   mediaDirectory: string;
-  target: DB;
+  target?: DB;
   progress?: (message: string) => void;
 }): Promise<TransferReport> {
-  if (target.provider !== 'postgres') throw new Error('目标必须是 PostgreSQL');
+  if (target && target.provider !== 'postgres') throw new Error('目标必须是 PostgreSQL');
   const source = new DatabaseSync(sourcePath, { readOnly: true });
-  const repository = new MediaRepository(target, mediaDirectory);
+  const repository = target ? new MediaRepository(target, mediaDirectory) : undefined;
   try {
     source.exec('BEGIN'); // A stable read snapshot; never upgrades or modifies the source.
     if (source.prepare('PRAGMA user_version').get()!.user_version !== 9)
@@ -99,7 +90,7 @@ export async function migrateSQLiteToPostgres({
     if (source.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok')
       throw new Error('源 SQLite 完整性检查失败');
     if (source.prepare('PRAGMA foreign_key_check').all().length)
-      throw new Error('源 SQLite 存在无效关联，迁移未开始');
+      throw new Error('源 SQLite 存在无效关联，恢复未开始');
     const names = source
       .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
       .all()
@@ -117,15 +108,6 @@ export async function migrateSQLiteToPostgres({
         .filter((column) => Number(column.pk) > 0)
         .sort((a, b) => Number(a.pk) - Number(b.pk))
         .map((column) => String(column.name));
-      const targetColumns = (
-        await target
-          .prepare(
-            'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? ORDER BY ordinal_position',
-          )
-          .all(name)
-      ).map((column) => String(column.column_name));
-      if (JSON.stringify(columns) !== JSON.stringify(targetColumns))
-        throw new Error(`目标表结构不一致：${name}`);
       const order = (primary.length ? primary : columns).map(quote).join(',');
       const pgOrder = (primary.length ? primary : columns)
         .map(
@@ -196,6 +178,21 @@ export async function migrateSQLiteToPostgres({
       mediaFiles: files.length,
       mediaBytes,
     };
+    if (!target) return report;
+    for (const table of tables) {
+      const columns = table.columns,
+        name = table.name;
+      const targetColumns = (
+        await target
+          .prepare(
+            'SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=? ORDER BY ordinal_position',
+          )
+          .all(name)
+      ).map((column) => String(column.column_name));
+      if (JSON.stringify(columns) !== JSON.stringify(targetColumns))
+        throw new Error(`目标表结构不一致：${name}`);
+    }
+    const restoreId = randomUUID();
     const verify = async () => {
       for (const table of tables) {
         const hash = createHash('sha256');
@@ -216,13 +213,13 @@ export async function migrateSQLiteToPostgres({
           await target.exec('CLOSE transfer_verify');
         }
         if (count !== table.count || hash.digest('hex') !== table.digest)
-          throw new Error(`迁移数据核对失败：${table.name}`);
+          throw new Error(`恢复数据核对失败：${table.name}`);
       }
       for (const file of files) {
         const row = await target
           .prepare('SELECT mediaId,bytes,sha256 FROM media_files WHERE name=? AND complete=1')
           .get(file.name);
-        const actual = await streamHash(repository.stream(file.name));
+        const actual = await streamHash(repository!.stream(file.name));
         if (
           row?.mediaId !== file.mediaId ||
           row.bytes !== file.bytes ||
@@ -239,41 +236,26 @@ export async function migrateSQLiteToPostgres({
         if (
           !(await target
             .prepare(
-              "SELECT 1 value FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='database_transfers'",
+              "SELECT 1 value FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='database_restores'",
             )
             .get())
         )
           return false;
         const saved = await target
-          .prepare('SELECT report FROM database_transfers WHERE sourceDigest=?')
-          .get(sourceDigest);
+          .prepare('SELECT report FROM database_restores WHERE id=?')
+          .get(restoreId);
         return Boolean(
           saved && JSON.stringify(JSON.parse(String(saved.report))) === JSON.stringify(report),
         );
       },
       async () => {
         await target.exec(
-          'CREATE TABLE IF NOT EXISTS database_transfers(sourceDigest TEXT PRIMARY KEY, report TEXT NOT NULL, completedAt TEXT NOT NULL)',
+          'CREATE TABLE IF NOT EXISTS database_restores(id TEXT PRIMARY KEY, report TEXT NOT NULL, completedAt TEXT NOT NULL)',
         );
-        const previous = await target
-          .prepare('SELECT report FROM database_transfers WHERE sourceDigest=?')
-          .get(sourceDigest);
-        if (previous) {
-          await verify();
-          progress('同一份数据已迁移，核对通过。');
-          return report;
-        }
-        if (await target.prepare('SELECT sourceDigest FROM database_transfers LIMIT 1').get())
-          throw new Error('目标库已迁移过其他数据，请使用空目标库');
-        for (const table of tables) {
-          if (
-            !bootstrapTables.has(table.name) &&
-            (await target.prepare(`SELECT 1 value FROM ${quote(table.name)} LIMIT 1`).get())
-          )
-            throw new Error(`目标数据库已有数据，拒绝覆盖：${table.name}`);
-        }
-        if (await target.prepare('SELECT name FROM media_files LIMIT 1').get())
-          throw new Error('目标库已有媒体，拒绝覆盖');
+        // RESTORE was confirmed by the administrator; replace populated destinations too.
+        await target.exec('DELETE FROM database_restores');
+        await target.exec('UPDATE users SET "avatarMediaId"=NULL');
+        await target.exec('DELETE FROM media_files');
         for (const table of [...tables].reverse())
           await target.exec(`DELETE FROM ${quote(table.name)}`);
         // SQLite REAL is a double; PostgreSQL REAL is single precision. Preserve
@@ -306,8 +288,8 @@ export async function migrateSQLiteToPostgres({
           progress(
             `正在写入媒体 ${index + 1}/${files.length}（${(file.bytes / 1048576).toFixed(1)} MiB）…`,
           );
-          await repository.stage([file.name], [file.bytes], true);
-          await repository.bind(file.mediaId, [file.name]);
+          await repository!.stage([file.name], [file.bytes], true);
+          await repository!.bind(file.mediaId, [file.name]);
         }
         for (const name of identities) {
           const sequence = Number(
@@ -329,8 +311,8 @@ export async function migrateSQLiteToPostgres({
         progress('正在逐表核对数据和数据库媒体 SHA-256…');
         await verify();
         await target
-          .prepare('INSERT INTO database_transfers VALUES(?,?,?)')
-          .run(sourceDigest, JSON.stringify(report), new Date().toISOString());
+          .prepare('INSERT INTO database_restores VALUES(?,?,?)')
+          .run(restoreId, JSON.stringify(report), new Date().toISOString());
         return report;
       },
     );

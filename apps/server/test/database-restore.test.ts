@@ -627,6 +627,16 @@ test('failed SMTP authentication leaves every credential and business row unchan
   assert.deepEqual(await readFile(s.sourcePath), before);
 });
 
+test('old credential decryption never depends on the current deployment key', async (t) => {
+  const s = await fixture(t, false);
+  const before = await readFile(s.sourcePath);
+  assert.throws(
+    () => rekeyBackup(s.sourcePath, 'backup-missing-its-original-key', secret),
+    /备份未包含.*正确密钥/,
+  );
+  assert.deepEqual(await readFile(s.sourcePath), before);
+});
+
 test('interrupted SQLite file switch rolls back database and media before startup', async (t) => {
   const s = await fixture(t, false),
     root = join(s.dir, 'interrupted'),

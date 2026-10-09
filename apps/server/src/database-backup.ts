@@ -285,7 +285,7 @@ export function rekeyBackup(path: string, sourceSecret: string, targetSecret: st
     const storedSecret = sqlite
       .prepare("SELECT value FROM server_config WHERE key='mediaSecret'")
       .get();
-    const candidates = [...new Set([sourceSecret, storedSecret?.value, targetSecret])].filter(
+    const candidates = [...new Set([sourceSecret, storedSecret?.value])].filter(
       (key): key is string => typeof key === 'string' && key.length > 0,
     );
     // Older deployments may have encrypted credentials with the database-generated
@@ -305,8 +305,8 @@ export function rekeyBackup(path: string, sourceSecret: string, targetSecret: st
         return seal(plaintext, targetSecret);
       }
       throw new Error(
-        `备份中的${label}无法解密：备份配置、数据库内保存的旧密钥及当前密钥均无法验证。` +
-          '请使用加密这些凭据时的 MEDIA_SIGNING_SECRET；当前数据未修改。',
+        `备份中的${label}无法解密：备份配置及备份数据库内保存的旧密钥均无法验证。` +
+          '备份未包含加密这些凭据时的正确密钥；当前数据未修改。',
       );
     };
     // Authenticate every credential before writing even the private snapshot.

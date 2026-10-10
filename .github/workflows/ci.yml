@@ -158,7 +158,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: docker compose --profile https config --quiet
+      - run: docker compose --project-directory . -f infra/docker/compose.yml --profile https config --quiet
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           LOVE_DOMAIN: love.example.com

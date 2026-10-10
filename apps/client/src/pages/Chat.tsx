@@ -276,7 +276,12 @@ export function Chat() {
                     className={`message-row mb-5 flex items-start gap-2.5 ${mine ? 'flex-row-reverse' : ''}`}
                   >
                     {message.role === 'user' && !mine ? (
-                      <PartnerAvatar partner={profile.partner!} api={api} small />
+                      <PartnerAvatar
+                        partner={profile.partner!}
+                        api={api}
+                        small
+                        alt={`${sender.name}的聊天头像`}
+                      />
                     ) : (
                       <Avatar
                         small

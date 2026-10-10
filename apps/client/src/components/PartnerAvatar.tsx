@@ -8,10 +8,12 @@ export function PartnerAvatar({
   partner,
   api,
   small = false,
+  alt = '另一半头像',
 }: {
   partner: User;
   api: Api;
   small?: boolean;
+  alt?: string;
 }) {
   const [open, setOpen] = useState(false);
   const src = partner.avatar ? api.url(partner.avatar.thumbnailUrl) : undefined;
@@ -23,7 +25,7 @@ export function PartnerAvatar({
         aria-label={`查看${partner.name}的资料`}
         onClick={() => setOpen(true)}
       >
-        <Avatar name={partner.name} src={src} small={small} />
+        <Avatar name={partner.name} src={src} small={small} alt={alt} />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

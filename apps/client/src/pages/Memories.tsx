@@ -811,7 +811,8 @@ export function Memories() {
                   )}
                 </Button>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  安卓请上传实况原图；苹果请同时选择同名照片与 MOV，两者会合并为一项实况回忆。
+                  支持普通照片、视频和实况照片。安卓实况照片请选择原图；苹果实况照片请同时选择同名照片与
+                  MOV，两者会合并为一项实况回忆。
                 </p>
                 {files.length > 0 && (
                   <UploadSelection

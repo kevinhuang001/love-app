@@ -1,5 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, X, ZoomIn, ZoomOut, Pencil, Trash2, Play } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  X,
+  ZoomIn,
+  ZoomOut,
+  Pencil,
+  Trash2,
+  Play,
+  Square,
+} from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import type { Api } from '@/lib/api';
@@ -55,7 +65,9 @@ export function AlbumViewer({
     const bounds = viewport.current?.getBoundingClientRect();
     const width = bounds?.width || 0,
       height = bounds?.height || 0;
-    const fit = item ? Math.min(width / (item.media.width || width), height / (item.media.height || height)) : 1;
+    const fit = item
+      ? Math.min(width / (item.media.width || width), height / (item.media.height || height))
+      : 1;
     const maxX = Math.max(0, ((item?.media.width || width) * fit * value - width) / 2);
     const maxY = Math.max(0, ((item?.media.height || height) * fit * value - height) / 2);
     setScale(value);
@@ -124,7 +136,7 @@ export function AlbumViewer({
     gesture.current = null;
     resetZoom();
     setFailed(false);
-    setPlaying(false);
+    setPlaying(item?.media.kind === 'live');
     setMoving(false);
     setAnimated(false);
     if (pending?.fetching && item) {
@@ -331,6 +343,7 @@ export function AlbumViewer({
                         poster={api.url(moment.media.thumbnailUrl)}
                         controls
                         autoPlay
+                        muted={moment.media.kind === 'live'}
                         playsInline
                         preload="metadata"
                         onEnded={() => setPlaying(false)}
@@ -407,8 +420,8 @@ export function AlbumViewer({
                     setPlaying((v) => !v);
                   }}
                 >
-                  <Play size={16} />
-                  {playing ? '停止' : '实况'}
+                  {playing ? <Square size={16} /> : <Play size={16} />}
+                  {playing ? '停止实况' : '播放实况'}
                 </Button>
               )}
               {canEdit && (

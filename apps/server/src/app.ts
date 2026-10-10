@@ -771,44 +771,6 @@ export async function createApp(options: AppOptions = {}) {
     await streams.flush();
     res.status(201).json(result);
   });
-  const mutableMessage = async (req: AuthRequest) => {
-    const id = z.coerce.number().int().positive().parse(req.params.id);
-    const row = await db
-      .prepare('SELECT * FROM messages WHERE id=? AND coupleId=?')
-      .get(id, await couple(req));
-    if (!row) fail(404, '消息不存在');
-    const job = await db.prepare('SELECT status FROM ai_jobs WHERE messageId=?').get(id);
-    if (job?.status === 'pending') fail(409, 'AI 正在处理这条消息，请等待回复后再修改');
-    return row!;
-  };
-  route('patch', '/api/messages/:id', async (req, res) => {
-    const { content } = z.object({ content: z.string().trim().max(8000) }).parse(req.body);
-    await transaction(db, async () => {
-      const message = await mutableMessage(req);
-      const attachments = await db
-        .prepare('SELECT mediaId FROM message_media WHERE messageId=?')
-        .all(message.id);
-      const text = message.role === 'assistant' ? visibleAIContent(content) : content;
-      if (!text && !attachments.length) fail(400, '消息不能为空');
-      await db
-        .prepare('UPDATE messages SET content=? WHERE id=? AND coupleId=?')
-        .run(text, message.id, req.user.coupleId);
-    });
-    io.to(`couple:${req.user.coupleId}`).emit('messages:changed');
-    res.sendStatus(204);
-  });
-  route('delete', '/api/messages/:id', async (req, res) => {
-    await transaction(db, async () => {
-      const message = await mutableMessage(req);
-      await db.prepare('DELETE FROM ai_actions WHERE messageId=?').run(message.id);
-      await db.prepare('DELETE FROM ai_jobs WHERE messageId=?').run(message.id);
-      await db
-        .prepare('DELETE FROM messages WHERE id=? AND coupleId=?')
-        .run(message.id, req.user.coupleId);
-    });
-    io.to(`couple:${req.user.coupleId}`).emit('messages:changed');
-    res.sendStatus(204);
-  });
   route('post', '/api/messages/read', async (req, res) => {
     const { throughId } = z.object({ throughId: z.number().int().positive() }).parse(req.body);
     const coupleId = await couple(req),

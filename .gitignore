@@ -2,14 +2,14 @@ node_modules/
 .env
 .env.*
 !.env.example
-!.env.docker.example
+!infra/docker/.env.example
 data/
 dist/
 apps/client/android/
 *.jks
 *.keystore
-playwright-report/
-test-results/
+.artifacts/playwright-report/
+.artifacts/test-results/
 coverage/
 *.log
 
@@ -19,6 +19,8 @@ backups/
 .love-ui.*
 .love-*.????????
 
-manager-dist/
+.artifacts/manager/
 
 /love
+
+.artifacts/

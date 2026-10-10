@@ -2,7 +2,7 @@
 
 Love 记录请求、服务事件和管理员操作，三类日志回答不同问题。媒体一致性检查和清理另外负责核实数据库与实际字节；不能用“删掉旧文件”代替检查。
 
-代码入口：[control.ts](../../../apps/server/src/control.ts)、[database-check.ts](../../../apps/server/src/database-check.ts)、[media-cleanup.ts](../../../apps/server/src/media-cleanup.ts)、[管理程序](../../../deploy/manager.mjs)。
+代码入口：[control.ts](../../../apps/server/src/control.ts)、[database-check.ts](../../../apps/server/src/database-check.ts)、[media-cleanup.ts](../../../apps/server/src/media-cleanup.ts)、[管理程序](../../../manager/manager.mjs)。
 
 ## 三种日志从哪里来
 

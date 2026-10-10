@@ -7,9 +7,12 @@ node_modules
 data
 .git
 config
-playwright-report
-test-results
+.artifacts/playwright-report
+.artifacts/test-results
 
-manager-dist
+.artifacts/manager
 
 /love
+
+.artifacts
+tests

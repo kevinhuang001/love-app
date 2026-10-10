@@ -20,7 +20,7 @@ docker compose version
 ```sh
 mkdir -p ~/love
 cd ~/love
-curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/manager/install.sh | bash
 ```
 
 安装器下载正式发布的 `love` 程序并打开菜单。以后在此目录运行 `./love`；普通账户需要管理数据卷时运行 `sudo ./love`。服务器已用 root 登录时不需要 sudo。

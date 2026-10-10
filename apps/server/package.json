@@ -8,7 +8,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "start": "node --env-file-if-exists=../../.env dist/index.js",
-    "test": "node --import tsx --test --test-timeout=60000 test/*.test.ts"
+    "test": "node --import tsx --test --test-timeout=60000 ../../tests/server/*.test.ts"
   },
   "dependencies": {
     "@love/calendar": "*",

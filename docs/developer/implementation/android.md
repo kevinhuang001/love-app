@@ -2,7 +2,7 @@
 
 Android 用 Capacitor 承载同一套 Web 界面，原生代码补上后台连接、本地通知、文件分享和返回键处理。聊天数据仍在服务器，没有另建手机数据库来替代后端。
 
-代码入口：[原生通知服务](../../../apps/client/native/LocalNotificationService.java)、[通知桥接](../../../apps/client/native/LocalNotificationsPlugin.java)、[MainActivity](../../../apps/client/native/MainActivity.java)、[服务端 SSE](../../../apps/server/src/notifications.ts)、[生成 Android 工程](../../../scripts/android.mjs)。
+代码入口：[原生通知服务](../../../apps/client/native/LocalNotificationService.java)、[通知桥接](../../../apps/client/native/LocalNotificationsPlugin.java)、[MainActivity](../../../apps/client/native/MainActivity.java)、[服务端 SSE](../../../apps/server/src/notifications.ts)、[生成 Android 工程](../../../tools/android/prepare.mjs)。
 
 ## 用户开启通知后有哪些组件参与
 

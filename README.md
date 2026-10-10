@@ -22,7 +22,7 @@ Love 是一个可以自己部署的两人生活应用。一起聊天、保存照
 ```sh
 mkdir -p ~/love
 cd ~/love
-curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/manager/install.sh | bash
 ```
 
 安装后会打开管理菜单。选择 **部署配置**，按提示选择数据库、访问方式和管理员账号，再启动应用。数据库管理需要读取服务器上的数据卷；使用普通账户遇到权限问题时，在同一目录运行 `sudo ./love`。
@@ -54,3 +54,5 @@ Android 用户从 [Releases](https://github.com/kevinhuang001/love-app/releases/
 ## 许可证
 
 项目采用 [MIT 许可证](LICENSE)。第三方组件和字体的许可见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
+源码目录和开发入口见[目录组织](docs/developer/project-layout.md)。

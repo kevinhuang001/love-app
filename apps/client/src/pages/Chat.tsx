@@ -1,16 +1,7 @@
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { PartnerAvatar } from '@/components/PartnerAvatar';
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Paperclip,
-  Send,
-  X,
-  Check,
-  CheckCheck,
-  WifiOff,
-  LoaderCircle,
-  MoreHorizontal,
-} from 'lucide-react';
+import { Paperclip, Send, X, Check, CheckCheck, WifiOff, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { newId } from '@/lib/id';
 import { aiMention, completeMention } from '@/lib/chat';
@@ -29,9 +20,6 @@ export function Chat() {
   const { api, profile, socket, connected, partnerOnline, openUs } = useApp(),
     cache = useQueryClient();
   const key = `love.outbox.v2:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
-  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null),
-    [editedContent, setEditedContent] = useState(''),
-    [editingMessage, setEditingMessage] = useState(false);
   const [text, setText] = useState(''),
     [attachments, setAttachments] = useState<Media[]>([]),
     [uploading, setUploading] = useState<{ index: number; total: number; percent: number } | null>(
@@ -196,15 +184,7 @@ export function Chat() {
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="聊天">
       <div className="conversation-heading flex items-center gap-3 border-b bg-card px-5 py-5">
-        {profile.partner.avatar ? (
-          <img
-            alt="另一半头像"
-            src={api.url(profile.partner.avatar.thumbnailUrl)}
-            className="size-10 rounded-full object-cover"
-          />
-        ) : (
-          <Avatar name={profile.partner.name} />
-        )}
+        <PartnerAvatar partner={profile.partner} api={api} />
         <div>
           <h2 className="text-base font-medium">{profile.partner.name}</h2>
           <p
@@ -295,24 +275,28 @@ export function Chat() {
                     data-role={message.role}
                     className={`message-row mb-5 flex items-start gap-2.5 ${mine ? 'flex-row-reverse' : ''}`}
                   >
-                    <Avatar
-                      small
-                      name={sender.name}
-                      src={
-                        sender.avatar
-                          ? api.url(sender.avatar.thumbnailUrl)
-                          : message.role === 'assistant'
-                            ? '/images/ai-avatar.webp'
-                            : undefined
-                      }
-                      alt={
-                        message.role === 'assistant'
-                          ? `${sender.name}的头像`
-                          : mine
-                            ? '你的聊天头像'
-                            : `${sender.name}的聊天头像`
-                      }
-                    />
+                    {message.role === 'user' && !mine ? (
+                      <PartnerAvatar partner={profile.partner!} api={api} small />
+                    ) : (
+                      <Avatar
+                        small
+                        name={sender.name}
+                        src={
+                          sender.avatar
+                            ? api.url(sender.avatar.thumbnailUrl)
+                            : message.role === 'assistant'
+                              ? '/images/ai-avatar.webp'
+                              : undefined
+                        }
+                        alt={
+                          message.role === 'assistant'
+                            ? `${sender.name}的头像`
+                            : mine
+                              ? '你的聊天头像'
+                              : `${sender.name}的聊天头像`
+                        }
+                      />
+                    )}
                     <div className="min-w-0 max-w-[calc(100%-44px)] sm:max-w-[65%]">
                       {message.role === 'assistant' && (
                         <p className="mb-1.5 text-[11px] text-muted-foreground">
@@ -348,17 +332,6 @@ export function Chat() {
                           hour: '2-digit',
                           minute: '2-digit',
                         })}
-                        <button
-                          type="button"
-                          aria-label={`修改消息 ${message.id}`}
-                          className="ml-1 rounded p-1 text-muted-foreground"
-                          onClick={() => {
-                            setSelectedMessage(message);
-                            setEditedContent(message.content);
-                          }}
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
                         {mine &&
                           (message.readAt ? (
                             <>
@@ -563,60 +536,6 @@ export function Chat() {
           </Button>
         </div>
       </form>
-      <Dialog
-        open={Boolean(selectedMessage)}
-        onOpenChange={(open) => {
-          if (!open && !editingMessage) setSelectedMessage(null);
-        }}
-      >
-        <DialogContent>
-          <DialogTitle>修改消息</DialogTitle>
-          <DialogDescription>修改或删除会同步到两个人的聊天中。</DialogDescription>
-          <Textarea
-            aria-label="消息内容"
-            value={editedContent}
-            onChange={(e) => setEditedContent(e.target.value)}
-            maxLength={8000}
-          />
-          <Button
-            disabled={
-              editingMessage || (!editedContent.trim() && !selectedMessage?.attachments.length)
-            }
-            onClick={async () => {
-              setEditingMessage(true);
-              try {
-                await api.patch(`/api/messages/${selectedMessage!.id}`, { content: editedContent });
-                await cache.invalidateQueries({ queryKey: ['messages'] });
-                setSelectedMessage(null);
-              } catch (e) {
-                toast.error((e as Error).message);
-              } finally {
-                setEditingMessage(false);
-              }
-            }}
-          >
-            保存消息
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={editingMessage}
-            onClick={async () => {
-              setEditingMessage(true);
-              try {
-                await api.delete(`/api/messages/${selectedMessage!.id}`);
-                await cache.invalidateQueries({ queryKey: ['messages'] });
-                setSelectedMessage(null);
-              } catch (e) {
-                toast.error((e as Error).message);
-              } finally {
-                setEditingMessage(false);
-              }
-            }}
-          >
-            删除这条消息
-          </Button>
-        </DialogContent>
-      </Dialog>
     </section>
   );
 }

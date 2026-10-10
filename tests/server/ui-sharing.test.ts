@@ -39,7 +39,7 @@ test('password changes require current password, work before pairing and preserv
   await s.api(b.token).get('/api/me').expect(200);
 });
 
-test('both partners can change messages; other pairs cannot; stored thinking remains hidden', async (t) => {
+test('sent messages cannot be edited or deleted by either partner; stored thinking remains hidden', async (t) => {
   const s = await setup(t),
     a = await s.register('sharealice'),
     b = await s.register('sharebob'),
@@ -53,16 +53,16 @@ test('both partners can change messages; other pairs cannot; stored thinking rem
       .post('/api/messages', { clientId: randomUUID(), content: 'original' })
       .expect(201)
   ).body;
-  await s.api(b.token).patch(`/api/messages/${m.id}`, { content: 'shared edit' }).expect(204);
-  assert.equal((await s.api(a.token).get('/api/messages')).body.items[0].content, 'shared edit');
-  await s.api(c.token).patch(`/api/messages/${m.id}`, { content: 'intruder' }).expect(404);
-  await s.api(c.token).delete(`/api/messages/${m.id}`).expect(404);
+  for (const token of [a.token, b.token, c.token]) {
+    await s.api(token).patch(`/api/messages/${m.id}`, { content: 'changed' }).expect(404);
+    await s.api(token).delete(`/api/messages/${m.id}`).expect(404);
+  }
+  assert.equal((await s.api(a.token).get('/api/messages')).body.items[0].content, 'original');
   await s.db
     .prepare("UPDATE messages SET role='assistant',content=? WHERE id=?")
     .run('<think>secret reasoning</think>answer', m.id);
   assert.equal((await s.api(b.token).get('/api/messages')).body.items[0].content, 'answer');
-  await s.api(b.token).delete(`/api/messages/${m.id}`).expect(204);
-  assert.equal((await s.api(a.token).get('/api/messages')).body.items.length, 0);
+  assert.equal((await s.api(a.token).get('/api/messages')).body.items.length, 1);
 });
 
 test('thinking blocks, nested tags and unfinished thought text are removed while ordinary replies remain', () => {

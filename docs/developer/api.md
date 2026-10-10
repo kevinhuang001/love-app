@@ -146,7 +146,7 @@ Socket.IO 连接服务器 origin，认证为 `auth: {token, active: true}`。服
 
 POST /api/me/password 接收 currentPassword 和 password（8–128 字符），核验旧密码，撤销其他会话，保留当前会话。无需配对。
 
-PATCH /api/messages/:id 修改 content；DELETE 同一路径删除消息；均限制当前 coupleId，双方可操作。待处理 AI 消息返回 409。
+已发送的聊天记录不提供修改或删除接口。
 
 POST /api/media 接收 file，可选 liveVideo 配对 MOV。Android 内嵌实况自动提取。返回 kind=live、静态 previewUrl 和 motionUrl。`type=image` 相册筛选包含 live。
 

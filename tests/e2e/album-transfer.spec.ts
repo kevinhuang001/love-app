@@ -52,6 +52,11 @@ test('mobile album exports a portable ZIP without import UI and supports photo z
     { token: first.token },
   );
   await page.goto('/');
+  await page.getByRole('button', { name: '查看小舟的资料', exact: true }).click();
+  await expect(page.getByRole('dialog')).toContainText('zipb' + suffix);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await expect(page.getByRole('button', { name: /修改消息/ })).toHaveCount(0);
+
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   const photo = await sharp({
     create: { width: 600, height: 400, channels: 3, background: '#395f50' },
@@ -135,6 +140,8 @@ test('mobile album exports a portable ZIP without import UI and supports photo z
   await expect(image).toHaveCSS('transform', /matrix\(2,/);
   await page.getByRole('button', { name: '还原照片' }).click();
   await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.mouse.move(0, 700);
+  await expect(page.locator('[data-sonner-toast]')).toHaveCount(0);
   const motion = execFileSync('ffmpeg', [
     '-nostdin',
     '-loglevel',

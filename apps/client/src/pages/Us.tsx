@@ -1,3 +1,4 @@
+import { PartnerAvatar } from '@/components/PartnerAvatar';
 import { checkAndroidUpdate, downloadAndroidUpdate, type AndroidUpdate } from '@/lib/updates';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -244,15 +245,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
         {profile.partner ? (
           <>
             <div className="flex items-center gap-3">
-              {profile.partner.avatar ? (
-                <img
-                  alt="另一半头像"
-                  className="size-10 rounded-full object-cover"
-                  src={api.url(profile.partner.avatar.thumbnailUrl)}
-                />
-              ) : (
-                <Avatar name={profile.partner.name} />
-              )}
+              <PartnerAvatar partner={profile.partner} api={api} />
               <div>
                 <p className="text-sm">{profile.partner.name}</p>
                 <p className="text-xs text-muted-foreground">已连接到同一个空间</p>

@@ -2,7 +2,7 @@
 
 备份首先要回答“数据是否完整”，恢复还要回答“版本能否理解、密钥能否解密、替换失败是否能保住目标”。只打包几个文件无法回答这些问题，所以实现分成快照、校验、迁移、凭据转换和目标提交。
 
-代码入口：[database-backup.ts](../../../apps/server/src/database-backup.ts)、[database-restore.ts](../../../apps/server/src/database-restore.ts)、[格式注册表](../../../apps/server/src/backup-format.ts)、[通用归档调度器](../../../apps/server/src/backup-package.ts)、[管理程序](../../../deploy/manager.mjs)、[tar 打包](../../../deploy/archive.mjs)。文件字段见[备份格式手册](../backup-format.md)。
+代码入口：[database-backup.ts](../../../apps/server/src/database-backup.ts)、[database-restore.ts](../../../apps/server/src/database-restore.ts)、[格式注册表](../../../apps/server/src/backup-format.ts)、[通用归档调度器](../../../apps/server/src/backup-package.ts)、[管理程序](../../../manager/manager.mjs)、[tar 打包](../../../manager/archive.mjs)。文件字段见[备份格式手册](../backup-format.md)。
 
 ## 生成备份：为什么暂停应用
 

@@ -28,6 +28,7 @@
 | [实现细节](developer/implementation/README.md)        | 从操作到代码，配合流程图、状态图和时序图阅读           |
 | [数据库迁移](developer/migrations.md)                 | 新增增量、迁移历史、事务、兼容范围与测试要求           |
 | [备份与相册文件格式](developer/backup-format.md)      | 服务器备份和相册 ZIP 的结构、校验、恢复流程            |
+| [目录组织](developer/project-layout.md)               | 源码、测试、管理程序、部署模板和工具各放哪里           |
 | [手工部署与镜像构建](developer/deployment.md)         | Compose 文件组合、反向代理、非 Docker 运行、国内构建源 |
 | [Android 构建与签名](developer/android.md)            | 本地构建、固定签名和原生通知测试                       |
 | [CI 与发布](developer/ci.md)                          | GitHub Actions 检查项、构建产物和发布条件              |

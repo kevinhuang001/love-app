@@ -15,7 +15,7 @@ cd apps/client/android
 
 产物为 `apps/client/android/app/build/outputs/apk/debug/app-debug.apk`。Windows 使用 `gradlew.bat`。
 
-`android:prepare` 构建 Web 界面、同步 Capacitor，并生成原生配置。原生源码维护在 [apps/client/native](../../apps/client/native)，生成逻辑在 [scripts/android.mjs](../../scripts/android.mjs)。不要只修改生成后的 Java 或 Manifest，下一次 prepare 会覆盖它们。
+`android:prepare` 构建 Web 界面、同步 Capacitor，并生成原生配置。原生源码维护在 [apps/client/native](../../apps/client/native)，生成逻辑在 [tools/android/prepare.mjs](../../tools/android/prepare.mjs)。不要只修改生成后的 Java 或 Manifest，下一次 prepare 会覆盖它们。
 
 包名为 `com.kevinhuang.love`，WebView origin 为 `https://localhost`。客户端登录页选择远端服务器，不把服务器地址编译进 APK。应用通过 Preferences 保存会话、服务器地址和用户名，不保存密码；`allowBackup=false`。
 
@@ -73,6 +73,6 @@ cd apps/client/android
 4. 退出登录或解除配对，确认停止接收。
 5. 检查设备的电池限制、深度休眠和进程被终止时的表现。
 
-CI 会验证原生编译、Manifest、实际 DEX、签名和打包网络配置，也会检查本地通知桥接与权限。检查脚本仍叫 [verify-android-push.py](../../scripts/verify-android-push.py)，它验证的是当前本地通知方案。自动检查不能代替真实手机的锁屏与送达测试。服务需要进程持续运行，不具备进程被终止后的离线唤醒或开机自启动能力。
+CI 会验证原生编译、Manifest、实际 DEX、签名和打包网络配置，也会检查本地通知桥接与权限。检查脚本仍叫 [verify-android-push.py](../../tests/android/verify-push.py)，它验证的是当前本地通知方案。自动检查不能代替真实手机的锁屏与送达测试。服务需要进程持续运行，不具备进程被终止后的离线唤醒或开机自启动能力。
 
 构建产物、发布门槛和版本维护见 [CI 与发布](ci.md)。

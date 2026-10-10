@@ -33,18 +33,19 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: npm ci --no-audit --no-fund
-      - run: bun scripts/build-manager.mjs
+      - run: bun manager/build.mjs
       - name: Test standalone executable from an empty directory
         run: |
           mkdir -p "$RUNNER_TEMP/native-manager"
-          cp manager-dist/love-linux-x64 "$RUNNER_TEMP/native-manager/love"
+          cp .artifacts/manager/love-linux-x64 "$RUNNER_TEMP/native-manager/love"
           cd "$RUNNER_TEMP/native-manager"
           env -i PATH=/usr/bin:/bin TEST_DATABASE_URL=postgres://love:ci-native-manager-password@127.0.0.1:5432/love_manager_test ./love --self-test
           ./love --version
       - uses: actions/upload-artifact@v4
         with:
           name: love-manager
-          path: manager-dist/
+          include-hidden-files: true
+          path: .artifacts/manager/
           retention-days: 30
   manager-arm:
     needs: manager
@@ -54,12 +55,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: love-manager
-          path: manager-dist/
+          path: .artifacts/manager/
       - name: Test ARM64 standalone executable without project files
         run: |
-          chmod +x manager-dist/love-linux-arm64
+          chmod +x .artifacts/manager/love-linux-arm64
           mkdir -p "$RUNNER_TEMP/native-manager"
-          cp manager-dist/love-linux-arm64 "$RUNNER_TEMP/native-manager/love"
+          cp .artifacts/manager/love-linux-arm64 "$RUNNER_TEMP/native-manager/love"
           cd "$RUNNER_TEMP/native-manager"
           env -i PATH=/usr/bin:/bin ./love --self-test
           ./love --version
@@ -75,11 +76,11 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/love-apt/*.deb
-          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('scripts/ci-media-tools.sh') }}
+          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('tools/ci/media-tools.sh') }}
           restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-
       - name: Ensure test media tools
         timeout-minutes: 10
-        run: bash scripts/ci-media-tools.sh
+        run: bash tools/ci/media-tools.sh
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
@@ -100,9 +101,10 @@ jobs:
         if: always()
         with:
           name: test-results
+          include-hidden-files: true
           path: |
-            playwright-report/
-            test-results/
+            .artifacts/playwright-report/
+            .artifacts/test-results/
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
@@ -131,11 +133,11 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/love-apt/*.deb
-          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('scripts/ci-media-tools.sh') }}
+          key: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-${{ hashFiles('tools/ci/media-tools.sh') }}
           restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-ubuntu24-
       - name: Ensure PostgreSQL test media tools
         timeout-minutes: 10
-        run: bash scripts/ci-media-tools.sh
+        run: bash tools/ci/media-tools.sh
       - run: npm ci --no-audit --no-fund
       - run: npm test -w apps/server
         env:
@@ -164,8 +166,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: love-manager
-          path: manager-dist/
-      - run: chmod +x manager-dist/love-linux-x64
+          path: .artifacts/manager/
+      - run: chmod +x .artifacts/manager/love-linux-x64
       - uses: docker/setup-buildx-action@v3
         with:
           driver-opts: network=host
@@ -177,7 +179,7 @@ jobs:
           context: .
           network: host
           allow: network.host
-          file: ${{ matrix.dockerfile }}
+          file: infra/docker/${{ matrix.dockerfile }}
           load: true
           tags: love-ci
           cache-from: type=gha,scope=love-linux-amd64-${{ matrix.dockerfile }}
@@ -194,22 +196,22 @@ jobs:
             test -s /etc/ssl/certs/ca-certificates.crt
             ffmpeg -version >/dev/null
           '
-      - run: node scripts/setup-compose.test.mjs
-      - run: sudo env "PATH=$PATH" "MANAGER_BINARY=$PWD/manager-dist/love-linux-x64" node --import tsx scripts/manager-compose-smoke.mjs
+      - run: node tests/integration/setup-compose.test.mjs
+      - run: sudo env "PATH=$PATH" "MANAGER_BINARY=$PWD/.artifacts/manager/love-linux-x64" node --import tsx tests/integration/manager-compose-smoke.mjs
       - name: Verify HTTPS challenge bootstrap and certificate reload
         if: matrix.dockerfile == 'Dockerfile'
-        run: node scripts/certbot-proxy-smoke.mjs
+        run: node tests/integration/certbot-proxy-smoke.mjs
       - run: docker run -d --name love-smoke -p 127.0.0.1:3000:3000 -e MEDIA_SIGNING_SECRET=ci-docker-signing-key-for-smoke-tests-only -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke -v love-smoke-data:/app/data love-ci
-      - run: node scripts/docker-smoke.mjs
-      - run: docker restart love-smoke && node scripts/docker-smoke.mjs --verify-persistence
+      - run: node tests/integration/docker-smoke.mjs
+      - run: docker restart love-smoke && node tests/integration/docker-smoke.mjs --verify-persistence
       - name: Start PostgreSQL Compose stack and verify persistence
         run: |
           set -euo pipefail
           docker rm -f love-smoke
-          docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml up -d --no-build --wait
-          SMOKE_CONTAINER=$(docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml ps -q love) node scripts/docker-smoke.mjs
-          docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml up -d --no-build --force-recreate --wait
-          SMOKE_CONTAINER=$(docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml ps -q love) node scripts/docker-smoke.mjs --verify-persistence
+          docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml up -d --no-build --wait
+          SMOKE_CONTAINER=$(docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml ps -q love) node tests/integration/docker-smoke.mjs
+          docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml up -d --no-build --force-recreate --wait
+          SMOKE_CONTAINER=$(docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml ps -q love) node tests/integration/docker-smoke.mjs --verify-persistence
         env:
           LOVE_IMAGE: love-ci
           LOVE_BIND_IP: '0.0.0.0'
@@ -225,12 +227,12 @@ jobs:
           docker rm -f love-smoke || true
           docker volume rm love-smoke-data || true
         if: always()
-      - run: docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml logs --tail 100
+      - run: docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml logs --tail 100
         if: failure()
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
           POSTGRES_PASSWORD: 'ci-postgres''pa"ss$word#\literal'
-      - run: docker compose -p love-pg-ci -f compose.yml -f compose.postgres.yml down --volumes
+      - run: docker compose -p love-pg-ci --project-directory . -f infra/docker/compose.yml -f infra/docker/compose.postgres.yml down --volumes
         if: always()
         env:
           MEDIA_SIGNING_SECRET: ci-docker-signing-key-for-smoke-tests-only
@@ -263,11 +265,11 @@ jobs:
       - run: npm run android:prepare
       - name: Prepare persistent APK signing key
         id: signing
-        run: node scripts/android-key.mjs
+        run: node tools/android/signing-key.mjs
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew && ./gradlew assemble${{ steps.signing.outputs.mode == 'release' && 'Release' || 'Debug' }} --no-daemon
         working-directory: apps/client/android
-      - run: python scripts/verify-android-push.py
+      - run: python tests/android/verify-push.py
         env:
           LOVE_APK_PATH: ${{ steps.signing.outputs.apk }}
           LOVE_APK_SIGNING_METADATA: ${{ steps.signing.outputs.metadata }}
@@ -284,11 +286,11 @@ jobs:
             -storepass:env LOVE_ANDROID_KEYSTORE_PASSWORD -keypass:env LOVE_ANDROID_KEY_PASSWORD \
             -alias love -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=CI signing fixture'
           export LOVE_ANDROID_KEYSTORE_BASE64=$(base64 -w0 "$RUNNER_TEMP/source.jks")
-          GITHUB_ENV= GITHUB_OUTPUT= node scripts/android-key.mjs
+          GITHUB_ENV= GITHUB_OUTPUT= node tools/android/signing-key.mjs
           export LOVE_ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/love-signing.jks"
           (cd apps/client/android && ./gradlew assembleRelease --no-daemon)
           LOVE_APK_PATH=apps/client/android/app/build/outputs/apk/release/app-release.apk \
-            LOVE_APK_SIGNING_METADATA="$RUNNER_TEMP/love-signing.json" python scripts/verify-android-push.py
+            LOVE_APK_SIGNING_METADATA="$RUNNER_TEMP/love-signing.json" python tests/android/verify-push.py
           # This fixture APK/key never becomes a downloadable artifact or public release.
       - name: Prepare verified Android artifact
         run: |

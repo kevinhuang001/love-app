@@ -3,11 +3,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/containers.yml'
-      - 'Dockerfile'
-      - 'install.sh'
-      - 'scripts/setup*'
-      - 'compose*.yml'
-      - 'deploy/**'
+      - 'infra/docker/**'
+      - 'infra/certificates/**'
+      - 'manager/**'
+      - 'tests/**'
+      - 'tools/**'
   workflow_run:
     workflows: [Test and build]
     types: [completed]
@@ -116,6 +116,7 @@ jobs:
           DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
+          file: infra/docker/Dockerfile
           network: host
           allow: network.host
           load: true
@@ -135,9 +136,9 @@ jobs:
             -e MEDIA_SIGNING_SECRET=ci-image-signing-key-for-smoke-tests-only \
             -e ADMIN_USERNAME=ci_admin -e ADMIN_PASSWORD=ci-admin-password-for-smoke \
             -v love-image-data:/app/data love-image-ci
-          node scripts/docker-smoke.mjs
+          node tests/integration/docker-smoke.mjs
           docker restart love-smoke
-          node scripts/docker-smoke.mjs --verify-persistence
+          node tests/integration/docker-smoke.mjs --verify-persistence
       - name: Push tested architecture to GHCR
         if: github.event_name != 'pull_request'
         env:

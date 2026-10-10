@@ -224,7 +224,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     await expect(page.getByRole('textbox', { name: '消息内容' })).toBeVisible();
     const navigation = await page.getByRole('navigation', { name: '主导航' }).boundingBox();
     expect(navigation!.height).toBeGreaterThanOrEqual(64);
-    await page.screenshot({ path: 'test-results/mobile-chat.png', fullPage: true });
+    await page.screenshot({ path: '.artifacts/test-results/mobile-chat.png', fullPage: true });
   } finally {
     provider.close();
   }
@@ -393,7 +393,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await expect
     .poll(() => track.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m41))
     .toBeLessThan(baseline - 100);
-  await page.screenshot({ path: 'test-results/album-mid-swipe.png' });
+  await page.screenshot({ path: '.artifacts/test-results/album-mid-swipe.png' });
   await page.mouse.up();
   await expect(counter).toHaveText(`${before + 1} / 5`);
   await expect(track).toHaveAttribute('data-moving', 'false');

@@ -2,7 +2,7 @@
 
 本地通过不等于用户最终下载的二进制可用。Love 的 CI 同时检查源代码、真实数据库、容器、独立管理程序与 APK；发布流程再核对测试提交和产物来源。
 
-代码入口：[CI](../../../.github/workflows/ci.yml)、[镜像发布](../../../.github/workflows/containers.yml)、[Release](../../../.github/workflows/release.yml)、[管理程序构建](../../../scripts/build-manager.mjs)、[原生自测](../../../scripts/manager-self-test.mjs)。命令和维护步骤见 [CI 参考](../ci.md)。
+代码入口：[CI](../../../.github/workflows/ci.yml)、[镜像发布](../../../.github/workflows/containers.yml)、[Release](../../../.github/workflows/release.yml)、[管理程序构建](../../../manager/build.mjs)、[原生自测](../../../tests/manager/self-test.mjs)。命令和维护步骤见 [CI 参考](../ci.md)。
 
 ## 为什么需要多个测试环境
 

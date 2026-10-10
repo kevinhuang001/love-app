@@ -2,6 +2,12 @@
 
 本文面向需要维护 Compose、接入已有反向代理或修改镜像的开发者。只想安装和运行 Love，请用[安装指南](../user/install.md)和[管理程序](../user/manage.md)。手工部署需自行管理配置、持久化目录和升级。
 
+## 仓库模板和部署目录
+
+仓库中的 Dockerfile 和基础 Compose 模板位于 `infra/docker/`；HTTPS、Caddy 和 Certbot 文件位于 `infra/certificates/`。这些是管理程序编译时嵌入的源文件。
+
+管理程序安装后，会把 Compose 文件、Caddyfile 和证书脚本生成到部署目录。下文 Compose 命令针对这个生成后的目录，文件名保持不变。不要直接在 `infra/docker/` 启动服务：模板的相对挂载路径按部署目录设计。测试在仓库读取模板时会显式指定项目目录，或先生成完整部署目录。
+
 ## Compose 文件如何组合
 
 | 文件                   | 用途                                                         |
@@ -79,7 +85,7 @@ location / {
 在仓库根目录：
 
 ```bash
-docker build -t love-development -f Dockerfile .
+docker build -t love-development -f infra/docker/Dockerfile .
 ```
 
 手工 Compose 可设置 `LOVE_IMAGE=love-development` 使用它。管理程序使用官方 GHCR 镜像，不负责管理自定义镜像。
@@ -87,7 +93,7 @@ docker build -t love-development -f Dockerfile .
 国内构建源版本：
 
 ```bash
-docker build -t love-development-cn -f Dockerfile.cn .
+docker build -t love-development-cn -f infra/docker/Dockerfile.cn .
 ```
 
 `Dockerfile.cn` 默认使用 npmmirror 和 USTC 软件源，并保留 `NODE_IMAGE`、`NPM_REGISTRY`、`PIP_INDEX_URL` 构建参数。它改变构建来源，不改变应用功能或数据格式。CI 分别构建两份 Dockerfile；官方发布镜像由 Actions 生成 AMD64 / ARM64 清单。镜像发布条件见 [CI 与发布](ci.md)。

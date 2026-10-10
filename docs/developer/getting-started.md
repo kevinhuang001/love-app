@@ -65,27 +65,32 @@ TEST_DATABASE_URL='postgresql://user:password@localhost:5432/love_test' npm test
 ## 编译管理程序
 
 ```sh
-bun scripts/build-manager.mjs
+bun manager/build.mjs
 ```
 
-输出在 `manager-dist/`，包含 Linux AMD64／ARM64 二进制、校验文件和发布清单。只编译本机架构可加 `--native`。Linux AMD64 上可以运行：
+输出在 `.artifacts/manager/`，包含 Linux AMD64／ARM64 二进制、校验文件和发布清单。只编译本机架构可加 `--native`。Linux AMD64 上可以运行：
 
 ```sh
-manager-dist/love-linux-x64 --self-test
+.artifacts/manager/love-linux-x64 --self-test
 ```
 
 ## 仓库目录
 
-| 目录                 | 职责                                        |
-| -------------------- | ------------------------------------------- |
-| `apps/client/src`    | React 页面、组件、客户端状态和 API 调用     |
-| `apps/client/native` | Android 原生通知与桥接代码                  |
-| `apps/server/src`    | HTTP、实时通信、数据库、媒体、管理后台和 AI |
-| `apps/server/test`   | 后端及数据库集成测试                        |
-| `packages/calendar`  | 前后端共用的公历／农历计算                  |
-| `deploy`             | 独立管理程序、Compose 模板、代理和证书脚本  |
-| `scripts`            | 构建、安装、Android 和集成验证脚本          |
-| `tests/e2e`          | 浏览器端到端测试                            |
-| `.github/workflows`  | CI、镜像和正式版本发布                      |
+| 目录                  | 职责                                                        |
+| --------------------- | ----------------------------------------------------------- |
+| `apps/client/`        | Web 应用、Android 原生代码和界面资源                        |
+| `apps/server/`        | 服务端业务代码；数据库 SQL 与备份转换器在 `src/migrations/` |
+| `packages/`           | 前后端共用模块                                              |
+| `manager/`            | 独立管理程序、安装入口、配置向导和编译入口                  |
+| `infra/docker/`       | 镜像构建、数据库和存储 Compose 模板、部署环境示例           |
+| `infra/certificates/` | Caddy、HTTPS 与 Certbot 配置和续期脚本                      |
+| `tests/`              | 所有测试、测试辅助代码和测试运行配置                        |
+| `tools/`              | Android 构建工具、CI 环境工具和手工数据库迁移 SQL           |
+| `docs/user/`          | 安装、使用和排错说明                                        |
+| `docs/developer/`     | 开发规范、数据结构和实现原理                                |
+| `.github/workflows/`  | CI、镜像和正式版本发布                                      |
+| `.artifacts/`         | 本地管理程序编译结果与浏览器测试报告，不提交到 Git          |
+
+详细的文件归属和新增文件规则见 [目录组织](project-layout.md)。
 
 接口变更看 [接口参考](api.md)，数据库变更看 [迁移规范](migrations.md)，发布看 [CI 与发布](ci.md)。

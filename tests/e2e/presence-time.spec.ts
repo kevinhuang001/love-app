@@ -105,5 +105,5 @@ test('missing presence settles offline; schedules tick each second; settings fol
   const account = page.locator('details[data-section="服务器与账号"]');
   await expect(account).toContainText(base);
   await expect(account.getByRole('button', { name: '退出登录 / 切换服务器' })).toBeVisible();
-  await page.screenshot({ path: 'test-results/foldable-settings.png', fullPage: true });
+  await page.screenshot({ path: '.artifacts/test-results/foldable-settings.png', fullPage: true });
 });

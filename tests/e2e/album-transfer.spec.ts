@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import sharp from 'sharp';
 import { captcha, login } from './auth-helper';
 test('mobile album exports a portable ZIP without import UI and supports photo zoom', async ({
@@ -133,4 +134,51 @@ test('mobile album exports a portable ZIP without import UI and supports photo z
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(image).toHaveCSS('transform', /matrix\(2,/);
   await page.getByRole('button', { name: '还原照片' }).click();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  const motion = execFileSync('ffmpeg', [
+    '-nostdin',
+    '-loglevel',
+    'error',
+    '-f',
+    'lavfi',
+    '-i',
+    'color=c=green:s=160x120:d=2',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    'frag_keyframe+empty_moov',
+    '-f',
+    'mov',
+    'pipe:1',
+  ]);
+  await page.getByRole('button', { name: '新增回忆' }).click();
+  await expect(page.getByText('支持普通照片、视频和实况照片。', { exact: false })).toBeVisible();
+  await page
+    .locator('input[type=file]')
+    .last()
+    .setInputFiles([
+      { name: 'live.jpg', mimeType: 'image/jpeg', buffer: photo },
+      { name: 'live.mov', mimeType: 'video/quicktime', buffer: motion },
+    ]);
+  await page.getByLabel('写下这一刻').fill('自动播放实况');
+  await expect(page.getByRole('button', { name: '保存回忆', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '保存回忆', exact: true }).click();
+  await page.getByRole('button', { name: '查看图片：自动播放实况' }).click();
+  const live = page.locator('.album-viewer-media video');
+  await expect(live).toBeVisible();
+  await expect
+    .poll(() => live.evaluate((el: HTMLVideoElement) => !el.paused && el.currentTime > 0))
+    .toBe(true);
+  expect(await live.evaluate((el: HTMLVideoElement) => el.muted && !el.loop)).toBe(true);
+  await expect(live).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '播放实况', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '播放实况', exact: true }).click();
+  await expect(live).toBeVisible();
+  await page.getByRole('button', { name: '停止实况', exact: true }).click();
+  await expect(live).toHaveCount(0);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('button', { name: '查看图片：自动播放实况' }).click();
+  await expect(live).toBeVisible();
 });

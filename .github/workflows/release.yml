@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.10.0
+        description: New version tag, for example v2.10.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.10.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.10.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,15 +116,11 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           cat > release/NOTES.md <<'NOTES'
-          Love 2.10.0：共享空间、相册和移动端体验更新。
+          Love 2.10.1：实况照片播放体验修正。
 
-          - AI 助手新增默认头像，回复移除左侧装饰线，隐藏思考内容。
-          - 安卓“我们”页面支持检查版本、下载 APK 并调用系统安装器；更新校验文件、包名、版本和签名。
-          - 个人资料支持修改密码；在一起时长、起始时间、纪念日空状态调整为合理大小和位置。
-          - 每年重复的 Todo 只选择月日，时间与重复说明分行显示，移除“完成本次”按钮。
-          - 相册支持双指缩放、拖动和标准 Android Motion Photo；Apple 实况照片支持同名照片与 MOV 配对上传，支持 HEIC 解码。
-          - 用户端导出仅包含图片和视频 ZIP，删除用户端导入及对应接口；管理程序备份恢复保留。
-          - 除个人信息和未发布草稿外，配对内内容支持双方共享修改，其他配对数据保持隔离。
+          - 打开实况照片默认静音播放一遍，结束后显示静态照片，可再次播放。
+          - 播放按钮明确显示“播放实况 / 停止实况”。
+          - 上传提示明确支持普通照片、视频和实况照片，分别说明安卓和苹果的实况上传方式。
 
           APK 和 Linux AMD64 / ARM64 管理程序来自通过完整 CI 的构建，附 SHA-256；APK 附固定签名指纹。
           请覆盖安装以保留登录信息；卸载会清除本地应用数据。既有数据卷无需清空。

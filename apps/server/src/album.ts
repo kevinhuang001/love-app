@@ -32,8 +32,7 @@ export async function readAlbum(db: DB, user: User, input: unknown) {
   const clauses = ['m.coupleId=?'];
   const values: (string | number)[] = [user.coupleId!];
   if (q.type !== 'all') {
-    clauses.push('media.kind=?');
-    values.push(q.type);
+    clauses.push(q.type === 'image' ? "media.kind IN ('image','live')" : "media.kind='video'");
   }
   if (q.owner !== 'all') {
     clauses.push(`m.ownerId${q.owner === 'mine' ? '=' : '<>'}?`);

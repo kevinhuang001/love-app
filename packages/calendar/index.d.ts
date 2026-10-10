@@ -26,3 +26,9 @@ export function nextTodoInstant(
   input: Schedule,
   current?: number,
 ): { date: string; time: string; timestamp: number; seconds: number } | null;
+
+export function annualDate(
+  monthDay: string,
+  calendar?: 'solar' | 'lunar',
+  leapMonth?: boolean,
+): string;

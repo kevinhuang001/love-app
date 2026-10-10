@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { captcha, login } from './auth-helper';
-test('mobile album exports both ZIP formats and imports a full backup with dates and descriptions', async ({
+test('mobile album exports a portable ZIP without import UI and supports photo zoom', async ({
   page,
   request,
 }) => {
@@ -88,36 +88,49 @@ test('mobile album exports both ZIP formats and imports a full backup with dates
   await page.getByLabel('写下这一刻').fill('导出后还在的回忆');
   await expect(page.getByRole('button', { name: '保存回忆', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '保存回忆', exact: true }).click();
-  await page.getByRole('button', { name: '导出或导入相册' }).click();
-  await page.getByLabel('相册导出格式').selectOption('pictures');
-  const pictureDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出相册' }).click();
+  await expect(page.getByText('选择 ZIP 导入相册')).toHaveCount(0);
+  await expect(page.getByLabel('相册导出格式')).toHaveCount(0);
+  const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出相册 ZIP' }).click();
-  const pictures = await pictureDownload;
-  expect(pictures.suggestedFilename()).toContain('photos');
-  expect(await pictures.failure()).toBeNull();
-  await page.getByLabel('相册导出格式').selectOption('archive');
-  const fullDownload = page.waitForEvent('download');
-  await page.getByRole('button', { name: '导出相册 ZIP' }).click();
-  const full = await fullDownload;
-  expect(full.suggestedFilename()).toContain('album');
-  expect(await full.failure()).toBeNull();
-  const fullPath = await full.path();
-  const buffer = await readFile(fullPath!);
-  const importPicker = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: '选择 ZIP 导入相册' }).click();
-  await (
-    await importPicker
-  ).setFiles({ name: 'Love-album.zip', mimeType: 'application/zip', buffer });
-  await expect(page.getByText('已导入 1 个回忆', { exact: true })).toBeVisible();
-  const repeatPicker = page.waitForEvent('filechooser');
-  await page.getByRole('button', { name: '选择 ZIP 导入相册' }).click();
-  await (
-    await repeatPicker
-  ).setFiles({ name: 'Love-album.zip', mimeType: 'application/zip', buffer });
-  await expect(page.getByText('此导入包已导入，无需重复添加', { exact: true })).toBeVisible();
+  const zip = await download;
+  expect(zip.suggestedFilename()).toContain('album');
+  expect(await zip.failure()).toBeNull();
+  expect((await readFile((await zip.path())!)).subarray(0, 2).toString()).toBe('PK');
   await page.getByRole('button', { name: '关闭', exact: true }).click();
-  await expect(page.getByTestId('album-item')).toHaveCount(2);
-  await expect(page.getByText('导出后还在的回忆', { exact: true })).toHaveCount(2);
-  for (const item of await page.getByTestId('album-item').all())
-    await expect(item).toHaveAttribute('data-date', '2024-02-29');
+  await page.getByRole('button', { name: '查看图片：导出后还在的回忆' }).click();
+  const media = page.locator('.album-viewer-media');
+  const image = media.locator('img').filter({ visible: true });
+  await page.getByRole('button', { name: '放大照片' }).click();
+  await expect(image).toHaveCSS('transform', /matrix\(2,/);
+  const box = (await media.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 35, box.y + box.height / 2 + 20);
+  await page.mouse.up();
+  expect(await image.evaluate((el) => getComputedStyle(el).transform)).not.toBe(
+    'matrix(2, 0, 0, 2, 0, 0)',
+  );
+  await page.getByRole('button', { name: '还原照片' }).click();
+  await expect(image).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+  const cdp = await page.context().newCDPSession(page);
+  const cx = box.x + box.width / 2,
+    cy = box.y + box.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: cx - 30, y: cy },
+      { x: cx + 30, y: cy },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [
+      { x: cx - 60, y: cy },
+      { x: cx + 60, y: cy },
+    ],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect(image).toHaveCSS('transform', /matrix\(2,/);
+  await page.getByRole('button', { name: '还原照片' }).click();
 });

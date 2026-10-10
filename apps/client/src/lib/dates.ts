@@ -1,5 +1,6 @@
 export {
   today,
+  annualDate,
   daysTogether,
   nextTodo,
   lunarLabel,

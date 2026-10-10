@@ -169,7 +169,10 @@ test('image/video compression, signed preview, avatar and media ownership', asyn
     .post('/api/moments', { mediaId: video.body.id, title: '一起看海', date: '2026-10-05' })
     .expect(201);
   assert.equal((await s.api(b.token).get('/api/moments')).body.items[0].media.kind, 'video');
-  await s.api(b.token).delete(`/api/moments/${memory.body.id}`).expect(404);
+  await s
+    .api(b.token)
+    .patch(`/api/moments/${memory.body.id}`, { title: '另一半的描述', date: '2026-10-04' })
+    .expect(204);
   await s
     .api(a.token)
     .patch(`/api/moments/${memory.body.id}`, { title: '新的描述', date: '2026-10-04' })
@@ -441,7 +444,7 @@ test('upward anniversaries, lunar todo lifecycle, couple isolation and AI tools'
   const todo = await s.api(a.token).post('/api/todos', value).expect(201);
   await s
     .api(a.token)
-    .post('/api/todos', { ...value, date: '2026-02-01', leapMonth: true })
+    .post('/api/todos', { ...value, date: '2026-13-01', leapMonth: true })
     .expect(400);
   assert.equal((await s.api(b.token).get('/api/todos')).body[0].calendar, 'lunar');
   await s.api(c.token).get('/api/todos').expect(409);

@@ -3,15 +3,8 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileTransfer } from '@capacitor/file-transfer';
 import { Share } from '@capacitor/share';
 import type { Api } from './api';
-export type ExportFormat = 'pictures' | 'archive';
-export async function exportAlbum(
-  api: Api,
-  format: ExportFormat,
-  progress: (text: string) => void,
-) {
-  const result = await api.post<{ url: string; filename: string }>('/api/album/exports', {
-    format,
-  });
+export async function exportAlbum(api: Api, progress: (text: string) => void) {
+  const result = await api.post<{ url: string; filename: string }>('/api/album/exports', {});
   if (!Capacitor.isNativePlatform()) {
     const link = document.createElement('a');
     link.href = api.url(result.url);

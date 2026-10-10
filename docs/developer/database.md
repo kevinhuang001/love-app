@@ -14,17 +14,17 @@ SQLite 使用 WAL、外键检查和进程内事务队列，写事务为 `BEGIN I
 
 ## 表的职责
 
-| 范围            | 主要表                                                                                                                    | 存储内容                             |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| 账号与配对      | `users`、`couples`、`sessions`、`invites`                                                                                 | 用户、两人空间、会话摘要、配对邀请   |
-| 聊天            | `messages`、`message_media`                                                                                               | 消息及有顺序的附件关联               |
-| 回忆与日程      | `moments`、`anniversaries`、`todos`、`album_imports`                                                                      | 回忆、纪念日、待办、相册导入去重     |
-| 媒体与额度      | `media`、`media_sizes`、`media_uploads`、`couple_limits`                                                                  | 元数据、真实容量、暂存上传、空间额度 |
-| 两人设置与 AI   | `couple_media_settings`、`couple_ai_settings`、`ai_jobs`、`ai_actions`                                                    | 保留策略、AI 配置、任务和工具结果    |
-| 后台与认证      | `administrators`、`admin_sessions`、`server_config`、`captchas`、`email_codes`、`email_allowlist`、`registration_invites` | 管理员、业务规则、验证和注册控制     |
-| 日志            | `access_logs`、`server_logs`、`audit_logs`                                                                                | 请求、服务事件、管理操作             |
-| 迁移记录        | `schema_migrations`                                                                                                       | 已执行增量的编号、名称、校验和和时间 |
-| PostgreSQL 专用 | `media_files`、`media_chunks`                                                                                             | 正式媒体及暂存媒体的二进制分块       |
+| 范围            | 主要表                                                                                                                    | 存储内容                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| 账号与配对      | `users`、`couples`、`sessions`、`invites`                                                                                 | 用户、两人空间、会话摘要、配对邀请             |
+| 聊天            | `messages`、`message_media`                                                                                               | 消息及有顺序的附件关联                         |
+| 回忆与日程      | `moments`、`anniversaries`、`todos`、`album_imports`                                                                      | 回忆、纪念日、待办、历史相册导入去重（已停用） |
+| 媒体与额度      | `media`、`media_sizes`、`media_uploads`、`couple_limits`                                                                  | 元数据、真实容量、暂存上传、空间额度           |
+| 两人设置与 AI   | `couple_media_settings`、`couple_ai_settings`、`ai_jobs`、`ai_actions`                                                    | 保留策略、AI 配置、任务和工具结果              |
+| 后台与认证      | `administrators`、`admin_sessions`、`server_config`、`captchas`、`email_codes`、`email_allowlist`、`registration_invites` | 管理员、业务规则、验证和注册控制               |
+| 日志            | `access_logs`、`server_logs`、`audit_logs`                                                                                | 请求、服务事件、管理操作                       |
+| 迁移记录        | `schema_migrations`                                                                                                       | 已执行增量的编号、名称、校验和和时间           |
+| PostgreSQL 专用 | `media_files`、`media_chunks`                                                                                             | 正式媒体及暂存媒体的二进制分块                 |
 
 完整字段、索引和约束以 [迁移 001](../../apps/server/src/migrations/001-initial.ts) 为起点，之后按增量累积。恢复操作还会在 PostgreSQL 创建内部 `database_restores` 记录，用于核对不确定的提交结果。
 

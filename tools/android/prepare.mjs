@@ -26,6 +26,7 @@ const app = resolve(client, 'android/app'),
 mkdirSync(native, { recursive: true });
 for (const file of [
   'MainActivity.java',
+  'AppUpdatesPlugin.java',
   'LocalNotificationsPlugin.java',
   'LocalNotificationService.java',
 ])
@@ -35,6 +36,7 @@ writeFileSync(
   `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
  <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>

@@ -1,3 +1,4 @@
+import { visibleAIContent } from './ai-content.js';
 import { publishMediaDraft } from './media-drafts.js';
 import { anniversarySchema, todoSchema, relationshipSchema, aiProfileSchema } from './schedules.js';
 import { nextTodoInstant, today } from '@love/calendar';
@@ -420,20 +421,20 @@ async function executeWithinTransaction(db: DB, userId: string, name: string, in
     case 'list_recent_media':
       return await db
         .prepare(
-          'SELECT id,kind,createdAt FROM media WHERE ownerId=? AND coupleId=? ORDER BY createdAt DESC LIMIT 20',
+          'SELECT id,kind,createdAt FROM media WHERE coupleId=? ORDER BY createdAt DESC LIMIT 20',
         )
-        .all(userId, coupleId!);
+        .all(coupleId!);
     case 'publish_moment': {
       const v = z
         .object({ mediaId: z.string().uuid(), title: z.string().trim().max(300), date })
         .parse(input);
-      await publishMediaDraft(db, v.mediaId, userId, coupleId);
+      await publishMediaDraft(db, v.mediaId, userId, coupleId, true);
       if (
         !(await db
-          .prepare('SELECT id FROM media WHERE id=? AND ownerId=? AND coupleId=?')
-          .get(v.mediaId, userId, coupleId!))
+          .prepare('SELECT id FROM media WHERE id=? AND coupleId=?')
+          .get(v.mediaId, coupleId!))
       )
-        throw new Error('只能保存你自己上传的媒体');
+        throw new Error('只能保存当前两人空间的媒体');
       const id = randomUUID();
       await db
         .prepare('INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)')
@@ -494,6 +495,7 @@ export function aiWorker({
         { baseUrl: string; model: string; secret: string; name: string } | undefined;
       const user = (await db.prepare('SELECT * FROM users WHERE id=?').get(job.userId)) as User;
       const persistReply = async (content: string) => {
+        content = visibleAIContent(content) || '没有生成可显示的回复，请重试。';
         const identity = await db
           .prepare('SELECT name,avatarMediaId FROM couple_ai_settings WHERE coupleId=?')
           .get(job.coupleId);
@@ -553,9 +555,9 @@ export function aiWorker({
       try {
         const media = await db
           .prepare(
-            'SELECT m.id,m.kind,m.preview,m.thumbnail,m.duration FROM message_media a JOIN media m ON m.id=a.mediaId WHERE a.messageId=? AND m.coupleId=? AND m.ownerId=? ORDER BY a.position',
+            'SELECT m.id,m.kind,m.preview,m.thumbnail,m.duration FROM message_media a JOIN media m ON m.id=a.mediaId WHERE a.messageId=? AND m.coupleId=? ORDER BY a.position',
           )
-          .all(job.messageId, job.coupleId, job.userId);
+          .all(job.messageId, job.coupleId);
         const imageParts: ContentPart[] = [];
         for (const [index, attachment] of media.entries()) {
           const file = String(

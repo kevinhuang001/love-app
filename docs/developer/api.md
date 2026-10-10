@@ -52,7 +52,7 @@
 | GET    | `/api/media/:id/:variant` | 签名访问 `thumbnail` 或 `preview`；支持 Range                                    |
 | DELETE | `/api/media/:id`          | 取消自己的待发布媒体，或删除自己的未被引用媒体；被聊天、相册或头像引用时返回 409 |
 
-发送附件时，先逐个上传，再按选择顺序把 ID 放入消息的 `mediaIds`。服务器拒绝重复 ID、其他人的媒体或其他配对空间的媒体。列表、发送响应和实时消息提供 `attachments` 数组。
+发送附件时，先逐个上传，再按选择顺序把 ID 放入消息的 `mediaIds`。服务器拒绝重复 ID、其他人的待发布草稿或其他配对空间的媒体。列表、发送响应和实时消息提供 `attachments` 数组。
 
 重试同一条消息时保留原 `clientId` 和已上传的媒体 ID。服务器按发送者与 `clientId` 去重，避免重复消息和 AI 任务。上传先进入待发布区，聊天或相册提交时正式关联媒体并核算额度；上传成功不代表后续发布一定成功。
 
@@ -60,19 +60,18 @@
 
 ## 相册与日程
 
-| 方法           | 路径                        | 请求与结果                                                                            |
-| -------------- | --------------------------- | ------------------------------------------------------------------------------------- |
-| GET            | `/api/moments`              | 分页查询，见下文                                                                      |
-| POST           | `/api/moments`              | `title`、必填 `date`、`mediaId`、可选 UUID `clientId`                                 |
-| PATCH / DELETE | `/api/moments/:id`          | 发布者可改 `title`、`date` 或删除                                                     |
-| GET / POST     | `/api/anniversaries`        | 查看或创建 `title`、`date`、`time`                                                    |
-| PATCH / DELETE | `/api/anniversaries/:id`    | 当前配对成员可编辑或删除                                                              |
-| GET / POST     | `/api/todos`                | 查看或创建 `title`、`date`、`time`、`calendar`、`leapMonth`、`repeat`                 |
-| PATCH / DELETE | `/api/todos/:id`            | 编辑或删除                                                                            |
-| POST           | `/api/todos/:id/completion` | `completed` 布尔值                                                                    |
-| POST           | `/api/album/exports`        | `format=pictures\|archive`；返回 `filename` 和签名下载 `url`                          |
-| GET            | `/api/album/download/:id`   | 签名下载 ZIP；须在 20 分钟内开始，下载时重新检查会话与配对                            |
-| POST           | `/api/album/imports`        | multipart `file`，完整相册 ZIP；返回 `imported`，重复同包返回 `alreadyImported: true` |
+| 方法           | 路径                        | 请求与结果                                                            |
+| -------------- | --------------------------- | --------------------------------------------------------------------- |
+| GET            | `/api/moments`              | 分页查询，见下文                                                      |
+| POST           | `/api/moments`              | `title`、必填 `date`、`mediaId`、可选 UUID `clientId`                 |
+| PATCH / DELETE | `/api/moments/:id`          | 当前配对双方可改 `title`、`date` 或删除                               |
+| GET / POST     | `/api/anniversaries`        | 查看或创建 `title`、`date`、`time`                                    |
+| PATCH / DELETE | `/api/anniversaries/:id`    | 当前配对成员可编辑或删除                                              |
+| GET / POST     | `/api/todos`                | 查看或创建 `title`、`date`、`time`、`calendar`、`leapMonth`、`repeat` |
+| PATCH / DELETE | `/api/todos/:id`            | 编辑或删除                                                            |
+| POST           | `/api/todos/:id/completion` | `completed` 布尔值                                                    |
+| POST           | `/api/album/exports`        | 空对象；返回 `filename` 和签名下载 `url`                              |
+| GET            | `/api/album/download/:id`   | 签名下载 ZIP；须在 20 分钟内开始，下载时重新检查会话与配对            |
 
 相册查询支持 `type=all|image|video`、`owner=all|mine|partner`、`search`、发生日期范围 `from` / `to`、`sort=date_desc|date_asc|uploaded_desc`、`limit`（1–100，默认 60）。返回 `{items,total,nextCursor}`。后续请求带 `cursor=nextCursor`，并保留原筛选和排序条件。`createdAt` 是上传时间，修改发生日期不改变它。
 
@@ -142,3 +141,13 @@ Socket.IO 连接服务器 origin，认证为 `auth: {token, active: true}`。服
 设置 PATCH 需要完整对象：`registration`、`invitationRequired`、`domains`、`defaultQuotaMiB`、`retentionDays`、`smtp`。SMTP 字段为 `host`、`port`、`security`（tls / starttls / plain）、`user`、`password`、`from`、`senderName`；`clearPassword: true` 清空密码。响应不返回保存的密码。
 
 生成注册邀请码传 `{count,maxUses,expiresDays,label}`，201 返回 `codes`，包含 ID、明文 code、有效期和最大使用次数。明文只在创建响应出现，列表不返回明文或哈希。注册邀请码与用户之间的配对码用途不同。
+
+## 个人密码、共享编辑与实况
+
+POST /api/me/password 接收 currentPassword 和 password（8–128 字符），核验旧密码，撤销其他会话，保留当前会话。无需配对。
+
+PATCH /api/messages/:id 修改 content；DELETE 同一路径删除消息；均限制当前 coupleId，双方可操作。待处理 AI 消息返回 409。
+
+POST /api/media 接收 file，可选 liveVideo 配对 MOV。Android 内嵌实况自动提取。返回 kind=live、静态 previewUrl 和 motionUrl。`type=image` 相册筛选包含 live。
+
+AI 仅提取 text 正文，不向用户返回 reasoning 字段；正文中的 think、analysis、reasoning 标签内容在保存和读取时过滤。

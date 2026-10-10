@@ -178,7 +178,7 @@ test('backup import permits lower/equal software and schema versions, rejects re
   assertBackupVersion(APPLICATION_VERSION, 1);
   assertBackupVersion('2.8.0', 1);
   assertBackupVersion('2.9.9', 1, '2.10.0');
-  assert.throws(() => assertBackupVersion('2.10.0', 1), /软件版本高于/);
+  assert.throws(() => assertBackupVersion('2.11.0', 1), /软件版本高于/);
   assert.throws(() => assertBackupVersion(APPLICATION_VERSION, 2), /数据库版本高于/);
   for (const version of [null, '', 'bad', '2.9.2-beta'])
     assert.throws(() => assertBackupVersion(version, 1), /版本无效/);

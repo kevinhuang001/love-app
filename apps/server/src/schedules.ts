@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { validSolarDate, solarDate, validTime, scheduleInstant } from '@love/calendar';
+import { validSolarDate, solarDate, annualDate, validTime, scheduleInstant } from '@love/calendar';
 export const timeSchema = z.string().refine(validTime, '时间格式应为 HH:mm:ss').default('00:00:00');
 export const anniversarySchema = z
   .object({
@@ -35,6 +35,8 @@ export const todoSchema = z
   })
   .superRefine((value, ctx) => {
     try {
+      if (value.repeat === 'yearly')
+        value.date = annualDate(value.date.slice(5), value.calendar, value.leapMonth);
       solarDate(value);
     } catch (error) {
       ctx.addIssue({ code: 'custom', path: ['date'], message: (error as Error).message });

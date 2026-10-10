@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.9.4
+        description: New version tag, for example v2.10.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.9.4' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.10.0' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -116,22 +116,21 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           cat > release/NOTES.md <<'NOTES'
-          独立 Love 管理程序，支持 Linux AMD64 / ARM64。
+          Love 2.10.0：共享空间、相册和移动端体验更新。
 
-          - 一条 curl 命令安装：自动识别 AMD64 / ARM64、固定正式版本并校验 SHA-256，仅下载 love 二进制。
-          - 删除仓库中的旧 love Shell 入口；现有 .env、备份和数据卷保留。
-          - 管理菜单展示运行状态、当前应用版本、管理程序版本、数据库和监听地址；提示按短行对齐。
-          - 更新前分别展示应用与管理程序的当前版本和最新版本，检查完成后菜单保留最新版本提示。
-          - 远程 PostgreSQL 直接沿用已有账号、配对、头像、AI 设置和数据库媒体，不导入 SQLite 或启动内置数据库。
-          - 管理逻辑以 JavaScript / Clack 实现并由 Bun 打包，无需宿主机 Node.js / Bun，也不启动临时工具容器。
-          - 保留健康检查、可选备份和本项目旧镜像清理；不提供软件版本回滚。
+          - AI 助手新增默认头像，回复移除左侧装饰线，隐藏思考内容。
+          - 安卓“我们”页面支持检查版本、下载 APK 并调用系统安装器；更新校验文件、包名、版本和签名。
+          - 个人资料支持修改密码；在一起时长、起始时间、纪念日空状态调整为合理大小和位置。
+          - 每年重复的 Todo 只选择月日，时间与重复说明分行显示，移除“完成本次”按钮。
+          - 相册支持双指缩放、拖动和标准 Android Motion Photo；Apple 实况照片支持同名照片与 MOV 配对上传，支持 HEIC 解码。
+          - 用户端导出仅包含图片和视频 ZIP，删除用户端导入及对应接口；管理程序备份恢复保留。
+          - 除个人信息和未发布草稿外，配对内内容支持双方共享修改，其他配对数据保持隔离。
 
-
-          APK 来自通过完整 CI 的构建，附文件 SHA-256 和固定签名指纹。请覆盖安装以保留登录信息；卸载会清除本地应用数据。
-          通知需要应用进程存活，请允许后台运行。既有数据卷无需清空。
-          Android：https://github.com/kevinhuang001/love-app/blob/main/docs/android.md
-          Docker：https://github.com/kevinhuang001/love-app/blob/main/docs/deployment.md
-          管理：https://github.com/kevinhuang001/love-app/blob/main/docs/admin.md
+          APK 和 Linux AMD64 / ARM64 管理程序来自通过完整 CI 的构建，附 SHA-256；APK 附固定签名指纹。
+          请覆盖安装以保留登录信息；卸载会清除本地应用数据。既有数据卷无需清空。
+          Android：https://github.com/kevinhuang001/love-app/blob/main/docs/user/android.md
+          部署：https://github.com/kevinhuang001/love-app/blob/main/docs/user/install.md
+          管理：https://github.com/kevinhuang001/love-app/blob/main/docs/user/admin.md
           NOTES
       - name: Publish manager and optional signed APK assets
         if: steps.source.outputs.publish == 'true'

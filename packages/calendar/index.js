@@ -107,3 +107,16 @@ export function nextTodoInstant(input, current = Date.now()) {
   const timestamp = scheduleInstant(next.date, time);
   return { date: next.date, time, timestamp, seconds: Math.ceil((timestamp - current) / 1000) };
 }
+
+// Annual dates use an internal historical anchor; users select only month and day.
+export function annualDate(monthDay, calendar = 'solar', leapMonth = false) {
+  if (!/^\d{2}-\d{2}$/.test(monthDay)) throw new Error('月份或日期无效');
+  for (let year = 1900; year <= 2100; year++) {
+    const date = `${year}-${monthDay}`;
+    try {
+      solarDate({ date, calendar, leapMonth });
+      return date;
+    } catch {}
+  }
+  throw new Error('月份或日期无效');
+}

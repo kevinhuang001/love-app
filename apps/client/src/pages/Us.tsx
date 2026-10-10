@@ -1,3 +1,4 @@
+import { checkAndroidUpdate, downloadAndroidUpdate, type AndroidUpdate } from '@/lib/updates';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -48,6 +49,12 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
     [model, setModel] = useState(''),
     [apiKey, setApiKey] = useState(''),
     [aiEnabled, setAiEnabled] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState(''),
+    [password, setPassword] = useState(''),
+    [confirmPassword, setConfirmPassword] = useState('');
+  const [update, setUpdate] = useState<AndroidUpdate | null>(null),
+    [updateStatus, setUpdateStatus] = useState(''),
+    [updating, setUpdating] = useState(false);
   const avatarFile = useRef<HTMLInputElement>(null),
     aiAvatarFile = useRef<HTMLInputElement>(null);
   const [aiName, setAiName] = useState(profile.ai.name);
@@ -176,6 +183,60 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           </div>
           <Button variant="outline" type="submit" disabled={busy}>
             保存
+          </Button>
+        </form>
+        <form
+          className="space-y-3 border-t pt-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (password !== confirmPassword) {
+              toast.error('两次输入的新密码不一致');
+              return;
+            }
+            void action(async () => {
+              await api.post('/api/me/password', { currentPassword, password });
+              setCurrentPassword('');
+              setPassword('');
+              setConfirmPassword('');
+            }, '密码已更新，其他设备需重新登录');
+          }}
+        >
+          <Label htmlFor="current-password">修改密码</Label>
+          <Input
+            id="current-password"
+            aria-label="当前密码"
+            type="password"
+            autoComplete="current-password"
+            placeholder="当前密码"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+            maxLength={128}
+            required
+          />
+          <Input
+            aria-label="新密码"
+            type="password"
+            autoComplete="new-password"
+            placeholder="新密码（至少 8 位）"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            minLength={8}
+            maxLength={128}
+            required
+          />
+          <Input
+            aria-label="确认新密码"
+            type="password"
+            autoComplete="new-password"
+            placeholder="再次输入新密码"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            minLength={8}
+            maxLength={128}
+            required
+          />
+          <Button variant="outline" type="submit" disabled={busy}>
+            更新密码
           </Button>
         </form>
       </SettingsSection>
@@ -310,6 +371,55 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
           </div>
         </SettingsSection>
       )}
+      {Capacitor.getPlatform() === 'android' && (
+        <SettingsSection title="应用更新">
+          <p className="text-sm">
+            {update ? `当前 ${update.current} · 最新 ${update.latest}` : '检查安卓应用的正式版本'}
+          </p>
+          {updateStatus && (
+            <p role="status" className="text-xs leading-5 text-muted-foreground">
+              {updateStatus}
+            </p>
+          )}
+          <Button
+            variant="outline"
+            disabled={updating}
+            onClick={async () => {
+              setUpdating(true);
+              setUpdateStatus('正在检查更新…');
+              setUpdate(null);
+              try {
+                const result = await checkAndroidUpdate();
+                setUpdate(result);
+                setUpdateStatus(result.available ? '发现新版本，可以下载更新' : '已经是最新版本');
+              } catch (e) {
+                setUpdateStatus((e as Error).message);
+              } finally {
+                setUpdating(false);
+              }
+            }}
+          >
+            检查更新
+          </Button>
+          {update?.available && (
+            <Button
+              disabled={updating}
+              onClick={async () => {
+                setUpdating(true);
+                try {
+                  await downloadAndroidUpdate(update, setUpdateStatus);
+                } catch (e) {
+                  setUpdateStatus((e as Error).message);
+                } finally {
+                  setUpdating(false);
+                }
+              }}
+            >
+              {updating ? '下载更新中…' : '下载并安装更新'}
+            </Button>
+          )}
+        </SettingsSection>
+      )}
       <SettingsSection title="外观与通知">
         <div className="flex items-center justify-between border-t pt-4">
           <Label htmlFor="dark">
@@ -386,9 +496,11 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
                   className="size-14 rounded-full object-cover"
                 />
               ) : (
-                <span className="grid size-14 place-items-center rounded-full border border-primary/20 bg-card text-primary">
-                  <Sparkles size={23} />
-                </span>
+                <img
+                  alt="AI 默认头像"
+                  src="/images/ai-avatar.webp"
+                  className="size-14 rounded-full object-cover"
+                />
               )}
             </button>
             <div>

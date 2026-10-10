@@ -188,9 +188,6 @@ h3 {
   background: var(--primary);
   color: var(--primary-foreground);
 }
-.message-row[data-role='assistant'] .message-bubble {
-  border-left: 2px solid var(--primary);
-}
 .chat-composer {
   padding-bottom: 14px;
 }
@@ -482,7 +479,7 @@ h3 {
   min-height: 0;
   overflow: hidden;
   position: relative;
-  touch-action: pan-y;
+  touch-action: none;
 }
 .album-viewer-track {
   display: flex;
@@ -510,17 +507,6 @@ h3 {
   height: 100%;
   max-height: 100%;
   object-fit: contain;
-}
-.album-viewer-media.is-zoomed {
-  display: block;
-  overflow: auto;
-  touch-action: pan-x pan-y;
-}
-.album-viewer-media.is-zoomed img {
-  width: 200%;
-  height: auto;
-  max-width: none;
-  max-height: none;
 }
 .album-viewer-footer {
   padding-bottom: max(20px, env(safe-area-inset-bottom));

@@ -1,3 +1,4 @@
+import { pairLivePhotos } from '@/lib/live-photos';
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -31,12 +32,13 @@ import { AlbumViewer } from '@/components/AlbumViewer';
 import { useApp } from '@/lib/context';
 import type { Moment, UploadedMedia } from '@/lib/types';
 import { today } from '@/lib/dates';
-import { exportAlbum, type ExportFormat } from '@/lib/album-transfer';
+import { exportAlbum } from '@/lib/album-transfer';
 import { albumDefaults, loadAlbumOptions, type AlbumOptions } from '@/lib/album';
 type AlbumPage = { items: Moment[]; total: number; nextCursor: string | null };
 type UploadFile = {
   id: string;
   file: File;
+  liveVideo?: File;
   media?: UploadedMedia;
   date: string;
   editDate: boolean;
@@ -146,9 +148,7 @@ function UploadSelection({
 export function Memories() {
   const [transferOpen, setTransferOpen] = useState(false),
     [transferBusy, setTransferBusy] = useState(false),
-    [transferStatus, setTransferStatus] = useState(''),
-    [exportFormat, setExportFormat] = useState<ExportFormat>('archive');
-  const archiveInput = useRef<HTMLInputElement>(null);
+    [transferStatus, setTransferStatus] = useState('');
 
   const { api, profile, openUs } = useApp(),
     cache = useQueryClient();
@@ -262,7 +262,13 @@ export function Memories() {
         setProgress(0);
         setFiles((items) => items.map((v) => (v.id === item.id ? { ...v, error: undefined } : v)));
         try {
-          const media = await api.upload(item.file, setProgress, '/api/media', controller.signal);
+          const media = await api.upload(
+            item.file,
+            setProgress,
+            '/api/media',
+            controller.signal,
+            item.liveVideo,
+          );
           draftMedia.current.add(media.id);
           if (controller.signal.aborted) {
             void releaseDrafts([media.id]);
@@ -414,7 +420,7 @@ export function Memories() {
             <Button
               size="icon"
               variant="ghost"
-              aria-label="导出或导入相册"
+              aria-label="导出相册"
               onClick={() => setTransferOpen(true)}
             >
               <Download className="size-5" />
@@ -616,26 +622,12 @@ export function Memories() {
         }}
       >
         <DialogContent>
-          <DialogTitle>导出与导入相册</DialogTitle>
+          <DialogTitle>导出相册</DialogTitle>
           <DialogDescription>导出整个两人相册，不受当前筛选影响。</DialogDescription>
           <div className="space-y-4">
-            <label className="block space-y-2 text-sm">
-              导出格式
-              <select
-                aria-label="相册导出格式"
-                className="album-select mt-2 w-full"
-                value={exportFormat}
-                disabled={transferBusy}
-                onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
-              >
-                <option value="pictures">普通照片 ZIP · JPEG 图片</option>
-                <option value="archive">完整相册 ZIP · 可重新导入</option>
-              </select>
-            </label>
             <p className="text-xs leading-6 text-muted-foreground">
-              {exportFormat === 'pictures'
-                ? '仅导出照片为 JPEG，按相册日期命名，可直接解压查看。视频请使用完整相册导出。'
-                : '保留照片、视频、日期、描述与已保存的原文件。仅保存压缩版本的媒体不会凭空恢复原文件。'}
+              照片导出为 JPEG，视频导出为
+              MP4，按相册日期命名。实况照片保留一张静态照片与一个视频，解压即可查看。
             </p>
             <Button
               className="w-full"
@@ -644,7 +636,7 @@ export function Memories() {
                 setTransferBusy(true);
                 setTransferStatus('正在准备导出…');
                 try {
-                  toast.success(await exportAlbum(api, exportFormat, setTransferStatus));
+                  toast.success(await exportAlbum(api, setTransferStatus));
                 } catch (error) {
                   toast.error((error as Error).message || '导出失败，请重试');
                 } finally {
@@ -655,55 +647,6 @@ export function Memories() {
             >
               导出相册 ZIP
             </Button>
-            <div className="border-t pt-4 space-y-3">
-              <p className="text-xs leading-6 text-muted-foreground">
-                导入完整相册 ZIP
-                后，回忆由你发布，保留原日期和描述。原文件是否保存遵循当前两人空间设置；同一导入包重复选择不会重复添加。
-              </p>
-              <input
-                ref={archiveInput}
-                hidden
-                type="file"
-                accept="application/zip,.zip"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = '';
-                  if (!file) return;
-                  setTransferBusy(true);
-                  setTransferStatus('正在上传导入包…');
-                  try {
-                    const result = await api.upload<{ imported: number; alreadyImported: boolean }>(
-                      file,
-                      (progress) =>
-                        setTransferStatus(
-                          progress === 100 ? '正在校验并导入…' : `上传 ${progress}%`,
-                        ),
-                      '/api/album/imports',
-                    );
-                    await cache.invalidateQueries({ queryKey: ['moments'] });
-                    await cache.invalidateQueries({ queryKey: ['profile'] });
-                    toast.success(
-                      result.alreadyImported
-                        ? '此导入包已导入，无需重复添加'
-                        : `已导入 ${result.imported} 个回忆`,
-                    );
-                  } catch (error) {
-                    toast.error((error as Error).message);
-                  } finally {
-                    setTransferBusy(false);
-                    setTransferStatus('');
-                  }
-                }}
-              />
-              <Button
-                variant="outline"
-                className="w-full"
-                disabled={transferBusy}
-                onClick={() => archiveInput.current?.click()}
-              >
-                选择 ZIP 导入相册
-              </Button>
-            </div>
             {transferStatus && (
               <p className="text-xs text-muted-foreground" role="status">
                 {transferStatus}
@@ -734,7 +677,7 @@ export function Memories() {
           setRemove(current);
           setSelected(null);
         }}
-        canEdit={current?.ownerId === profile.user.id}
+        canEdit={Boolean(current)}
         author={current?.ownerId === profile.user.id ? '我' : profile.partner?.name || '另一半'}
       />
       <Dialog open={filterOpen} onOpenChange={setFilterOpen}>
@@ -834,13 +777,14 @@ export function Memories() {
                   ref={input}
                   hidden
                   type="file"
-                  accept="image/jpeg,image/png,image/webp,image/avif,image/heic,video/mp4,video/quicktime,video/webm"
+                  accept="image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif,.heic,.heif,video/mp4,video/quicktime,video/webm"
                   multiple
                   onChange={(e) => {
                     const chosen = Array.from(e.target.files || []);
-                    const drafts = chosen.map((file) => ({
+                    const drafts = pairLivePhotos(chosen).map(({ file, liveVideo }) => ({
                       id: newId(),
                       file,
+                      liveVideo,
                       date: '',
                       editDate: false,
                     }));
@@ -866,6 +810,9 @@ export function Memories() {
                     </>
                   )}
                 </Button>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  安卓请上传实况原图；苹果请同时选择同名照片与 MOV，两者会合并为一项实况回忆。
+                </p>
                 {files.length > 0 && (
                   <UploadSelection
                     files={files}

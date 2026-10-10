@@ -46,6 +46,6 @@ main 上 Test and build 成功后，发布流程检查来源提交、当前 main
 - APK 使用正式签名，管理程序元数据与待发布版本一致。
 - tag 合法且尚未发布；自动流程遇到已有版本会跳过，不覆盖旧 Release。
 
-准备新版本时，同步根目录、client、server 的 package.json、package-lock.json 中的版本以及 [version.ts](../../apps/server/src/version.ts) 的应用版本。还要更新 release 工作流的自动 tag 默认值；当前为 `v2.9.3`。数据库版本另行维护，不能因为应用版本变化就增加 schema version，见[数据库迁移](migrations.md)。
+准备新版本时，同步根目录、client、server 的 package.json、package-lock.json 中的版本以及 [version.ts](../../apps/server/src/version.ts) 的应用版本。还要更新 release 工作流的自动 tag 默认值；当前为 `v2.9.4`。数据库版本另行维护，不能因为应用版本变化就增加 schema version，见[数据库迁移](migrations.md)。
 
 配置固定 Android 签名后，main CI 成功才具备发布条件。已有正式 Release 不会因文档更新被替换。Release 产物和镜像是独立流程；检查各自结果，不能以其中一个成功推断另一个已经发布。

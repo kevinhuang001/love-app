@@ -67,3 +67,7 @@ Certbot 失败时会记录原因并稍后重试。先根据日志修复 DNS 或�
 ## Android 后台通知不及时
 
 检查通知权限、电池策略、后台运行权限以及网络。应用进程被系统关闭后不能自动远程唤醒；重新打开 Love 恢复连接。通知限制见 [Android 使用](android.md#通知有什么限制)。
+
+## 外部 PostgreSQL 提示“数据库没有迁移历史”
+
+如果这是此前 Love 创建、旧标记为 `database_meta=9` 的数据库，可以使用[一次性迁移 SQL](../../scripts/manual/postgresql-legacy-v9-to-schema1.sql)。先停止 Love，在 DBeaver 中连接这个数据库，执行整个文件；默认表位于 public，其他 schema 修改文件顶部 search_path。看到“迁移完成”后启动 Love。脚本检查不通过时不要手动伪造历史记录，应先查清版本和字段差异。业务数据保留，脚本不会清空数据库。

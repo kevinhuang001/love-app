@@ -1,2 +1,2 @@
-// Shared by the Node CLI and the compiled Bun manager, including streamed compression.
-export { packBackup } from '../apps/server/src/backup-archive.ts';
+// Current codec is owned by the registered backup version.
+export { packCurrentBackup as packBackup } from '../apps/server/src/backup-package.ts';

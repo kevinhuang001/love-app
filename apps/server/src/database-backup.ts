@@ -16,26 +16,25 @@ import {
 import { basename, dirname, join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { openDatabase, type DB } from './db.js';
-import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
-import { APPLICATION_VERSION, assertBackupVersion } from './version.js';
+import { SCHEMA_VERSION } from './migrations.js';
+import { APPLICATION_VERSION } from './version.js';
 import { transferTables, restoreToPostgres, type TransferReport } from './database-restore.js';
 import { MediaRepository } from './media-repository.js';
 import { withSQLiteSnapshot } from './sqlite-snapshot.js';
 import { seal, unseal } from './mail.js';
-import { extractCurrentBackup, verifyBackupDirectory, digestFile } from './backup-archive.js';
-import { convertBackupV1Archive } from './migrations/backup/002.js';
+import { digestFile } from './backup-archive.js';
+import {
+  normalizeBackupPackage,
+  importBackupPackage,
+  refreshBackupPackage,
+  backupPaths,
+  type BackupRegistry,
+  backupRegistry,
+} from './backup-package.js';
 export { extractCurrentBackup as extractBackup } from './backup-archive.js';
 export { digestFile } from './backup-archive.js';
-import { isDeepStrictEqual } from 'node:util';
-import {
-  BACKUP_FORMAT_VERSION,
-  manifestV2Schema,
-  parseBackupManifest,
-  migrateBackupFormat,
-} from './backup-format.js';
 
 const quote = (name: string) => '"' + name.replaceAll('"', '""') + '"';
-const identities = ['messages', 'access_logs', 'server_logs', 'audit_logs'];
 const exists = async (path: string) =>
   stat(path).then(
     () => true,
@@ -93,7 +92,12 @@ export async function exportDatabase({
       sqlite.exec('PRAGMA foreign_keys=ON; BEGIN; PRAGMA defer_foreign_keys=ON;');
       await source.transaction(
         async () => {
-          for (const table of transferTables) {
+          for (const row of sqlite
+            .prepare(
+              "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('media_uploads','schema_migrations') ORDER BY name",
+            )
+            .all()) {
+            const table = String(row.name);
             const columns = sqlite
               .prepare(`PRAGMA table_info(${quote(table)})`)
               .all()
@@ -115,7 +119,12 @@ export async function exportDatabase({
               await source.exec('CLOSE backup_rows');
             }
           }
-          for (const name of identities) {
+          for (const identity of sqlite
+            .prepare(
+              "SELECT name FROM sqlite_schema WHERE type='table' AND sql LIKE '%AUTOINCREMENT%'",
+            )
+            .all()) {
+            const name = String(identity.name);
             const sequence = String(
               (await source.prepare('SELECT pg_get_serial_sequence(?,?) value').get(name, 'id'))!
                 .value,
@@ -196,122 +205,50 @@ export async function exportDatabase({
   return refreshPackageManifest(directory, provider);
 }
 
-export async function refreshPackageManifest(directory: string, provider: 'sqlite' | 'postgres') {
-  const database = join(directory, 'love.sqlite');
-  const report = await restoreToPostgres({
-    sourcePath: database,
-    mediaDirectory: join(directory, 'media'),
-  });
-  await writeFile(
-    join(directory, 'manifest.json'),
-    JSON.stringify({
+export async function refreshPackageManifest(
+  directory: string,
+  provider: 'sqlite' | 'postgres',
+  registry = backupRegistry,
+) {
+  return refreshBackupPackage(
+    directory,
+    {
       format: 'love-backup',
-      version: BACKUP_FORMAT_VERSION,
       applicationVersion: APPLICATION_VERSION,
       schemaVersion: SCHEMA_VERSION,
       provider,
       createdAt: new Date().toISOString(),
-      integrity: {
-        algorithm: 'sha256',
-        reportVersion: 1,
-        databaseSha256: await digestFile(database),
-        report,
-      },
-    }) + '\n',
-    { mode: 0o600 },
-  );
-  return report;
-}
-
-export async function validatePackage(directory: string, { upgradeSchema = true } = {}) {
-  const database = join(directory, 'love.sqlite'),
-    media = join(directory, 'media');
-  const original = parseBackupManifest(
-    JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')),
-  );
-  const metadata = original.manifest as { applicationVersion: string; schemaVersion: number };
-  assertBackupVersion(metadata.applicationVersion, metadata.schemaVersion);
-  let report: TransferReport | undefined;
-  const converted = await migrateBackupFormat(
-    original.manifest,
-    directory,
-    async (value, format) => {
-      const m = value as { applicationVersion: string; schemaVersion: number };
-      assertBackupVersion(m.applicationVersion, m.schemaVersion);
-      const integrity = format.integrity(value);
-      if (integrity.databaseSha256 !== (await digestFile(database)))
-        throw new Error('备份清单或内容摘要不匹配');
-      const sqlite = new DatabaseSync(database, { readOnly: true });
-      try {
-        if (sqliteSchemaVersion(sqlite) !== m.schemaVersion)
-          throw new Error('备份清单与数据库版本不一致');
-        if (
-          sqlite.prepare('PRAGMA integrity_check').get()!.integrity_check !== 'ok' ||
-          sqlite.prepare('PRAGMA foreign_key_check').all().length
-        )
-          throw new Error('备份数据库完整性或关联校验失败');
-      } finally {
-        sqlite.close();
-      }
-      report = await restoreToPostgres({
-        sourcePath: database,
-        mediaDirectory: media,
-        allowPreviousVersion: true,
-      });
-      if (!isDeepStrictEqual(integrity.report, report)) throw new Error('备份清单或内容摘要不匹配');
     },
+    registry,
   );
-  const manifest = manifestV2Schema.parse(converted.manifest);
-  if (upgradeSchema && manifest.schemaVersion < SCHEMA_VERSION) {
-    const upgraded = await openDatabase(database);
-    await upgraded.close();
-    report = await refreshPackageManifest(directory, manifest.provider);
-  } else if (converted.sourceVersion < BACKUP_FORMAT_VERSION) {
-    // Persist only after every format conversion and verification succeeded. The caller
-    // passes a private extracted copy; the original backup archive remains untouched.
-    const staged = join(directory, '.manifest-' + randomUUID());
-    try {
-      await writeFile(staged, JSON.stringify(manifest) + '\n', { mode: 0o600, flag: 'wx' });
-      await rename(staged, join(directory, 'manifest.json'));
-    } finally {
-      await rm(staged, { force: true });
-    }
-  }
-  return {
-    provider: manifest.provider,
-    report: report!,
-    applicationVersion: metadata.applicationVersion,
-    schemaVersion: metadata.schemaVersion,
-    formatVersion: converted.sourceVersion,
-    targetFormatVersion: BACKUP_FORMAT_VERSION,
-  };
 }
-
-// Dispatch historical archives to their version-owned adapter. The ordinary extractor
-// and target restore path only consume the current Zstandard package.
-export async function prepareBackupImport(sourceDirectory: string, directory: string) {
-  const archiveName = await verifyBackupDirectory(sourceDirectory);
-  let original: Awaited<ReturnType<typeof validatePackage>> | undefined;
-  if (archiveName === 'data.tar.gz') {
-    original = await convertBackupV1Archive(
-      join(sourceDirectory, archiveName),
-      directory,
-      (legacy) => validatePackage(legacy, { upgradeSchema: false }),
-    );
-  } else {
-    await extractCurrentBackup(join(sourceDirectory, archiveName), directory);
-    const parsed = parseBackupManifest(
-      JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')),
-    );
-    if (parsed.version !== BACKUP_FORMAT_VERSION)
-      throw new Error('当前数据归档必须使用当前备份格式；旧归档请通过对应迁移器转换');
+export async function validatePackage(
+  directory: string,
+  {
+    upgradeSchema = true,
+    registry = backupRegistry,
+  }: { upgradeSchema?: boolean; registry?: BackupRegistry } = {},
+) {
+  const source = await normalizeBackupPackage(directory, registry);
+  if (upgradeSchema && source.schemaVersion < SCHEMA_VERSION) {
+    const upgraded = await openDatabase(source.paths.database);
+    await upgraded.close();
+    source.report = await refreshPackageManifest(directory, source.provider, registry);
   }
-  const current = await validatePackage(directory);
+  return source;
+}
+export async function prepareBackupImport(
+  sourceDirectory: string,
+  directory: string,
+  registry = backupRegistry,
+) {
+  const original = await importBackupPackage(sourceDirectory, directory, registry);
+  const current = await validatePackage(directory, { registry });
   return {
     ...current,
-    formatVersion: original?.formatVersion ?? current.formatVersion,
-    schemaVersion: original?.schemaVersion ?? current.schemaVersion,
-    applicationVersion: original?.applicationVersion ?? current.applicationVersion,
+    formatVersion: original.formatVersion,
+    schemaVersion: original.schemaVersion,
+    applicationVersion: original.applicationVersion,
   };
 }
 
@@ -458,7 +395,7 @@ export async function restoreSQLite(
   directory: string,
   databasePath: string,
 ): Promise<TransferReport> {
-  const { report } = await validatePackage(directory);
+  const { report, paths } = await validatePackage(directory);
   await recoverSQLiteRestore(databasePath);
   const root = dirname(resolve(databasePath));
   await mkdir(root, { recursive: true });
@@ -480,21 +417,21 @@ export async function restoreSQLite(
     ),
   };
   try {
-    const db = new DatabaseSync(join(directory, 'love.sqlite'), { readOnly: true });
+    const db = new DatabaseSync(paths.database, { readOnly: true });
     try {
       await backup(db, join(stage, basename(databasePath)));
     } finally {
       db.close();
     }
     await mkdir(join(stage, 'media'), { mode: 0o700 });
-    const source = new DatabaseSync(join(directory, 'love.sqlite'), { readOnly: true });
+    const source = new DatabaseSync(paths.database, { readOnly: true });
     try {
       for (const row of source.prepare('SELECT original,preview,thumbnail FROM media').iterate())
         for (const name of new Set(
           [row.original, row.preview, row.thumbnail].filter(Boolean).map(String),
         ))
           await copyFile(
-            join(directory, 'media', name),
+            join(paths.media, name),
             join(stage, 'media', name),
             constants.COPYFILE_EXCL,
           );

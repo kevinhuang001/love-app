@@ -1,3 +1,5 @@
+import type { Writable } from 'node:stream';
+import type { TransferReport } from './payload-v1.js';
 import { z } from 'zod';
 
 // Version 1 integrity contract. Keep this schema and its digest algorithm stable.
@@ -28,7 +30,17 @@ export type BackupIntegrity = {
 export type BackupFormat = Readonly<{
   version: number;
   parse: (value: unknown) => unknown;
-  integrity: (value: unknown) => BackupIntegrity;
+  // Legacy convenience for formats 1/2 only; the engine uses verify/create hooks.
+  integrity?: (value: unknown) => BackupIntegrity;
+  // Optional only for manifest-only test definitions; package operations require these hooks.
+  archive?: Readonly<{
+    name: string;
+    extract: (archive: string, directory: string) => Promise<void>;
+    pack: (directory: string, destination: string | Writable) => Promise<void>;
+  }>;
+  paths?: (directory: string) => { database: string; media: string };
+  verify?: (directory: string, manifest: unknown) => Promise<TransferReport>;
+  create?: (directory: string, metadata: BackupMetadata) => Promise<unknown>;
 }>;
 export type BackupFormatMigration = Readonly<{
   from: number;
@@ -37,3 +49,11 @@ export type BackupFormatMigration = Readonly<{
   // Only the caller's private extracted directory may be changed, never the source archive.
   migrate: (value: unknown, directory: string) => unknown | Promise<unknown>;
 }>;
+
+export type BackupMetadata = {
+  format: 'love-backup';
+  applicationVersion: string;
+  schemaVersion: number;
+  provider: 'sqlite' | 'postgres';
+  createdAt: string;
+};

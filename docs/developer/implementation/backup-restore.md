@@ -2,7 +2,7 @@
 
 备份首先要回答“数据是否完整”，恢复还要回答“版本能否理解、密钥能否解密、替换失败是否能保住目标”。只打包几个文件无法回答这些问题，所以实现分成快照、校验、迁移、凭据转换和目标提交。
 
-代码入口：[database-backup.ts](../../../apps/server/src/database-backup.ts)、[database-restore.ts](../../../apps/server/src/database-restore.ts)、[格式注册表](../../../apps/server/src/backup-format.ts)、[管理程序](../../../deploy/manager.mjs)、[tar 打包](../../../deploy/archive.mjs)。文件字段见[备份格式手册](../backup-format.md)。
+代码入口：[database-backup.ts](../../../apps/server/src/database-backup.ts)、[database-restore.ts](../../../apps/server/src/database-restore.ts)、[格式注册表](../../../apps/server/src/backup-format.ts)、[通用归档调度器](../../../apps/server/src/backup-package.ts)、[管理程序](../../../deploy/manager.mjs)、[tar 打包](../../../deploy/archive.mjs)。文件字段见[备份格式手册](../backup-format.md)。
 
 ## 生成备份：为什么暂停应用
 
@@ -42,7 +42,7 @@ flowchart TB
   C --> D[写 data.tar.zst]
   D --> E[计算外层 SHA-256]
   R[校验后的备份入口] --> H{归档所属版本}
-  H -->|格式 1 gzip| G[001 → 002 增量转换器]
+  H -->|格式 1 gzip| G[格式 1 读取器与相邻转换器]
   G --> V[校验旧内容，转换并生成临时格式 2 归档]
   V --> Z[普通恢复器：仅接受 Zstandard]
   H -->|当前格式| Z
@@ -78,7 +78,7 @@ flowchart TB
 
 例如来源应用 2.9.2、格式 1、schema 1，目标应用 2.9.3、格式 2、schema 1：只做格式转换，不跑新的 SQL。假设未来目标 schema 2，则格式转换成功后再执行 002。来源软件较新时，即使 schema 和格式碰巧没变，也拒绝导入；这是软件方向限制。
 
-格式 1 → 2 把数据库摘要与报告移动到 integrity，并记录算法版本。它不改来源软件版本、schema、媒体字节或用户数据。新导出使用 Zstandard 级别 15；旧 gzip 只由增量转换器解码；清单升级后，在私有目录中重打包成真正的格式 2 Zstandard 归档，再进入普通恢复流程。原归档不改写。框架还强制检查这些来源字段没有被转换器改写。
+格式 1 → 2 把数据库摘要与报告移动到 integrity，并记录算法版本。它不改来源软件版本、schema、媒体字节或用户数据。新导出使用 Zstandard 级别 15；旧 gzip 只由格式 1 的版本模块解码；清单升级后，在私有目录中重打包成真正的格式 2 Zstandard 归档，再进入普通恢复流程。原归档不改写。框架还强制检查这些来源字段没有被转换器改写。
 
 原 tar.gz / tar.zst 和 deployment.env 不修改。底层校验函数可能更新工作目录中的清单和数据库，因此管理程序先解包成私有副本；修改维护脚本时必须保留这条边界。
 
@@ -154,3 +154,7 @@ stateDiagram-v2
 ## 一次恢复应怎样验证
 
 检查用户和配对、聊天及附件顺序、照片视频字节、日程、头像、AI / 邮件凭据以及自增高水位。测试还比较源归档和源清单恢复前后的字节，证明临时迁移没有动原备份。自动测试覆盖中途失败、文件切换中断和 PostgreSQL 提交响应丢失；操作后也应通过客户端抽查业务。
+
+## 为什么新增格式不必改管理程序
+
+管理程序调用公共导入入口，不再直接判断 gzip 或格式编号。入口从注册表选择归档读取器，逐版调用转换器和校验器，再将当前模块给出的数据库与媒体路径交给恢复器。导出也从最新模块取得清单生成规则和打包器。每个版本完整负责自己的文件含义，公共调度器只负责顺序和失败边界。接口与扩展测试见[迁移开发约定](../backup-migrations.md)。

@@ -27,7 +27,7 @@ const v1 = () => ({
   },
 });
 const verify = async (value: unknown, format: BackupFormat) => {
-  assert.deepEqual(format.integrity(value), {
+  assert.deepEqual(format.integrity!(value), {
     algorithm: 'sha256',
     reportVersion: 1,
     databaseSha256: v1().databaseSha256,
@@ -128,7 +128,7 @@ test('consecutive format migrations verify every intermediate result', async () 
     },
     integrity: (value) => {
       const { extra, ...record } = value as Record<string, unknown>;
-      return backupFormats[1].integrity({ ...record, version: 2 });
+      return backupFormats[1].integrity!({ ...record, version: 2 });
     },
   };
   const upgrade: BackupFormatMigration = {

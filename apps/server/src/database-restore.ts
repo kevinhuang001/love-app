@@ -8,68 +8,14 @@ import { SCHEMA_VERSION, sqliteSchemaVersion } from './migrations.js';
 import { MediaRepository } from './media-repository.js';
 import { commitMedia } from './media-storage.js';
 
-// Explicit dependency order. The users -> media avatar reference is restored after media.
-export const transferTables = [
-  'couples',
-  'users',
-  'media',
-  'sessions',
-  'invites',
-  'administrators',
-  'messages',
-  'message_media',
-  'moments',
-  'anniversaries',
-  'todos',
-  'couple_ai_settings',
-  'couple_media_settings',
-  'ai_jobs',
-  'ai_actions',
-  'registration_invites',
-  'album_imports',
-  'server_config',
-  'admin_sessions',
-  'captchas',
-  'email_codes',
-  'email_allowlist',
-  'media_sizes',
-  'couple_limits',
-  'access_logs',
-  'server_logs',
-  'audit_logs',
-] as const;
-const identities = ['messages', 'access_logs', 'server_logs', 'audit_logs'];
-const quote = (identifier: string) => '"' + identifier.replaceAll('"', '""') + '"';
-type Table = {
-  name: string;
-  columns: string[];
-  order: string;
-  pgOrder: string;
-  count: number;
-  digest: string;
-};
-type File = { name: string; mediaId: string; bytes: number; digest: string };
-export type TransferReport = {
-  sourceDigest: string;
-  tables: Record<string, number>;
-  mediaRecords: number;
-  mediaFiles: number;
-  mediaBytes: number;
-};
-function rowHash(hash: ReturnType<typeof createHash>, columns: string[], row: Row) {
-  hash.update(JSON.stringify(columns.map((column) => row[column])) + '\n');
-}
-async function streamHash(stream: AsyncIterable<Buffer | string>) {
-  const hash = createHash('sha256');
-  let bytes = 0;
-  for await (const part of stream) {
-    hash.update(part);
-    bytes += Buffer.byteLength(part);
-  }
-  if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error('媒体文件为空或容量无效');
-  return { bytes, digest: hash.digest('hex') };
-}
-
+import {
+  inspectPayloadV1,
+  rowHash,
+  streamHash,
+  quote,
+  type TransferReport,
+} from './migrations/backup/payload-v1.js';
+export { transferTables, type TransferReport } from './migrations/backup/payload-v1.js';
 export async function restoreToPostgres({
   sourcePath,
   mediaDirectory,
@@ -96,102 +42,7 @@ export async function restoreToPostgres({
       throw new Error('源 SQLite 完整性检查失败');
     if (source.prepare('PRAGMA foreign_key_check').all().length)
       throw new Error('源 SQLite 存在无效关联，恢复未开始');
-    const names = source
-      .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-      .all()
-      .map((row) => String(row.name))
-      .filter((name) => !['media_uploads', 'schema_migrations'].includes(name));
-    if (
-      !previous &&
-      (names.length !== transferTables.length ||
-        names.some((name) => !transferTables.includes(name as (typeof transferTables)[number])))
-    )
-      throw new Error('源 SQLite 表结构与当前应用不一致');
-    const tables: Table[] = [];
-    for (const name of previous
-      ? [
-          ...transferTables.filter((name) => names.includes(name)),
-          ...names
-            .filter((name) => !transferTables.includes(name as (typeof transferTables)[number]))
-            .sort(),
-        ]
-      : transferTables) {
-      const info = source.prepare(`PRAGMA table_info(${quote(name)})`).all();
-      const columns = info.map((column) => String(column.name));
-      const primary = info
-        .filter((column) => Number(column.pk) > 0)
-        .sort((a, b) => Number(a.pk) - Number(b.pk))
-        .map((column) => String(column.name));
-      const order = (primary.length ? primary : columns).map(quote).join(',');
-      const pgOrder = (primary.length ? primary : columns)
-        .map(
-          (column) =>
-            quote(column) +
-            (info.find((entry) => entry.name === column)?.type === 'TEXT' ? ' COLLATE "C"' : '') +
-            ' NULLS FIRST',
-        )
-        .join(',');
-      const hash = createHash('sha256');
-      let count = 0;
-      for (const row of source
-        .prepare(`SELECT * FROM ${quote(name)} ORDER BY ${order}`)
-        .iterate()) {
-        rowHash(hash, columns, row as Row);
-        count++;
-      }
-      tables.push({ name, columns, order, pgOrder, count, digest: hash.digest('hex') });
-    }
-    progress('数据库完整性检查通过，正在校验源媒体…');
-    const files: File[] = [],
-      usedNames = new Set<string>();
-    let mediaRecords = 0,
-      mediaBytes = 0;
-    for (const media of source.prepare('SELECT * FROM media ORDER BY id').iterate()) {
-      mediaRecords++;
-      let total = 0;
-      for (const name of new Set(
-        [media.original, media.preview, media.thumbnail].filter(Boolean).map(String),
-      )) {
-        if (name !== basename(name) || name === '.' || name === '..' || usedNames.has(name))
-          throw new Error('源媒体路径无效或多个媒体共享同一文件');
-        usedNames.add(name);
-        const handle = await open(
-          join(mediaDirectory, name),
-          constants.O_RDONLY | constants.O_NOFOLLOW,
-        );
-        let verified;
-        try {
-          verified = await streamHash(handle.createReadStream({ autoClose: false }));
-        } finally {
-          await handle.close();
-        }
-        files.push({ name, mediaId: String(media.id), ...verified });
-        total += verified.bytes;
-      }
-      const sizes = source
-        .prepare('SELECT totalBytes FROM media_sizes WHERE mediaId=?')
-        .get(media.id);
-      if (!sizes || total !== sizes.totalBytes)
-        throw new Error(`源媒体容量记录不一致：${media.id}`);
-      mediaBytes += total;
-      if (!Number.isSafeInteger(mediaBytes)) throw new Error('源媒体总容量无效');
-    }
-    const sourceDigest = createHash('sha256')
-      .update(
-        JSON.stringify({
-          tables,
-          files,
-          sequences: source.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name').all(),
-        }),
-      )
-      .digest('hex');
-    const report: TransferReport = {
-      sourceDigest,
-      tables: Object.fromEntries(tables.map((table) => [table.name, table.count])),
-      mediaRecords,
-      mediaFiles: files.length,
-      mediaBytes,
-    };
+    const { tables, files, report } = await inspectPayloadV1(source, mediaDirectory, progress);
     if (!target) return report;
     for (const table of tables) {
       const columns = table.columns,
@@ -211,6 +62,25 @@ export async function restoreToPostgres({
         throw new Error(
           `目标表结构不一致：${name}（目标缺少：${missing.join('、') || '无'}；目标多出：${extra.join('、') || '无'}）`,
         );
+    }
+    // New schema tables are ordered from their actual foreign-key dependencies.
+    // The existing avatar cycle is filled after media, as before.
+    const pending = [...tables],
+      insertionOrder: typeof tables = [];
+    while (pending.length) {
+      const index = pending.findIndex((table) =>
+        source
+          .prepare(`PRAGMA foreign_key_list(${quote(table.name)})`)
+          .all()
+          .every(
+            (fk) =>
+              (table.name === 'users' && fk.from === 'avatarMediaId') ||
+              fk.table === table.name ||
+              !pending.some((t) => t.name === fk.table),
+          ),
+      );
+      if (index < 0) throw new Error('恢复表存在未处理的循环外键，需要对应的数据适配器');
+      insertionOrder.push(pending.splice(index, 1)[0]);
     }
     const restoreId = randomUUID();
     const verify = async () => {
@@ -277,7 +147,7 @@ export async function restoreToPostgres({
         await target.exec('UPDATE users SET "avatarMediaId"=NULL');
         await target.exec('DELETE FROM media_files');
         await target.exec('DELETE FROM media_uploads');
-        for (const table of [...tables].reverse())
+        for (const table of [...insertionOrder].reverse())
           await target.exec(`DELETE FROM ${quote(table.name)}`);
         // SQLite REAL is a double; PostgreSQL REAL is single precision. Preserve
         // durations/log timings exactly so cross-driver verification is meaningful.
@@ -285,7 +155,7 @@ export async function restoreToPostgres({
         await target.exec(
           'ALTER TABLE access_logs ALTER COLUMN "durationMs" TYPE DOUBLE PRECISION',
         );
-        for (const table of tables) {
+        for (const table of insertionOrder) {
           progress(`正在导入 ${table.name}：${table.count} 条…`);
           const insert = target.prepare(
             `INSERT INTO ${quote(table.name)}(${table.columns.map(quote).join(',')}) VALUES(${table.columns.map(() => '?').join(',')})`,
@@ -312,7 +182,10 @@ export async function restoreToPostgres({
           await repository!.stage([file.name], [file.bytes], true);
           await repository!.bind(file.mediaId, [file.name]);
         }
-        for (const name of identities) {
+        for (const identity of source
+          .prepare('SELECT name FROM sqlite_sequence ORDER BY name')
+          .all()) {
+          const name = String(identity.name);
           const sequence = Number(
             source.prepare('SELECT seq FROM sqlite_sequence WHERE name=?').get(name)?.seq || 0,
           );

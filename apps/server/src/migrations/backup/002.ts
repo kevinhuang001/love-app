@@ -1,7 +1,5 @@
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
-import { createGunzip } from 'node:zlib';
-import { extractTarArchive, packBackup, extractCurrentBackup } from '../../backup-archive.js';
+import { extractCurrentBackup, packBackup } from '../../backup-archive.js';
+import { payloadPathsV1, verifyPayloadV1, createIntegrityV1 } from './payload-v1.js';
 import { z } from 'zod';
 import { manifestV1Schema } from './001.js';
 import {
@@ -29,6 +27,17 @@ export const manifestV2Schema = z
 export type BackupManifest = z.infer<typeof manifestV2Schema>;
 export const backupFormatV2: BackupFormat = {
   version: 2,
+  archive: { name: 'data.tar.zst', extract: extractCurrentBackup, pack: packBackup },
+  paths: payloadPathsV1,
+  verify: (directory, value) => {
+    const m = manifestV2Schema.parse(value);
+    return verifyPayloadV1(directory, m.schemaVersion, m.integrity);
+  },
+  create: async (directory, metadata) => ({
+    ...metadata,
+    version: 2,
+    integrity: await createIntegrityV1(directory),
+  }),
   parse: (value) => manifestV2Schema.parse(value),
   integrity: (value) => manifestV2Schema.parse(value).integrity,
 };
@@ -45,26 +54,3 @@ export const migrateBackupV1ToV2: BackupFormatMigration = {
     };
   },
 };
-
-// Legacy gzip support belongs exclusively to format 1. Convert its verified private
-// payload to a real current archive before handing it to the ordinary restore path.
-export async function convertBackupV1Archive<T>(
-  archive: string,
-  directory: string,
-  normalize: (privateDirectory: string) => Promise<T>,
-): Promise<T> {
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const legacy = join(directory, '.format-1'),
-    converted = join(directory, '.format-2.tar.zst');
-  try {
-    await extractTarArchive(archive, legacy, createGunzip());
-    manifestV1Schema.parse(JSON.parse(await readFile(join(legacy, 'manifest.json'), 'utf8')));
-    const original = await normalize(legacy);
-    await packBackup(legacy, converted);
-    await extractCurrentBackup(converted, directory);
-    return original;
-  } finally {
-    await rm(legacy, { recursive: true, force: true });
-    await rm(converted, { force: true });
-  }
-}

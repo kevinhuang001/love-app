@@ -12,7 +12,7 @@ import {
   refreshPackageManifest,
 } from './database-backup.js';
 import { restoreToPostgres } from './database-restore.js';
-import { packBackup } from './backup-archive.js';
+import { packCurrentBackup as packBackup, backupPaths } from './backup-package.js';
 
 const arguments_ = process.argv.slice(2),
   operation = arguments_[0];
@@ -72,7 +72,7 @@ try {
       directory: output,
     });
     const credentials = auditBackupCredentials(
-      join(output, 'love.sqlite'),
+      backupPaths(output).database,
       process.env.MEDIA_SIGNING_SECRET || '',
     );
     if (credentials.ai || credentials.smtp)
@@ -97,7 +97,7 @@ try {
           '头像、AI 名称与设置、邀请码、容量限额及其他业务设置随数据恢复；部署配置保持当前值。待验证邮件和验证码可能需要重新申请。',
         );
         const credentials = auditBackupCredentials(
-          join(packageDirectory, 'love.sqlite'),
+          source.paths.database,
           config.MEDIA_SIGNING_SECRET,
         );
         if (credentials.ai || credentials.smtp) {
@@ -108,7 +108,7 @@ try {
         } else privateLog('加密凭据验证通过，可完整恢复。');
       } else {
         const reset = rekeyBackup(
-          join(packageDirectory, 'love.sqlite'),
+          source.paths.database,
           config.MEDIA_SIGNING_SECRET,
           process.env.MEDIA_SIGNING_SECRET || '',
           { resetUnreadable: arguments_.includes('--reset-unreadable-credentials') },
@@ -120,8 +120,8 @@ try {
         if (provider === 'postgres') {
           db = await openDatabase({ path: process.env.DATABASE_URL || '', provider });
           report = await restoreToPostgres({
-            sourcePath: join(packageDirectory, 'love.sqlite'),
-            mediaDirectory: join(packageDirectory, 'media'),
+            sourcePath: source.paths.database,
+            mediaDirectory: source.paths.media,
             target: db,
             progress: privateLog,
           });

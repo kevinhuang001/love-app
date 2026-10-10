@@ -1,7 +1,6 @@
 import { backupFormatV1 } from './migrations/backup/001.js';
 import { backupFormatV2, migrateBackupV1ToV2 } from './migrations/backup/002.js';
 import type { BackupFormat, BackupFormatMigration } from './migrations/backup/shared.js';
-export { manifestV2Schema, type BackupManifest } from './migrations/backup/002.js';
 export type { BackupFormat, BackupFormatMigration } from './migrations/backup/shared.js';
 
 export const backupFormats: readonly BackupFormat[] = [backupFormatV1, backupFormatV2];

@@ -12,7 +12,7 @@ import { latestImage, isCurrentImage, obsoleteImages, imageRepository } from './
 import { latestManager, installManager } from './releases.mjs';
 import { atomicFile } from './files.mjs';
 import { packBackup } from './archive.mjs';
-import { BACKUP_ARCHIVE_NAME } from '../apps/server/src/backup-archive.ts';
+import { BACKUP_ARCHIVE_NAME, backupPaths } from '../apps/server/src/backup-package.ts';
 import { openDatabase } from '../apps/server/src/db.ts';
 import {
   exportDatabase,
@@ -367,7 +367,7 @@ export class Manager {
             directory: data,
           });
           const lost = auditBackupCredentials(
-            join(data, 'love.sqlite'),
+            backupPaths(data).database,
             this.config.MEDIA_SIGNING_SECRET || '',
           );
           if (lost.ai || lost.smtp)
@@ -420,7 +420,7 @@ export class Manager {
         ? resolve(
             await this.ask(
               'text',
-              '备份目录路径（包含 SHA256SUMS、deployment.env 和 data.tar.zst（旧备份为 data.tar.gz））',
+              `备份目录路径（包含 SHA256SUMS、deployment.env 和 ${BACKUP_ARCHIVE_NAME}；旧格式由程序转换）`,
             ),
           )
         : join(this.directory, 'backups', name);
@@ -460,7 +460,7 @@ export class Manager {
         await readFile(join(source, 'deployment.env'), 'utf8'),
       );
       const lost = auditBackupCredentials(
-        join(temp, 'love.sqlite'),
+        original.paths.database,
         backupConfig.MEDIA_SIGNING_SECRET || '',
       );
       let reset = false;
@@ -489,7 +489,7 @@ export class Manager {
       await this.paused(async () => {
         const location = await this.databaseLocation();
         rekeyBackup(
-          join(temp, 'love.sqlite'),
+          original.paths.database,
           backupConfig.MEDIA_SIGNING_SECRET || '',
           this.config.MEDIA_SIGNING_SECRET || '',
           { resetUnreadable: reset },
@@ -498,8 +498,8 @@ export class Manager {
         if (location.provider === 'postgres')
           await this.withDatabase((db) =>
             restoreToPostgres({
-              sourcePath: join(temp, 'love.sqlite'),
-              mediaDirectory: join(temp, 'media'),
+              sourcePath: original.paths.database,
+              mediaDirectory: original.paths.media,
               target: db,
               progress: this.log,
             }),

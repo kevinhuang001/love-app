@@ -7,7 +7,6 @@ import type { Writable, Transform } from 'node:stream';
 import { createZstdCompress, createZstdDecompress, constants as zlib } from 'node:zlib';
 import tar from 'tar-stream';
 
-export const BACKUP_ARCHIVE_NAME = 'data.tar.zst';
 export const BACKUP_COMPRESSION_LEVEL = 15;
 export async function digestFile(path: string) {
   const hash = createHash('sha256');
@@ -22,17 +21,18 @@ export async function digestFile(path: string) {
 
 // Filename selection is authenticated by the outer checksum list; never guess between
 // two archives or follow a symlink. Legacy gzip and current Zstandard share this entry.
-export async function verifyBackupDirectory(directory: string) {
+export async function verifyBackupDirectory(directory: string, archiveNames: readonly string[]) {
   const entries = new Set<string>();
   for (const line of (await readFile(join(directory, 'SHA256SUMS'), 'utf8')).trim().split('\n')) {
-    const match = line.match(/^([a-f0-9]{64}) [ *](deployment\.env|data\.tar\.(?:gz|zst))$/);
-    if (!match || entries.has(match[2])) throw new Error('备份校验清单无效');
+    const match = line.match(/^([a-f0-9]{64}) [ *]([^\r\n]+)$/);
+    if (!match || !['deployment.env', ...archiveNames].includes(match[2]) || entries.has(match[2]))
+      throw new Error('备份校验清单无效');
     const path = join(directory, match[2]);
     if (!(await lstat(path)).isFile() || (await digestFile(path)) !== match[1])
       throw new Error(`备份校验失败：${match[2]}`);
     entries.add(match[2]);
   }
-  const archives = ['data.tar.gz', BACKUP_ARCHIVE_NAME].filter((name) => entries.has(name));
+  const archives = archiveNames.filter((name) => entries.has(name));
   if (!entries.has('deployment.env') || archives.length !== 1 || entries.size !== 2)
     throw new Error('备份校验清单必须包含部署配置和唯一的数据归档');
   return archives[0];
@@ -48,7 +48,7 @@ export async function extractCurrentBackup(archive: string, directory: string) {
     await handle.close();
   }
   if (!header.equals(Buffer.from([0x28, 0xb5, 0x2f, 0xfd])))
-    throw new Error('当前备份必须使用 Zstandard；格式 1 的 gzip 请通过版本迁移入口导入');
+    throw new Error('归档必须使用 Zstandard');
   await extractTarArchive(archive, directory, createZstdDecompress());
 }
 
@@ -107,15 +107,27 @@ export async function extractTarArchive(archive: string, directory: string, deco
 }
 
 export async function packBackup(directory: string, destination: string | Writable) {
-  const pack = tar.pack();
-  const output = pipeline(
-    pack,
+  return packTarArchive(
+    directory,
+    destination,
     createZstdCompress({
       params: {
         [zlib.ZSTD_c_compressionLevel]: BACKUP_COMPRESSION_LEVEL,
         [zlib.ZSTD_c_checksumFlag]: 1,
       },
     }),
+  );
+}
+
+export async function packTarArchive(
+  directory: string,
+  destination: string | Writable,
+  encoder: Transform,
+) {
+  const pack = tar.pack();
+  const output = pipeline(
+    pack,
+    encoder,
     typeof destination === 'string'
       ? createWriteStream(destination, { flags: 'wx', mode: 0o600 })
       : destination,

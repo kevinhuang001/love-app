@@ -90,20 +90,20 @@ test('current extractor rejects gzip; outer dispatcher identifies one verified a
       ).join('\n') + '\n',
     );
   await writeSums(['deployment.env', 'data.tar.gz']);
-  assert.equal(await verifyBackupDirectory(root), 'data.tar.gz');
-  await assert.rejects(extractBackup(archive, join(root, 'out')), /版本迁移入口/);
+  assert.equal(await verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']), 'data.tar.gz');
+  await assert.rejects(extractBackup(archive, join(root, 'out')), /Zstandard/);
   await writeFile(join(root, 'data.tar.zst'), 'not-an-archive');
   await writeSums(['deployment.env', 'data.tar.gz', 'data.tar.zst']);
-  await assert.rejects(verifyBackupDirectory(root), /唯一/);
+  await assert.rejects(verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']), /唯一/);
   await writeSums(['deployment.env']);
-  await assert.rejects(verifyBackupDirectory(root));
+  await assert.rejects(verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']));
   await writeSums(['deployment.env', 'data.tar.gz', 'data.tar.gz']);
-  await assert.rejects(verifyBackupDirectory(root));
+  await assert.rejects(verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']));
   await writeSums(['deployment.env', 'data.tar.gz']);
   await writeFile(archive, 'changed');
-  await assert.rejects(verifyBackupDirectory(root), /校验失败/);
+  await assert.rejects(verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']), /校验失败/);
   await assert.rejects(extractBackup(archive, join(root, 'invalid')), /Zstandard/);
   await symlink('data.tar.gz', join(root, 'linked.gz'));
   await writeFile(join(root, 'SHA256SUMS'), '0'.repeat(64) + '  ../linked.gz\n');
-  await assert.rejects(verifyBackupDirectory(root), /清单无效/);
+  await assert.rejects(verifyBackupDirectory(root, ['data.tar.gz', 'data.tar.zst']), /清单无效/);
 });

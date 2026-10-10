@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, readFile, cp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { openDatabase } from '../apps/server/src/db.ts';
 import {
   exportDatabase,
+  prepareBackupImport,
   extractBackup,
   validatePackage,
   restoreSQLite,
@@ -19,6 +20,8 @@ import {
 } from '../apps/server/src/media-cleanup.ts';
 import { checkDatabase } from '../apps/server/src/database-check.ts';
 import { packBackup } from '../deploy/archive.mjs';
+import { backupFormatV1 } from '../apps/server/src/migrations/backup/001.ts';
+import { digestFile } from '../apps/server/src/backup-archive.ts';
 export async function managerSelfTest() {
   const root = await mkdtemp(join(tmpdir(), 'love-native-test-'));
   let db, target;
@@ -85,6 +88,35 @@ export async function managerSelfTest() {
     );
     await extractBackup(join(root, 'data.tar.zst'), join(root, 'extracted'));
     assert.deepEqual((await validatePackage(join(root, 'extracted'))).report, report);
+    const legacyData = join(root, 'legacy-data'),
+      legacyOuter = join(root, 'legacy-backup');
+    await cp(output, legacyData, { recursive: true });
+    await mkdir(legacyOuter);
+    const {
+      version: ignored,
+      integrity: ignoredIntegrity,
+      ...metadata
+    } = JSON.parse(await readFile(join(output, 'manifest.json'), 'utf8'));
+    await writeFile(
+      join(legacyData, 'manifest.json'),
+      JSON.stringify(await backupFormatV1.create(legacyData, metadata)),
+    );
+    await backupFormatV1.archive.pack(legacyData, join(legacyOuter, 'data.tar.gz'));
+    await writeFile(join(legacyOuter, 'deployment.env'), 'MEDIA_SIGNING_SECRET=fixture-secret\n');
+    await writeFile(
+      join(legacyOuter, 'SHA256SUMS'),
+      (
+        await Promise.all(
+          ['deployment.env', 'data.tar.gz'].map(
+            async (name) => `${await digestFile(join(legacyOuter, name))}  ${name}`,
+          ),
+        )
+      ).join('\n') + '\n',
+    );
+    const legacy = await prepareBackupImport(legacyOuter, join(root, 'legacy-import'));
+    assert.equal(legacy.formatVersion, 1);
+    assert.equal(legacy.targetFormatVersion, 2);
+    assert.deepEqual(legacy.report, report);
     const destination = join(root, 'restored', 'love.sqlite');
     await restoreSQLite(join(root, 'extracted'), destination);
     target = await openDatabase(destination);

@@ -85,7 +85,7 @@ export function Dates() {
                 seconds={elapsedSeconds(profile.couple.startDate, profile.couple.startTime, now)}
               />
             </div>
-            <p className="text-[11px] opacity-75">
+            <p className="text-sm leading-6 opacity-80">
               {profile.couple.startDate} {profile.couple.startTime} 起
             </p>
           </>
@@ -117,7 +117,7 @@ export function Dates() {
       ) : query.isError ? (
         <ErrorState error={query.error} retry={() => void query.refetch()} />
       ) : !query.data?.length ? (
-        <Empty title="记录第一个重要的日子" />
+        <Empty compact title="记录第一个重要的日子" />
       ) : (
         <div className="date-list space-y-0">
           {query.data.map((item) => (

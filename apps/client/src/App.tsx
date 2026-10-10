@@ -85,6 +85,10 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       if (message.senderId !== profile.data?.user.id || message.role === 'assistant')
         setUnread((count) => count + 1);
     });
+    connection.on(
+      'messages:changed',
+      () => void cache.invalidateQueries({ queryKey: ['messages'] }),
+    );
     connection.on('message:read', () => void cache.invalidateQueries({ queryKey: ['messages'] }));
     connection.on('profile:changed', () => {
       void cache.invalidateQueries({ queryKey: ['profile'] });

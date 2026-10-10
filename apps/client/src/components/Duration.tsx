@@ -29,7 +29,12 @@ export function Duration({
         </span>
         <span className={cn('ml-1', featured ? 'text-base' : 'text-xs')}>天</span>
       </span>
-      <span className={cn('text-[11px] tracking-wider', featured && 'opacity-80')}>
+      <span
+        className={cn(
+          'tracking-wider',
+          featured ? 'text-xl sm:text-2xl opacity-90' : 'text-[11px]',
+        )}
+      >
         {[value.hours, value.minutes, value.seconds]
           .map((v) => String(v).padStart(2, '0'))
           .join(':')}

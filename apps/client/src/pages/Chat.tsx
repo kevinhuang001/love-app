@@ -1,6 +1,16 @@
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
-import { Paperclip, Send, X, Check, CheckCheck, WifiOff, LoaderCircle } from 'lucide-react';
+import {
+  Paperclip,
+  Send,
+  X,
+  Check,
+  CheckCheck,
+  WifiOff,
+  LoaderCircle,
+  MoreHorizontal,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { newId } from '@/lib/id';
 import { aiMention, completeMention } from '@/lib/chat';
@@ -19,6 +29,9 @@ export function Chat() {
   const { api, profile, socket, connected, partnerOnline, openUs } = useApp(),
     cache = useQueryClient();
   const key = `love.outbox.v2:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null),
+    [editedContent, setEditedContent] = useState(''),
+    [editingMessage, setEditingMessage] = useState(false);
   const [text, setText] = useState(''),
     [attachments, setAttachments] = useState<Media[]>([]),
     [uploading, setUploading] = useState<{ index: number; total: number; percent: number } | null>(
@@ -285,7 +298,13 @@ export function Chat() {
                     <Avatar
                       small
                       name={sender.name}
-                      src={sender.avatar ? api.url(sender.avatar.thumbnailUrl) : undefined}
+                      src={
+                        sender.avatar
+                          ? api.url(sender.avatar.thumbnailUrl)
+                          : message.role === 'assistant'
+                            ? '/images/ai-avatar.webp'
+                            : undefined
+                      }
                       alt={
                         message.role === 'assistant'
                           ? `${sender.name}的头像`
@@ -329,6 +348,17 @@ export function Chat() {
                           hour: '2-digit',
                           minute: '2-digit',
                         })}
+                        <button
+                          type="button"
+                          aria-label={`修改消息 ${message.id}`}
+                          className="ml-1 rounded p-1 text-muted-foreground"
+                          onClick={() => {
+                            setSelectedMessage(message);
+                            setEditedContent(message.content);
+                          }}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
                         {mine &&
                           (message.readAt ? (
                             <>
@@ -410,7 +440,11 @@ export function Chat() {
               <Avatar
                 small
                 name={profile.ai.name}
-                src={profile.ai.avatar ? api.url(profile.ai.avatar.thumbnailUrl) : undefined}
+                src={
+                  profile.ai.avatar
+                    ? api.url(profile.ai.avatar.thumbnailUrl)
+                    : '/images/ai-avatar.webp'
+                }
               />
               <span className="flex-1 text-sm font-medium">{profile.ai.name}</span>
               <span className="text-[11px] text-muted-foreground">AI 助手</span>
@@ -529,6 +563,60 @@ export function Chat() {
           </Button>
         </div>
       </form>
+      <Dialog
+        open={Boolean(selectedMessage)}
+        onOpenChange={(open) => {
+          if (!open && !editingMessage) setSelectedMessage(null);
+        }}
+      >
+        <DialogContent>
+          <DialogTitle>修改消息</DialogTitle>
+          <DialogDescription>修改或删除会同步到两个人的聊天中。</DialogDescription>
+          <Textarea
+            aria-label="消息内容"
+            value={editedContent}
+            onChange={(e) => setEditedContent(e.target.value)}
+            maxLength={8000}
+          />
+          <Button
+            disabled={
+              editingMessage || (!editedContent.trim() && !selectedMessage?.attachments.length)
+            }
+            onClick={async () => {
+              setEditingMessage(true);
+              try {
+                await api.patch(`/api/messages/${selectedMessage!.id}`, { content: editedContent });
+                await cache.invalidateQueries({ queryKey: ['messages'] });
+                setSelectedMessage(null);
+              } catch (e) {
+                toast.error((e as Error).message);
+              } finally {
+                setEditingMessage(false);
+              }
+            }}
+          >
+            保存消息
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={editingMessage}
+            onClick={async () => {
+              setEditingMessage(true);
+              try {
+                await api.delete(`/api/messages/${selectedMessage!.id}`);
+                await cache.invalidateQueries({ queryKey: ['messages'] });
+                setSelectedMessage(null);
+              } catch (e) {
+                toast.error((e as Error).message);
+              } finally {
+                setEditingMessage(false);
+              }
+            }}
+          >
+            删除这条消息
+          </Button>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

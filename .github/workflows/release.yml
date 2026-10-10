@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.9.4
+        description: New version tag, for example v2.10.0
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.9.4' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.10.0' }}
     steps:
       - uses: actions/checkout@v4
         with:

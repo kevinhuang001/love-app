@@ -16,40 +16,40 @@
 
 ## 表目录
 
-| 表                                              | 用途                         |
-| ----------------------------------------------- | ---------------------------- |
-| [couples](#couples)                             | 两人空间与关系开始时间       |
-| [users](#users)                                 | 普通用户资料、密码与当前配对 |
-| [sessions](#sessions)                           | 用户登录会话                 |
-| [invites](#invites)                             | 两人配对邀请码               |
-| [media](#media)                                 | 已发布媒体的元数据和文件名   |
-| [media_sizes](#media_sizes)                     | 媒体容量记录                 |
-| [media_uploads](#media_uploads)                 | 尚未发布的暂存上传           |
-| [messages](#messages)                           | 聊天消息与 AI 回复           |
-| [message_media](#message_media)                 | 一条消息的有序附件           |
-| [moments](#moments)                             | 回忆相册条目                 |
-| [anniversaries](#anniversaries)                 | 纪念日                       |
-| [todos](#todos)                                 | 待办与重复日程               |
-| [couple_ai_settings](#couple_ai_settings)       | 每个两人空间的 AI 配置       |
-| [couple_media_settings](#couple_media_settings) | 原文件保留策略               |
-| [ai_jobs](#ai_jobs)                             | 聊天触发的异步 AI 任务       |
-| [ai_actions](#ai_actions)                       | AI 工具调用结果与去重        |
-| [administrators](#administrators)               | 后台管理员账号               |
-| [admin_sessions](#admin_sessions)               | 管理员登录会话               |
-| [server_config](#server_config)                 | 服务器业务设置和内部配置     |
-| [captchas](#captchas)                           | 图片验证码                   |
-| [email_codes](#email_codes)                     | 邮件验证码                   |
-| [email_allowlist](#email_allowlist)             | 注册邮箱白名单               |
-| [registration_invites](#registration_invites)   | 注册邀请码                   |
-| [album_imports](#album_imports)                 | 相册 ZIP 导入去重            |
-| [couple_limits](#couple_limits)                 | 两人空间额度                 |
-| [access_logs](#access_logs)                     | HTTP 访问日志                |
-| [server_logs](#server_logs)                     | 服务事件日志                 |
-| [audit_logs](#audit_logs)                       | 管理员操作日志               |
-| [schema_migrations](#schema_migrations)         | 已执行的数据库迁移历史       |
-| [media_files](#media_files)                     | 媒体文件归属、摘要与状态     |
-| [media_chunks](#media_chunks)                   | 媒体二进制分块               |
-| [database_restores](#database_restores)         | 恢复事务结果记录             |
+| 表                                              | 用途                                     |
+| ----------------------------------------------- | ---------------------------------------- |
+| [couples](#couples)                             | 两人空间与关系开始时间                   |
+| [users](#users)                                 | 普通用户资料、密码与当前配对             |
+| [sessions](#sessions)                           | 用户登录会话                             |
+| [invites](#invites)                             | 两人配对邀请码                           |
+| [media](#media)                                 | 已发布媒体的元数据和文件名               |
+| [media_sizes](#media_sizes)                     | 媒体容量记录                             |
+| [media_uploads](#media_uploads)                 | 尚未发布的暂存上传                       |
+| [messages](#messages)                           | 聊天消息与 AI 回复                       |
+| [message_media](#message_media)                 | 一条消息的有序附件                       |
+| [moments](#moments)                             | 回忆相册条目                             |
+| [anniversaries](#anniversaries)                 | 纪念日                                   |
+| [todos](#todos)                                 | 待办与重复日程                           |
+| [couple_ai_settings](#couple_ai_settings)       | 每个两人空间的 AI 配置                   |
+| [couple_media_settings](#couple_media_settings) | 原文件保留策略                           |
+| [ai_jobs](#ai_jobs)                             | 聊天触发的异步 AI 任务                   |
+| [ai_actions](#ai_actions)                       | AI 工具调用结果与去重                    |
+| [administrators](#administrators)               | 后台管理员账号                           |
+| [admin_sessions](#admin_sessions)               | 管理员登录会话                           |
+| [server_config](#server_config)                 | 服务器业务设置和内部配置                 |
+| [captchas](#captchas)                           | 图片验证码                               |
+| [email_codes](#email_codes)                     | 邮件验证码                               |
+| [email_allowlist](#email_allowlist)             | 注册邮箱白名单                           |
+| [registration_invites](#registration_invites)   | 注册邀请码                               |
+| [album_imports](#album_imports)                 | 已停用的历史历史相册导入去重（已停用）表 |
+| [couple_limits](#couple_limits)                 | 两人空间额度                             |
+| [access_logs](#access_logs)                     | HTTP 访问日志                            |
+| [server_logs](#server_logs)                     | 服务事件日志                             |
+| [audit_logs](#audit_logs)                       | 管理员操作日志                           |
+| [schema_migrations](#schema_migrations)         | 已执行的数据库迁移历史                   |
+| [media_files](#media_files)                     | 媒体文件归属、摘要与状态                 |
+| [media_chunks](#media_chunks)                   | 媒体二进制分块                           |
+| [database_restores](#database_restores)         | 恢复事务结果记录                         |
 
 ## couples
 
@@ -470,7 +470,7 @@ AI 工具调用结果与去重。
 
 ## album_imports
 
-相册 ZIP 导入去重。
+已停用的历史历史相册导入去重（已停用）表。
 
 | 字段         | 类型   | 允许 NULL | 默认值 | 含义                                |
 | ------------ | ------ | --------- | ------ | ----------------------------------- |

@@ -21,7 +21,8 @@ export type Profile = {
 };
 export type Media = {
   id: string;
-  kind: 'image' | 'video';
+  kind: 'image' | 'video' | 'live';
+  motionUrl?: string;
   thumbnailUrl: string;
   previewUrl: string;
   width: number;

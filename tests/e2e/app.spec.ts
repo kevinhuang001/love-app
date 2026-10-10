@@ -127,9 +127,9 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   );
   await page.getByRole('button', { name: '保存 To Do', exact: true }).click();
   await expect(page.getByText('七夕', { exact: true })).toBeVisible();
-  await expect(page.getByText('农历七月初七 20:21:22 · 每年重复', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '完成七夕', exact: true }).click();
-  await expect(page.getByText('本次已完成，已更新到下一次', { exact: true })).toBeVisible();
+  await expect(page.getByText('农历七月初七 20:21:22', { exact: false })).toBeVisible();
+  await expect(page.getByText('每年重复', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '完成七夕', exact: true })).toHaveCount(0);
   const toastFont = await page
     .locator('[data-sonner-toast]')
     .last()
@@ -360,7 +360,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await expect(page.getByTestId('album-item')).toHaveCount(1);
   await page.getByRole('button', { name: '查看图片：咖啡馆', exact: true }).click();
   await expect(page.getByRole('button', { name: '下一项回忆' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: '编辑回忆' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '编辑回忆' })).toBeVisible();
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('button', { name: '清除筛选', exact: true }).click();
   await expect(page.getByTestId('album-item')).toHaveCount(5);

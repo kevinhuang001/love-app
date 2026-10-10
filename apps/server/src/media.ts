@@ -1,6 +1,11 @@
+import decodeHEIC from 'heic-decode';
+import { extractMotionVideo } from './motion-photo.js';
+import archiver from 'archiver';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { rename, rm } from 'node:fs/promises';
+import { rename, rm, copyFile, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { removeMediaFiles } from './media-storage.js';
@@ -35,22 +40,94 @@ function run(command: string, args: string[], signal?: AbortSignal): Promise<str
     });
   });
 }
+async function openImage(source: string) {
+  const original = sharp(source, { limitInputPixels: false });
+  const info = await original.metadata();
+  if (info.format === 'heif' && info.compression === 'hevc') {
+    // Prebuilt Sharp includes AVIF but no HEVC decoder. Decode Apple HEIC with libheif WASM.
+    const decoded = await decodeHEIC({ buffer: await readFile(source) });
+    const image = sharp(Buffer.from(decoded.data), {
+      raw: { width: decoded.width, height: decoded.height, channels: 4 },
+    });
+    return { image, info: { ...info, width: decoded.width, height: decoded.height } };
+  }
+  return { image: original.rotate(), info };
+}
 export async function processMedia(
   source: string,
   mime: string,
   dir: string,
   retainOriginal: boolean,
   signal?: AbortSignal,
-) {
+  pairedVideo?: string,
+): Promise<{
+  id: string;
+  kind: string;
+  original: string;
+  preview: string;
+  thumbnail: string;
+  width: number | undefined;
+  height: number | undefined;
+  duration: number | null;
+  capturedDate: string | null;
+}> {
   const id = randomUUID();
   const original = retainOriginal ? `${id}.source` : '',
     thumbnail = `${id}.thumb.webp`;
   let preview = `${id}.preview.webp`;
+  const extracted = join(dir, `${id}.motion-input.mp4`);
+  let liveFiles: string[] = [];
+  let motionInput = pairedVideo;
+  const pairedOriginal =
+    pairedVideo && retainOriginal ? join(dir, `${id}.paired-source`) : undefined;
   try {
     signal?.throwIfAborted();
     if (mime.startsWith('image/')) {
-      const image = sharp(source, { limitInputPixels: false }).rotate();
-      const info = await image.metadata();
+      if (!motionInput && (await extractMotionVideo(source, extracted, signal)))
+        motionInput = extracted;
+      if (motionInput) {
+        if (pairedOriginal) await copyFile(pairedVideo!, pairedOriginal);
+        const live = await processMedia(motionInput, 'video/quicktime', dir, false, signal);
+        liveFiles = [
+          live.preview,
+          live.thumbnail,
+          ...(retainOriginal ? [`${live.id}.source`] : []),
+        ].map((name) => join(dir, name));
+        if ((live.duration || 0) > 30) throw new Error('实况视频不得超过 30 秒');
+        const { image: photo, info } = await openImage(source);
+        const capturedDate = await imageCaptureDate(info.exif);
+        await photo
+          .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 85 })
+          .toFile(join(dir, live.thumbnail));
+        if (retainOriginal) {
+          if (!pairedVideo) await rename(source, join(dir, `${live.id}.source`));
+          else {
+            // Preserve both Apple originals in one source bundle, within the existing backup/storage contract.
+            const zip = archiver('zip', { zlib: { level: 0 } });
+            const done = pipeline(zip, createWriteStream(join(dir, `${live.id}.source`)), {
+              signal,
+            });
+            zip.file(source, {
+              name: `photo.${info.format === 'heif' ? 'heic' : info.format || 'jpg'}`,
+            });
+            // processMedia consumes its input; retain the paired original before video conversion.
+            zip.file(pairedOriginal!, { name: 'video.mov' });
+            await zip.finalize();
+            await done;
+            await rm(source);
+          }
+        } else await rm(source);
+        return {
+          ...live,
+          kind: 'live',
+          original: retainOriginal ? `${live.id}.source` : '',
+          width: info.width,
+          height: info.height,
+          capturedDate,
+        };
+      }
+      const { image, info } = await openImage(source);
       const capturedDate = await imageCaptureDate(info.exif);
       if (!['jpeg', 'png', 'webp', 'avif', 'heif'].includes(info.format || ''))
         throw new Error('不支持此图片格式');
@@ -167,8 +244,15 @@ export async function processMedia(
   } catch (error) {
     await removeMediaFiles([
       source,
+      ...liveFiles,
       ...[original, preview, thumbnail].filter(Boolean).map((name) => join(dir, name)),
     ]);
     throw error;
+  } finally {
+    await removeMediaFiles([
+      extracted,
+      ...(pairedVideo ? [pairedVideo] : []),
+      ...(pairedOriginal ? [pairedOriginal] : []),
+    ]);
   }
 }

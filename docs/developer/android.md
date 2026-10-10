@@ -76,3 +76,9 @@ cd apps/client/android
 CI 会验证原生编译、Manifest、实际 DEX、签名和打包网络配置，也会检查本地通知桥接与权限。检查脚本仍叫 [verify-android-push.py](../../tests/android/verify-push.py)，它验证的是当前本地通知方案。自动检查不能代替真实手机的锁屏与送达测试。服务需要进程持续运行，不具备进程被终止后的离线唤醒或开机自启动能力。
 
 构建产物、发布门槛和版本维护见 [CI 与发布](ci.md)。
+
+## 应用内更新
+
+客户端读取 GitHub latest 正式 Release（Love-vX.Y.Z.apk 和对应 .sha256），按数值比较版本。FileTransfer 下载缓存 APK；AppUpdates 原生插件校验 SHA-256、包名、递增 versionCode 及当前证书，再用 FileProvider 打开系统安装器。需要 REQUEST_INSTALL_PACKAGES；首次授权未知来源后用户返回并再次点击。失败下载删除缓存文件，更新保留当前安装的数据。
+
+APK 的 versionCode 仍由 CI run_number 提供，发布时必须持续增加并使用同一正式签名。

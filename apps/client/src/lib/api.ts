@@ -109,6 +109,7 @@ export class Api {
     onProgress: (progress: number) => void,
     path = '/api/media',
     signal?: AbortSignal,
+    liveVideo?: File,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) {
@@ -148,6 +149,7 @@ export class Api {
       };
       const form = new FormData();
       form.append('file', file);
+      if (liveVideo) form.append('liveVideo', liveVideo);
       signal?.addEventListener('abort', abort, { once: true });
       xhr.send(form);
     });

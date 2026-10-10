@@ -1,3 +1,4 @@
+import { visibleAIContent } from './ai-content.js';
 import { SCHEMA_VERSION } from './migrations.js';
 import { APPLICATION_VERSION } from './version.js';
 import { presence } from './presence.js';
@@ -220,10 +221,16 @@ export async function createApp(options: AppOptions = {}) {
     const expires = Date.now() + 3_600_000;
     const url = (variant: string) =>
       `/api/media/${id}/${variant}?expires=${expires}&signature=${signMedia(secret, id, variant, expires)}`;
-    return { ...row, thumbnailUrl: url('thumbnail'), previewUrl: url('preview') };
+    return {
+      ...row,
+      thumbnailUrl: url('thumbnail'),
+      previewUrl: url(row.kind === 'live' ? 'thumbnail' : 'preview'),
+      ...(row.kind === 'live' ? { motionUrl: url('preview') } : {}),
+    };
   };
   const messageView = async (row: Record<string, unknown>) => ({
     ...row,
+    content: row.role === 'assistant' ? visibleAIContent(String(row.content || '')) : row.content,
     attachments: await Promise.all(
       (
         await db
@@ -287,9 +294,9 @@ export async function createApp(options: AppOptions = {}) {
       id &&
       !(await db
         .prepare(
-          'SELECT id FROM media WHERE id=? AND coupleId=? AND ownerId=? UNION SELECT id FROM media_uploads WHERE id=? AND coupleId=? AND ownerId=?',
+          'SELECT id FROM media WHERE id=? AND coupleId=? UNION SELECT id FROM media_uploads WHERE id=? AND coupleId=? AND ownerId=?',
         )
-        .get(id, await couple(req), req.user.id, id, await couple(req), req.user.id))
+        .get(id, await couple(req), id, await couple(req), req.user.id))
     )
       fail(403, '不能使用此媒体');
   };
@@ -446,19 +453,7 @@ export async function createApp(options: AppOptions = {}) {
       res.destroy(error as Error);
     }
   });
-  installAlbumTransfers({
-    app,
-    db,
-    uploads,
-    mediaRepository,
-    secret,
-    authenticate,
-    control,
-    changed: (id) => {
-      io.to(`couple:${id}`).emit('moments:changed');
-      io.to(`couple:${id}`).emit('profile:changed');
-    },
-  });
+  installAlbumTransfers({ app, db, mediaRepository, secret, authenticate });
   app.use(
     '/api',
     authenticate,
@@ -474,7 +469,14 @@ export async function createApp(options: AppOptions = {}) {
     }),
   );
   app.use('/api', async (req, _res, next) => {
-    const personal = ['/me', '/me/avatar', '/auth/logout', '/pairing/invite', '/pairing/join'];
+    const personal = [
+      '/me/password',
+      '/me',
+      '/me/avatar',
+      '/auth/logout',
+      '/pairing/invite',
+      '/pairing/join',
+    ];
     if (!personal.includes(req.path)) {
       try {
         await couple(req as AuthRequest);
@@ -490,6 +492,34 @@ export async function createApp(options: AppOptions = {}) {
     handler: (req: AuthRequest, res: Response) => unknown,
   ) => app[method](path, (req, res) => handler(req as AuthRequest, res));
   route('get', '/api/me', async (req, res) => res.json(await profile(req.user)));
+  app.post(
+    '/api/me/password',
+    rateLimit({
+      windowMs: 60000,
+      limit: 10,
+      keyGenerator: (req) => (req as AuthRequest).user.id,
+      message: { error: '密码尝试过于频繁，请稍后重试' },
+    }),
+  );
+  route('post', '/api/me/password', async (req, res) => {
+    const value = z
+      .object({ currentPassword: z.string().min(1).max(128), password: z.string().min(8).max(128) })
+      .parse(req.body);
+    const user = (await db.prepare('SELECT password FROM users WHERE id=?').get(req.user.id))!;
+    if (!(await verifyPassword(value.currentPassword, String(user.password))))
+      fail(400, '当前密码不正确');
+    const password = await hashPassword(value.password);
+    await transaction(db, async () => {
+      const changed = await db
+        .prepare('UPDATE users SET password=? WHERE id=? AND password=?')
+        .run(password, req.user.id, user.password);
+      if (!changed.changes) fail(409, '密码已改变，请重试');
+      await db
+        .prepare('DELETE FROM sessions WHERE userId=? AND hash<>?')
+        .run(req.user.id, req.sessionHash);
+    });
+    res.sendStatus(204);
+  });
   route('patch', '/api/me', async (req, res) => {
     await executeTool(db, req.user.id, 'update_profile', req.body);
     io.to(`user:${req.user.id}`).emit('profile:changed');
@@ -741,6 +771,44 @@ export async function createApp(options: AppOptions = {}) {
     await streams.flush();
     res.status(201).json(result);
   });
+  const mutableMessage = async (req: AuthRequest) => {
+    const id = z.coerce.number().int().positive().parse(req.params.id);
+    const row = await db
+      .prepare('SELECT * FROM messages WHERE id=? AND coupleId=?')
+      .get(id, await couple(req));
+    if (!row) fail(404, '消息不存在');
+    const job = await db.prepare('SELECT status FROM ai_jobs WHERE messageId=?').get(id);
+    if (job?.status === 'pending') fail(409, 'AI 正在处理这条消息，请等待回复后再修改');
+    return row!;
+  };
+  route('patch', '/api/messages/:id', async (req, res) => {
+    const { content } = z.object({ content: z.string().trim().max(8000) }).parse(req.body);
+    await transaction(db, async () => {
+      const message = await mutableMessage(req);
+      const attachments = await db
+        .prepare('SELECT mediaId FROM message_media WHERE messageId=?')
+        .all(message.id);
+      const text = message.role === 'assistant' ? visibleAIContent(content) : content;
+      if (!text && !attachments.length) fail(400, '消息不能为空');
+      await db
+        .prepare('UPDATE messages SET content=? WHERE id=? AND coupleId=?')
+        .run(text, message.id, req.user.coupleId);
+    });
+    io.to(`couple:${req.user.coupleId}`).emit('messages:changed');
+    res.sendStatus(204);
+  });
+  route('delete', '/api/messages/:id', async (req, res) => {
+    await transaction(db, async () => {
+      const message = await mutableMessage(req);
+      await db.prepare('DELETE FROM ai_actions WHERE messageId=?').run(message.id);
+      await db.prepare('DELETE FROM ai_jobs WHERE messageId=?').run(message.id);
+      await db
+        .prepare('DELETE FROM messages WHERE id=? AND coupleId=?')
+        .run(message.id, req.user.coupleId);
+    });
+    io.to(`couple:${req.user.coupleId}`).emit('messages:changed');
+    res.sendStatus(204);
+  });
   route('post', '/api/messages/read', async (req, res) => {
     const { throughId } = z.object({ throughId: z.number().int().positive() }).parse(req.body);
     const coupleId = await couple(req),
@@ -756,7 +824,7 @@ export async function createApp(options: AppOptions = {}) {
   let processing = 0;
   const upload = multer({
     dest: join(uploads, 'tmp'),
-    limits: { files: 1, fields: 0 },
+    limits: { files: 2, fields: 0 },
     fileFilter: (_req, file, cb) =>
       cb(
         null,
@@ -789,13 +857,24 @@ export async function createApp(options: AppOptions = {}) {
       res.once('close', close);
       if (req.aborted || res.destroyed) abort();
       const signal = controller.signal;
-      upload.single('file')(req, res, async (error) => {
+      upload.fields([
+        { name: 'file', maxCount: 1 },
+        { name: 'liveVideo', maxCount: 1 },
+      ])(req, res, async (error) => {
+        const received = (req.files || {}) as Record<string, Express.Multer.File[]>;
+        req.file = received.file?.[0];
+        const liveVideo = received.liveVideo?.[0];
         let generatedFiles: string[] = [],
           committed = false;
         try {
           signal.throwIfAborted();
           if (error) throw error;
           if (!req.file) fail(400, '请选择支持的图片或视频');
+          if (
+            liveVideo &&
+            (!req.file!.mimetype.startsWith('image/') || !liveVideo.mimetype.startsWith('video/'))
+          )
+            fail(400, '实况照片需要一张图片和一个视频');
           const keepOriginal = await retainOriginal((req as AuthRequest).user.coupleId!);
           const media = await processMedia(
             req.file!.path,
@@ -803,6 +882,7 @@ export async function createApp(options: AppOptions = {}) {
             uploads,
             keepOriginal,
             signal,
+            liveVideo?.path,
           );
           generatedFiles = [media.original, media.preview, media.thumbnail]
             .filter(Boolean)
@@ -876,7 +956,11 @@ export async function createApp(options: AppOptions = {}) {
               generatedFiles.map((file) => file.slice(uploads.length + 1)),
             );
           if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
-            await removeMediaFiles([...generatedFiles, ...(req.file ? [req.file.path] : [])]);
+            await removeMediaFiles([
+              ...generatedFiles,
+              ...(req.file ? [req.file.path] : []),
+              ...(liveVideo ? [liveVideo.path] : []),
+            ]);
           if (!signal.aborted)
             next(
               err instanceof HttpError || err instanceof multer.MulterError
@@ -915,8 +999,10 @@ export async function createApp(options: AppOptions = {}) {
         return;
       }
       const row = await db
-        .prepare('SELECT * FROM media WHERE id=? AND ownerId=?')
-        .get(id, req.user.id);
+        .prepare(
+          'SELECT * FROM media WHERE id=? AND (coupleId=? OR (coupleId IS NULL AND ownerId=?))',
+        )
+        .get(id, req.user.coupleId, req.user.id);
       if (!row) return;
       if ((await mediaReferences(db)).has(id)) fail(409, '此媒体已被回忆、聊天或头像使用');
       const candidates = [
@@ -986,7 +1072,7 @@ export async function createApp(options: AppOptions = {}) {
           return;
         }
         await ownedMedia(value.mediaId, req);
-        await publishMediaDraft(db, value.mediaId, req.user.id, coupleId);
+        await publishMediaDraft(db, value.mediaId, req.user.id, coupleId, true);
         await db
           .prepare(
             'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
@@ -1000,17 +1086,17 @@ export async function createApp(options: AppOptions = {}) {
   route('patch', '/api/moments/:id', async (req, res) => {
     const value = z.object({ title: text.max(300), date }).parse(req.body);
     const result = await db
-      .prepare('UPDATE moments SET title=?,date=? WHERE id=? AND coupleId=? AND ownerId=?')
-      .run(value.title, value.date, String(req.params.id), await couple(req), req.user.id);
-    if (!result.changes) fail(404, '回忆不存在或不是你发布的');
+      .prepare('UPDATE moments SET title=?,date=? WHERE id=? AND coupleId=?')
+      .run(value.title, value.date, String(req.params.id), await couple(req));
+    if (!result.changes) fail(404, '回忆不存在');
     io.to(`couple:${req.user.coupleId}`).emit('moments:changed');
     res.sendStatus(204);
   });
   route('delete', '/api/moments/:id', async (req, res) => {
     const result = await db
-      .prepare('DELETE FROM moments WHERE id=? AND coupleId=? AND ownerId=?')
-      .run(String(req.params.id), await couple(req), req.user.id);
-    if (!result.changes) fail(404, '回忆不存在或不是你发布的');
+      .prepare('DELETE FROM moments WHERE id=? AND coupleId=?')
+      .run(String(req.params.id), await couple(req));
+    if (!result.changes) fail(404, '回忆不存在');
     io.to(`couple:${req.user.coupleId}`).emit('moments:changed');
     res.sendStatus(204);
   });

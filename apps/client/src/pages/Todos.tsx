@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, CalendarClock, Check, Pencil, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, CalendarClock, Pencil, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
-import { today, clockTime, nextTodoInstant, lunarLabel } from '@/lib/dates';
+import { today, clockTime, nextTodoInstant, lunarLabel, annualDate } from '@/lib/dates';
 import { useClock } from '@/lib/useClock';
 import { Duration } from '@/components/Duration';
 import type { Todo } from '@/lib/types';
@@ -44,7 +44,15 @@ export function Todos() {
     setRepeat(item?.repeat || 'none');
     setOpen(true);
   }
-  const value = { title, date, time, calendar, leapMonth, repeat };
+  let scheduledDate = date;
+  if (repeat === 'yearly') {
+    try {
+      scheduledDate = annualDate(date.slice(5), calendar, leapMonth);
+    } catch {
+      /* preview shows invalid input */
+    }
+  }
+  const value = { title, date: scheduledDate, time, calendar, leapMonth, repeat };
   let preview: ReturnType<typeof nextTodoInstant> = null,
     error = '';
   try {
@@ -54,24 +62,6 @@ export function Todos() {
   }
   async function refresh() {
     await cache.invalidateQueries({ queryKey: ['todos'] });
-  }
-  async function complete(item: Todo, completed: boolean) {
-    setBusy(true);
-    try {
-      await api.post(`/api/todos/${item.id}/completion`, { completed });
-      await refresh();
-      toast.success(
-        completed
-          ? item.repeat === 'yearly'
-            ? '本次已完成，已更新到下一次'
-            : '待办已完成'
-          : '已撤销完成',
-      );
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
   }
   const items = (query.data || [])
     .map((item) => ({ item, next: nextTodoInstant(item, now) }))
@@ -127,8 +117,11 @@ export function Todos() {
                     {item.title}
                   </h3>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {lunarLabel(item)} {item.time}
-                    {item.repeat === 'yearly' ? ' · 每年重复' : ''}
+                    {item.calendar === 'solar' && item.repeat === 'yearly'
+                      ? item.date.slice(5)
+                      : lunarLabel(item)}{' '}
+                    {item.time}
+                    {item.repeat === 'yearly' && <span className="mt-1 block">每年重复</span>}
                   </p>
                   {item.calendar === 'lunar' && next && (
                     <p className="mt-1 text-[11px] text-muted-foreground">对应公历 {next.date}</p>
@@ -153,35 +146,7 @@ export function Todos() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-2 border-t pt-3">
-                <div className="min-w-0">
-                  {item.completedDate && item.repeat === 'yearly' && (
-                    <p className="text-[10px] text-muted-foreground">已完成 {item.completedDate}</p>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-0 text-xs"
-                    disabled={busy}
-                    aria-label={`${item.completed ? '撤销' : '完成'}${item.title}`}
-                    onClick={() => void complete(item, !item.completed)}
-                  >
-                    {item.completed ? <RotateCcw size={13} /> : <Check size={13} />}{' '}
-                    {item.completed ? '撤销完成' : '完成本次'}
-                  </Button>
-                  {item.completedDate && item.repeat === 'yearly' && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="ml-2 h-7 px-1 text-xs"
-                      disabled={busy}
-                      aria-label={`撤销完成${item.title}`}
-                      onClick={() => void complete(item, false)}
-                    >
-                      撤销
-                    </Button>
-                  )}
-                </div>
+              <div className="flex items-center justify-end gap-2 border-t pt-3">
                 <div className="flex gap-1">
                   <Button
                     variant="ghost"
@@ -280,7 +245,40 @@ export function Todos() {
                 </select>
               </div>
             </div>
-            {calendar === 'solar' ? (
+            {repeat === 'yearly' ? (
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  ['月份', 1, 12],
+                  ['日期', 2, calendar === 'lunar' ? 30 : 31],
+                ].map(([label, index, max]) => (
+                  <div className="space-y-2" key={String(label)}>
+                    <Label htmlFor={`annual-${index}`}>
+                      {calendar === 'lunar' ? '农历' : ''}
+                      {label}
+                    </Label>
+                    <Input
+                      id={`annual-${index}`}
+                      type="number"
+                      min={1}
+                      max={Number(max)}
+                      required
+                      value={Number(date.split('-')[Number(index)]) || ''}
+                      onChange={(e) => {
+                        const parts = date.split('-');
+                        parts[Number(index)] = e.target.value.padStart(2, '0');
+                        setDate(parts.join('-'));
+                      }}
+                    />
+                  </div>
+                ))}
+                {calendar === 'lunar' && (
+                  <div className="col-span-2 flex justify-between">
+                    <Label htmlFor="annual-leap">农历闰月</Label>
+                    <Switch id="annual-leap" checked={leapMonth} onCheckedChange={setLeapMonth} />
+                  </div>
+                )}
+              </div>
+            ) : calendar === 'solar' ? (
               <div className="space-y-2">
                 <Label htmlFor="todo-date">待办日期</Label>
                 <Input

@@ -42,13 +42,17 @@ export function Empty({
   title,
   detail,
   action,
+  compact = false,
 }: {
   title: string;
   detail?: string;
   action?: React.ReactNode;
+  compact?: boolean;
 }) {
   return (
-    <div className="flex h-full min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
+    <div
+      className={`flex ${compact ? 'min-h-56' : 'h-full min-h-64'} flex-col items-center justify-center px-6 py-12 text-center`}
+    >
       <div className="mb-5 grid size-12 place-items-center rounded-full border text-muted-foreground">
         <MessageCircle size={21} strokeWidth={1.5} />
       </div>
@@ -113,6 +117,11 @@ export function MediaThumbnail({
           className="max-h-72 w-full object-cover"
         />
       )}
+      {media.kind === 'live' && (
+        <span className="absolute left-2 top-2 rounded bg-black/50 px-2 py-1 text-[10px] text-white">
+          实况
+        </span>
+      )}
       {media.kind === 'video' && (
         <>
           <span className="absolute inset-0 grid place-items-center">
@@ -152,9 +161,9 @@ export function MediaPreview({
           <DialogTitle>{media.kind === 'video' ? '视频预览' : '照片预览'}</DialogTitle>
           <DialogDescription>轻点关闭返回聊天</DialogDescription>
           {open &&
-            (media.kind === 'video' ? (
+            (media.kind !== 'image' ? (
               <video
-                src={api.url(media.previewUrl)}
+                src={api.url(media.motionUrl || media.previewUrl)}
                 poster={api.url(media.thumbnailUrl)}
                 controls
                 autoPlay

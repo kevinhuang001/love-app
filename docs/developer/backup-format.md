@@ -1,6 +1,6 @@
 # 备份与相册文件格式
 
-这篇文档用于实现导出、导入或排查备份文件。服务器备份恢复整台 Love；相册 ZIP 只导入当前两人的回忆，两者不能互换。操作步骤见[日常维护](../user/manage.md)，执行过程见[备份与恢复实现](implementation/backup-restore.md)。
+这篇文档用于实现导出、导入或排查备份文件。服务器备份恢复整台 Love；相册 ZIP 仅用于导出普通图片和视频，不能导入或用于恢复服务器。操作步骤见[日常维护](../user/manage.md)，执行过程见[备份与恢复实现](implementation/backup-restore.md)。
 
 ## 三个版本号
 
@@ -148,18 +148,6 @@ PostgreSQL 来源不直接复制 `media_files`、`media_chunks` 或 `database_re
 
 缺清单、旧 PGDMP、没有新迁移历史的旧 schema 4～9 仍不支持。本次可转换的是此前新体系的格式 1，而不是所有历史备份。追加格式的开发步骤见[备份格式迁移](backup-migrations.md)。
 
-## 完整相册 ZIP
+## 相册 ZIP
 
-相册清单使用 `format: love-album`、`version: 1`，独立于服务器备份版本。ZIP 包含当前相册引用的照片 / 视频预览、缩略图和实际保留的原文件。
-
-| 清单部分  | 主要字段                                                                             |
-| --------- | ------------------------------------------------------------------------------------ |
-| `media`   | id、kind、width、height、duration、createdAt、original（可为空）、preview、thumbnail |
-| 文件对象  | 相对 path、bytes、sha256                                                             |
-| `moments` | mediaId、title、date、createdAt、author                                              |
-
-导入重建媒体 ID 和当前空间关联，由导入者发布；按当前保留策略决定是否保存原文件，并核算容量。相同 ZIP 内容摘要去重；校验失败时不保存回忆。普通照片 ZIP 仅导出 JPEG，不包含这些元数据或视频。
-
-相册 ZIP 当前只接受其格式版本 1，没有复用服务器备份的格式转换器。未来相册格式变化需单独增加读法和迁移，不能通过增加 BACKUP_FORMAT_VERSION 获得兼容。执行过程见[相册实现](implementation/album.md)，接口见[接口参考](api.md#相册与日程)。
-
-当前字段、压缩、路径与校验由格式 2 模块提供，不是通用恢复器的固定字段。新增格式的模块接口与注册步骤见[备份格式迁移](backup-migrations.md)。
+用户相册导出只包含 JPEG 图片和 MP4 视频，实况照片拆成同名的两份文件。不再提供完整相册清单、格式选择或用户导入接口。这不影响上述管理程序的服务器备份与恢复格式。

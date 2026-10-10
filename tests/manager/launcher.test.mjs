@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, readFile, rm, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { Manager } from '../../manager/manager.mjs';
 import { imageRepository as repo } from '../../manager/registry.mjs';
 import { installManager } from '../../manager/releases.mjs';
@@ -44,6 +45,7 @@ async function fixture(
     notes = [];
   const binary = Buffer.from('verified-binary');
   const binaryHash = createHash('sha256').update(binary).digest('hex');
+  const compressed = execFileSync('xz', ['--compress', '--stdout'], { input: binary });
   const image = repo + '@sha256:' + 'e'.repeat(64),
     executable = join(directory, 'love');
   await writeFile(executable, 'old-binary');
@@ -123,11 +125,23 @@ async function fixture(
       return Response.json({
         version: '2.9.0',
         source: sync ? remoteRevision : old,
-        assets: [{ name: 'love-linux-x64', sha256: binaryHash }],
+        assets: [
+          {
+            name: 'love-linux-x64',
+            sha256: binaryHash,
+            bytes: binary.length,
+            download: {
+              name: 'love-linux-x64.xz',
+              compression: 'xz',
+              sha256: createHash('sha256').update(compressed).digest('hex'),
+              bytes: compressed.length,
+            },
+          },
+        ],
         templates,
       });
-    if (url.endsWith('/love-linux-x64'))
-      return new Response(fail === 'binary' ? Buffer.from('corrupt') : binary);
+    if (url.endsWith('/love-linux-x64.xz'))
+      return new Response(fail === 'binary' ? Buffer.from('corrupt') : compressed);
     throw new Error('unexpected request ' + url);
   };
   const manager = new Manager({

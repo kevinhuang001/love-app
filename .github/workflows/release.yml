@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.10.1
+        description: New version tag, for example v2.10.2
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.10.1' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.10.2' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,18 +83,34 @@ jobs:
           path: release/manager
           github-token: ${{ github.token }}
           run-id: ${{ env.SOURCE_RUN_ID }}
-      - name: Verify manager binaries and tested source
+      - name: Verify manager binaries, XZ archives and tested source
         if: steps.source.outputs.publish == 'true'
         run: |
+          set -euo pipefail
           (cd release/manager && sha256sum -c SHA256SUMS)
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
+          import { readFileSync, statSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
           const m=JSON.parse(readFileSync('release/manager/manager-release.json'));
           assert.equal(m.source,readFileSync('source-sha.txt','utf8'));
           assert.equal('v'+m.version,process.env.RELEASE_TAG);
           assert.deepEqual(m.assets.map(x=>x.name).sort(),['love-linux-arm64','love-linux-x64']);
+          for (const asset of m.assets) {
+            assert.equal(asset.download.name,asset.name+'.xz');
+            assert.equal(asset.download.compression,'xz');
+            assert.match(asset.sha256,/^[a-f0-9]{64}$/);
+            assert.match(asset.download.sha256,/^[a-f0-9]{64}$/);
+            assert.equal(asset.bytes,statSync('release/manager/'+asset.name).size);
+            assert.equal(asset.download.bytes,statSync('release/manager/'+asset.download.name).size);
+            for (const file of [asset, asset.download])
+              assert.equal(file.sha256,createHash('sha256').update(readFileSync('release/manager/'+file.name)).digest('hex'));
+          }
           JS
+          for arch in x64 arm64; do
+            xz --test "release/manager/love-linux-$arch.xz"
+            cmp "release/manager/love-linux-$arch" <(xz --decompress --stdout "release/manager/love-linux-$arch.xz")
+          done
       - name: Prepare APK and checksum
         if: steps.source.outputs.publish == 'true'
         id: apk
@@ -116,13 +132,14 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           cat > release/NOTES.md <<'NOTES'
-          Love 2.10.1：实况照片播放体验修正。
+          Love 2.10.2：管理程序安装和更新使用 XZ 压缩下载。
 
-          - 打开实况照片默认静音播放一遍，结束后显示静态照片，可再次播放。
-          - 播放按钮明确显示“播放实况 / 停止实况”。
-          - 上传提示明确支持普通照片、视频和实况照片，分别说明安卓和苹果的实况上传方式。
-          - 已发送聊天记录不允许修改或删除，移除按钮及对应后端接口。
-          - 点击聊天或“我们”中的对方头像，可查看昵称、用户名和头像。
+          - 安装器和新版管理器下载对应架构的 XZ 压缩包，校验并自动解压后安装。
+          - 同时校验压缩包及解压后程序；失败时保留原程序、配置和数据。
+          - 管理程序仍是独立二进制，无需安装 Bun / Node，启动时不需要解压。
+          - 保留旧版管理器升级通道；旧版首次升级仍使用未压缩程序，之后使用 XZ 下载。
+          - AMD64 / ARM64 CI 实际解压并运行交付的管理程序。
+          - 解压需要系统 xz 工具（Debian / Ubuntu 包名为 xz-utils）。
 
           APK 和 Linux AMD64 / ARM64 管理程序来自通过完整 CI 的构建，附 SHA-256；APK 附固定签名指纹。
           请覆盖安装以保留登录信息；卸载会清除本地应用数据。既有数据卷无需清空。
@@ -134,7 +151,7 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           set -euo pipefail
-          assets=(release/manager/love-linux-x64 release/manager/love-linux-arm64 release/manager/SHA256SUMS release/manager/manager-release.json)
+          assets=(release/manager/love-linux-x64.xz release/manager/love-linux-arm64.xz release/manager/love-linux-x64 release/manager/love-linux-arm64 release/manager/SHA256SUMS release/manager/manager-release.json)
           if [ "${{ steps.apk.outputs.publish }}" = true ]; then
             apk="Love-${RELEASE_TAG}.apk"
             assets+=("release/$apk" "release/$apk.sha256" "release/$apk.signing.json")

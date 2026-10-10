@@ -1,6 +1,6 @@
 {
   "name": "love-app",
-  "version": "2.10.1",
+  "version": "2.10.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
     "dev": "concurrently -k \"npm run dev -w apps/server\" \"npm run dev -w apps/client\"",
     "build": "npm run build -w apps/server && npm run build -w apps/client",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "node --import tsx --test tests/manager/install.test.mjs tests/android/android-key.test.mjs tests/manager/setup.test.mjs tests/manager/launcher.test.mjs tests/manager/manager-migrations.test.mjs tests/manager/check-update.test.mjs tests/manager/terminal-ui.test.mjs tests/certificates/certbot.test.mjs && npm run test -w apps/server && npm run test -w apps/client",
+    "test": "node --import tsx --test tests/manager/install.test.mjs tests/manager/releases.test.mjs tests/android/android-key.test.mjs tests/manager/setup.test.mjs tests/manager/launcher.test.mjs tests/manager/manager-migrations.test.mjs tests/manager/check-update.test.mjs tests/manager/terminal-ui.test.mjs tests/certificates/certbot.test.mjs && npm run test -w apps/server && npm run test -w apps/client",
     "test:e2e": "playwright test --config tests/playwright.config.ts",
     "start": "npm run start -w apps/server",
     "android:prepare": "npm run build -w apps/client && node tools/android/prepare.mjs",

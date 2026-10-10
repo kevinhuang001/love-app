@@ -712,16 +712,16 @@ export class Manager {
     }
     if (managerChanged) {
       const progress = this.ui.spinner?.();
-      progress?.start('正在下载独立管理程序…');
+      progress?.start(release.download ? '正在下载管理程序 XZ 压缩包…' : '正在下载独立管理程序…');
       try {
         await installManager(release, this.executable, {
           request: this.request,
           onProgress: (bytes) =>
             progress?.message(
-              `正在下载管理程序：${(bytes / 1048576).toFixed(1)} MiB${release.bytes ? ' / ' + (release.bytes / 1048576).toFixed(1) + ' MiB' : ''}`,
+              `正在下载管理程序：${(bytes / 1048576).toFixed(1)} MiB${release.download?.bytes || release.bytes ? ' / ' + ((release.download?.bytes || release.bytes) / 1048576).toFixed(1) + ' MiB' : ''}`,
             ),
         });
-        progress?.stop('管理程序已校验并更新');
+        progress?.stop('管理程序已校验并安装');
       } catch (error) {
         progress?.stop('管理程序下载未完成，原程序保留');
         throw error;

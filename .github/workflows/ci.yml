@@ -34,10 +34,14 @@ jobs:
           bun-version: 1.4.2
       - run: npm ci --no-audit --no-fund
       - run: bun manager/build.mjs
-      - name: Test standalone executable from an empty directory
+      - name: Verify XZ downloads and test the extracted executable from an empty directory
         run: |
+          set -euo pipefail
+          (cd .artifacts/manager && sha256sum -c SHA256SUMS)
           mkdir -p "$RUNNER_TEMP/native-manager"
-          cp .artifacts/manager/love-linux-x64 "$RUNNER_TEMP/native-manager/love"
+          xz --decompress --stdout .artifacts/manager/love-linux-x64.xz > "$RUNNER_TEMP/native-manager/love"
+          cmp .artifacts/manager/love-linux-x64 "$RUNNER_TEMP/native-manager/love"
+          chmod +x "$RUNNER_TEMP/native-manager/love"
           cd "$RUNNER_TEMP/native-manager"
           env -i PATH=/usr/bin:/bin TEST_DATABASE_URL=postgres://love:ci-native-manager-password@127.0.0.1:5432/love_manager_test ./love --self-test
           ./love --version
@@ -56,11 +60,14 @@ jobs:
         with:
           name: love-manager
           path: .artifacts/manager/
-      - name: Test ARM64 standalone executable without project files
+      - name: Verify and test the extracted ARM64 executable without project files
         run: |
-          chmod +x .artifacts/manager/love-linux-arm64
+          set -euo pipefail
+          (cd .artifacts/manager && sha256sum -c SHA256SUMS)
           mkdir -p "$RUNNER_TEMP/native-manager"
-          cp .artifacts/manager/love-linux-arm64 "$RUNNER_TEMP/native-manager/love"
+          xz --decompress --stdout .artifacts/manager/love-linux-arm64.xz > "$RUNNER_TEMP/native-manager/love"
+          cmp .artifacts/manager/love-linux-arm64 "$RUNNER_TEMP/native-manager/love"
+          chmod +x "$RUNNER_TEMP/native-manager/love"
           cd "$RUNNER_TEMP/native-manager"
           env -i PATH=/usr/bin:/bin ./love --self-test
           ./love --version

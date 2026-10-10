@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { templates } from './templates.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import pkg from '../package.json';
 const source = process.env.LOVE_SOURCE_SHA || process.env.GITHUB_SHA || '0'.repeat(40);
 if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Manager source SHA is required');
@@ -9,6 +11,7 @@ const targets = process.argv.includes('--native')
   ? [process.arch === 'arm64' ? 'arm64' : 'x64']
   : ['x64', 'arm64'];
 const assets = [];
+const run = promisify(execFile);
 for (const arch of targets) {
   const name = 'love-linux-' + arch;
   const build = await Bun.build({
@@ -25,15 +28,33 @@ for (const arch of targets) {
   });
   if (!build.success) throw new AggregateError(build.logs, 'Manager compilation failed');
   const data = await readFile('.artifacts/manager/' + name);
+  const { stdout: compressed } = await run(
+    'xz',
+    ['-6', '--threads=1', '--stdout', '--', '.artifacts/manager/' + name],
+    {
+      encoding: 'buffer',
+      maxBuffer: data.length + 1048576,
+      env: { ...process.env, XZ_OPT: '', XZ_DEFAULTS: '' },
+    },
+  );
+  await writeFile('.artifacts/manager/' + name + '.xz', compressed);
   assets.push({
     name,
     sha256: createHash('sha256').update(data).digest('hex'),
     bytes: data.length,
+    download: {
+      name: name + '.xz',
+      compression: 'xz',
+      sha256: createHash('sha256').update(compressed).digest('hex'),
+      bytes: compressed.length,
+    },
   });
 }
 await writeFile(
   '.artifacts/manager/SHA256SUMS',
-  assets.map((x) => x.sha256 + '  ' + x.name).join('\n') + '\n',
+  assets
+    .flatMap((x) => [x.sha256 + '  ' + x.name, x.download.sha256 + '  ' + x.download.name])
+    .join('\n') + '\n',
 );
 await writeFile(
   '.artifacts/manager/manager-release.json',

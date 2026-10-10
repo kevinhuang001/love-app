@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, readFile, cp } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { installManager } from '../../manager/releases.mjs';
 import { openDatabase } from '../../apps/server/src/db.ts';
 import {
   exportDatabase,
@@ -27,6 +29,29 @@ export async function managerSelfTest() {
   let db, target;
   const schema = 'manager_' + randomUUID().replaceAll('-', '');
   try {
+    // Exercise the update stream inside the compiled runtime on both architectures.
+    const replacement = Buffer.from('native-manager-xz-update-fixture');
+    const archive = execFileSync('xz', ['--compress', '--stdout'], { input: replacement });
+    const archivePath = join(root, 'update.xz');
+    const executable = join(root, 'love');
+    await writeFile(archivePath, archive);
+    await writeFile(executable, 'old-manager');
+    await installManager(
+      {
+        url: 'https://fixture/binary',
+        sha256: createHash('sha256').update(replacement).digest('hex'),
+        bytes: replacement.length,
+        download: {
+          url: 'https://fixture/binary.xz',
+          sha256: await digestFile(archivePath),
+          bytes: archive.length,
+          compression: 'xz',
+        },
+      },
+      executable,
+      { request: async () => new Response(archive) },
+    );
+    assert.deepEqual(await readFile(executable), replacement);
     const path = join(root, 'source', 'love.sqlite'),
       media = join(root, 'source', 'media');
     await mkdir(media, { recursive: true });
@@ -147,7 +172,7 @@ export async function managerSelfTest() {
       await target.exec(`DROP SCHEMA "${schema}" CASCADE`);
     }
     console.log(
-      'Native manager self-test passed: transaction rollback, cleanup, integrity, streamed backup, validation, SQLite restore' +
+      'Native manager self-test passed: XZ manager update, transaction rollback, cleanup, integrity, streamed backup, validation, SQLite restore' +
         (process.env.TEST_DATABASE_URL ? ', PostgreSQL round-trip' : '') +
         '.',
     );

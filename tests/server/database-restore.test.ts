@@ -1,4 +1,5 @@
 import { packBackup, digestFile } from '../../apps/server/src/backup-archive.js';
+import { APPLICATION_VERSION } from '../../apps/server/src/version.js';
 import { gunzipSync, zstdCompressSync } from 'node:zlib';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -958,7 +959,7 @@ test('a later software build validates a version 1 backup, migrates its private 
     versionPath,
     (await readFile(versionPath, 'utf8')).replace(
       /APPLICATION_VERSION = '[^']+'/,
-      "APPLICATION_VERSION = '2.10.0'",
+      `APPLICATION_VERSION = '${Number(APPLICATION_VERSION.split('.')[0]) + 1}.0.0'`,
     ),
   );
   const destination = join(s.dir, 'future-target', 'love.sqlite');

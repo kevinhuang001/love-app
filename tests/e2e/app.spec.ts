@@ -270,11 +270,12 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   const image = await sharp({
     create: { width: 900, height: 600, channels: 3, background: '#789684' },
   })
-    .png()
+    .withExif({ IFD2: { DateTimeOriginal: '2026:06:20 12:00:00' } })
+    .jpeg()
     .toBuffer();
   await page.locator('input[type=file]').setInputFiles([
-    { name: 'walk1.png', mimeType: 'image/png', buffer: image },
-    { name: 'walk2.png', mimeType: 'image/png', buffer: image },
+    { name: 'walk1.jpg', mimeType: 'image/jpeg', buffer: image },
+    { name: 'walk2.jpg', mimeType: 'image/jpeg', buffer: image },
   ]);
   await expect(page.getByText('已选择 2 个文件 · 点击重选')).toBeVisible();
   await page.getByLabel('写下这一刻').fill('周末');
@@ -286,7 +287,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   const peerMedia = await (
     await request.post('http://127.0.0.1:3000/api/media', {
       headers: peerHeaders,
-      multipart: { file: { name: 'cafe.png', mimeType: 'image/png', buffer: image } },
+      multipart: { file: { name: 'cafe.jpg', mimeType: 'image/jpeg', buffer: image } },
     })
   ).json();
   await request.post('http://127.0.0.1:3000/api/moments', {

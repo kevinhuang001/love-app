@@ -87,7 +87,7 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
     .setInputFiles({ name: 'memory.png', mimeType: 'image/png', buffer: image });
   await page.getByLabel('拍摄日期 · memory.png').fill('2026-06-15');
   await page.getByLabel('写下这一刻').fill('一起散步');
-  await page.getByRole('button', { name: '保存回忆' }).click();
+  await page.getByRole('button', { name: '上传', exact: true }).click();
   await expect(page.getByText('一起散步', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '查看图片' }).click();
   await expect(page.getByRole('img', { name: '照片大图' })).toBeVisible();
@@ -280,8 +280,8 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   await page.getByLabel('写下这一刻').fill('周末');
   await page.getByLabel('拍摄日期 · walk1.png').fill('2026-06-15');
   await page.getByLabel('拍摄日期 · walk2.png').fill('2026-06-16');
-  await page.getByRole('button', { name: '保存回忆' }).click();
-  await expect(page.getByText('已保存 2 个回忆', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '上传', exact: true }).click();
+  await expect(page.getByText('已加入上传队列，可以离开此页面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('album-item')).toHaveCount(2);
   const own = (await (await request.get('http://127.0.0.1:3000/api/moments', { headers })).json())
     .items[0];
@@ -492,30 +492,20 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
   const missing = await image().png().toBuffer();
   let uploads = 0;
   page.on('request', (req) => {
-    if (req.url().endsWith('/api/media') && req.method() === 'POST') uploads++;
+    if (req.url().endsWith('/api/uploads') && req.method() === 'POST') uploads++;
   });
   await page.locator('input[type=file]').setInputFiles([
     { name: 'leap.jpg', mimeType: 'image/jpeg', buffer: first },
     { name: 'winter.jpg', mimeType: 'image/jpeg', buffer: second },
     { name: 'no-date.png', mimeType: 'image/png', buffer: missing },
   ]);
-  const rows = page.getByTestId('upload-file');
-  await expect(rows.filter({ hasText: 'leap.jpg' })).toContainText('2024-02-29');
-  await expect(rows.filter({ hasText: 'winter.jpg' })).toContainText('2025-12-01');
-  const manual = page.getByLabel('拍摄日期 · no-date.png');
-  await expect(manual).toHaveValue('');
-  await expect(page.getByRole('dialog').locator('input[type=date]')).toHaveCount(1);
-  await expect(page.getByRole('button', { name: '保存回忆' })).toBeEnabled();
-  await page.getByRole('button', { name: '保存回忆' }).click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  expect(await manual.evaluate((el) => (el as HTMLInputElement).validity.valueMissing)).toBe(true);
-  await manual.fill('2026-06-01');
-  await page.getByRole('button', { name: '修改winter.jpg的日期' }).click();
+  expect(uploads).toBe(0);
+  await page.getByLabel('拍摄日期 · no-date.png').fill('2026-06-01');
   await page.getByLabel('拍摄日期 · winter.jpg').fill('2025-12-05');
   await page.getByLabel('写下这一刻').fill('逐张日期');
   let failed = false;
-  await page.route('**/api/moments', async (route) => {
-    if (route.request().method() === 'POST' && !failed) {
+  await page.route('**/api/uploads/*/complete', async (route) => {
+    if (!failed) {
       failed = true;
       await route.fulfill({
         status: 503,
@@ -524,13 +514,18 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
       });
     } else await route.continue();
   });
-  await page.getByRole('button', { name: '保存回忆' }).click();
-  await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText('leap.jpg');
-  await expect(rows).toContainText('2024-02-29');
-  await expect(page.getByRole('button', { name: '保存回忆' })).toBeEnabled();
-  await page.getByRole('button', { name: '保存回忆' }).click();
+  await page.getByRole('button', { name: '上传', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('tab', { name: '纪念日', exact: true }).click();
+  await page.getByRole('button', { name: '上传中心' }).click();
+  await expect(page.getByRole('dialog')).toContainText('上传中心');
+  await expect(page.getByRole('dialog').getByText('没有正在上传的任务')).toBeVisible({
+    timeout: 30000,
+  });
+  await page.getByRole('button', { name: '上传历史' }).click();
+  await expect(page.getByRole('dialog').getByText('上传完成', { exact: false })).toHaveCount(3);
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await expect(page.getByTestId('album-item')).toHaveCount(3);
   expect(uploads).toBe(3);
   const moments = (

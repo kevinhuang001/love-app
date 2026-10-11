@@ -1,6 +1,6 @@
 # 启动与部署：配置怎样变成运行中的服务
 
-Love 有两个不同进程：宿主机上的 love 管理程序，以及容器里的 Node 后端。前者生成配置并运行 Docker Compose，后者打开数据库、处理用户请求。已经编译的管理程序不需要宿主机安装 Node 或 Bun；应用容器仍提供 Node、转码工具等运行环境。
+Love 有两个不同进程：宿主机上的 love 管理程序，以及容器里的 Node 后端。前者生成配置并运行 Docker Compose，后者打开数据库、处理用户请求。管理程序依赖宿主机的 Node.js 24，交付一个 JS 文件；应用容器单独提供 Node、转码工具等运行环境。
 
 代码入口：[管理程序](../../../manager/manager.mjs)、[部署向导](../../../manager/setup.mjs)、[后端启动](../../../apps/server/src/index.ts)、[应用组装](../../../apps/server/src/app.ts)。
 

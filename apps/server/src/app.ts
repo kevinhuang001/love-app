@@ -1,3 +1,9 @@
+import {
+  UploadSessions,
+  uploadSchema,
+  UPLOAD_CHUNK_BYTES,
+  type UploadSpec,
+} from './upload-sessions.js';
 import { visibleAIContent } from './ai-content.js';
 import { SCHEMA_VERSION } from './migrations.js';
 import { APPLICATION_VERSION } from './version.js';
@@ -38,12 +44,16 @@ import { publishMediaDraft } from './media-drafts.js';
 import { mediaReferences } from './media-cleanup.js';
 import { processMedia } from './media.js';
 import { syncMediaFiles, commitMedia, removeMediaFiles } from './media-storage.js';
-import { CommitUncertainError } from './postgres.js';
+import {
+  CommitUncertainError,
+  isTransientPostgresError,
+  PostgresUnavailableError,
+} from './postgres.js';
 import { MediaRepository } from './media-repository.js';
 import { pipeline } from 'node:stream/promises';
 import { notificationStreams } from './notifications.js';
 import sharp from 'sharp';
-import { writeFile } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import {
   aiConfigSchema,
   validateAIUrl,
@@ -54,7 +64,7 @@ import {
   tools as aiTools,
 } from './ai.js';
 
-type AuthRequest = Request & { user: User; sessionHash: string };
+type AuthRequest = Request & { user: User; sessionHash: string; uploadSpec?: UploadSpec };
 const text = z.string().trim();
 const date = z
   .string()
@@ -94,6 +104,8 @@ export async function createApp(options: AppOptions = {}) {
   const uploads = resolve(options.uploads || 'data/media');
   mkdirSync(join(uploads, 'tmp'), { recursive: true });
   const mediaRepository = new MediaRepository(db, uploads);
+  const uploadSessions = new UploadSessions(join(uploads, 'tmp', 'sessions'));
+  await uploadSessions.cleanup();
   try {
     await mediaRepository.cleanupStaleUploads();
   } catch (error) {
@@ -460,6 +472,7 @@ export async function createApp(options: AppOptions = {}) {
     rateLimit({
       windowMs: 60_000,
       limit: 240,
+      skip: (req) => req.method === 'PUT' && /^\/uploads\/[^/]+\/\d+\/\d+$/.test(req.path),
       // Authentication already resolved the user. Shared networks must not
       // consume one combined allowance for every account behind the same IP.
       keyGenerator: (req) => (req as AuthRequest).user.id,
@@ -477,7 +490,7 @@ export async function createApp(options: AppOptions = {}) {
       '/pairing/invite',
       '/pairing/join',
     ];
-    if (!personal.includes(req.path)) {
+    if (!personal.includes(req.path) && !/^\/uploads(?:\/|$)/.test(req.path)) {
       try {
         await couple(req as AuthRequest);
       } catch (error) {
@@ -621,89 +634,101 @@ export async function createApp(options: AppOptions = {}) {
     dest: join(uploads, 'tmp'),
     limits: { files: 1, fields: 0 },
   });
-  app.post('/api/me/avatar', (req, res, next) =>
-    avatarUpload.single('file')(req, res, async (error) => {
-      const id = randomUUID(),
-        preview = `${id}.avatar.webp`,
-        thumbnail = `${id}.avatar-thumb.webp`;
-      let committed = false;
-      try {
-        if (error) throw error;
-        if (!req.file || !req.file.mimetype.startsWith('image/')) fail(400, '头像请选择有效图片');
-        const image = sharp(req.file!.path, { limitInputPixels: false }).rotate();
-        const [large, small] = await Promise.all([
-          image.clone().resize(512, 512, { fit: 'cover' }).webp({ quality: 80 }).toBuffer(),
-          image.clone().resize(256, 256, { fit: 'cover' }).webp({ quality: 75 }).toBuffer(),
-        ]);
-        await Promise.all([
-          writeFile(join(uploads, preview), large),
-          writeFile(join(uploads, thumbnail), small),
-        ]);
-        const sizes = await syncMediaFiles(uploads, [preview, thumbnail]);
-        await mediaRepository.stage([preview, thumbnail], sizes);
-        const old = await commitMedia(
-          db,
-          async () =>
-            Boolean(await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(id)),
-          async () => {
-            const auth = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
-            if (!auth) fail(401, '登录已过期');
-            const previous = await db
-              .prepare('SELECT * FROM media WHERE id=? AND coupleId IS NULL AND ownerId=?')
-              .get(
-                (auth!.user as User & { avatarMediaId?: string }).avatarMediaId || '',
-                auth!.user.id,
-              );
-            await db
-              .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-              .run(
-                id,
-                null,
-                auth!.user.id,
-                'image',
-                preview,
-                preview,
-                thumbnail,
-                512,
-                512,
-                null,
-                new Date().toISOString(),
-              );
-            await db
-              .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
-              .run(id, 0, sizes[0], sizes[1], sizes[0] + sizes[1]);
-            await mediaRepository.bind(id, [preview, thumbnail]);
-            await db.prepare('UPDATE users SET avatarMediaId=? WHERE id=?').run(id, auth!.user.id);
-            if (previous) {
-              await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
-              await db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
-            }
-            return previous;
-          },
-        );
-        committed = true;
-        if (old)
-          await removeMediaFiles(
-            [String(old.preview), String(old.thumbnail)].map((name) => join(uploads, name)),
+  const receiveAvatar = (req: Request, res: Response, next: NextFunction): Promise<void> =>
+    new Promise((finished) => {
+      const consume = async (error?: unknown) => {
+        const id = (req as AuthRequest).uploadSpec?.id || randomUUID(),
+          preview = `${id}.avatar.webp`,
+          thumbnail = `${id}.avatar-thumb.webp`;
+        let committed = false;
+        try {
+          if (error) throw error;
+          if (!req.file || !req.file.mimetype.startsWith('image/')) fail(400, '头像请选择有效图片');
+          const image = sharp(req.file!.path, { limitInputPixels: false }).rotate();
+          const [large, small] = await Promise.all([
+            image.clone().resize(512, 512, { fit: 'cover' }).webp({ quality: 80 }).toBuffer(),
+            image.clone().resize(256, 256, { fit: 'cover' }).webp({ quality: 75 }).toBuffer(),
+          ]);
+          await Promise.all([
+            writeFile(join(uploads, preview), large),
+            writeFile(join(uploads, thumbnail), small),
+          ]);
+          const sizes = await syncMediaFiles(uploads, [preview, thumbnail]);
+          await mediaRepository.stage([preview, thumbnail], sizes);
+          const old = await commitMedia(
+            db,
+            async () =>
+              Boolean(await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(id)),
+            async () => {
+              const auth = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
+              if (!auth) fail(401, '登录已过期');
+              const previous = await db
+                .prepare('SELECT * FROM media WHERE id=? AND coupleId IS NULL AND ownerId=?')
+                .get(
+                  (auth!.user as User & { avatarMediaId?: string }).avatarMediaId || '',
+                  auth!.user.id,
+                );
+              await db
+                .prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+                .run(
+                  id,
+                  null,
+                  auth!.user.id,
+                  'image',
+                  preview,
+                  preview,
+                  thumbnail,
+                  512,
+                  512,
+                  null,
+                  new Date().toISOString(),
+                );
+              await db
+                .prepare('INSERT INTO media_sizes VALUES(?,?,?,?,?)')
+                .run(id, 0, sizes[0], sizes[1], sizes[0] + sizes[1]);
+              await mediaRepository.bind(id, [preview, thumbnail]);
+              await db
+                .prepare('UPDATE users SET avatarMediaId=? WHERE id=?')
+                .run(id, auth!.user.id);
+              if (previous) {
+                await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
+                await db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
+              }
+              return previous;
+            },
           );
-        if (db.provider === 'postgres')
-          await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
-        if (req.file) await removeMediaFiles([req.file.path]);
-        io.to(`user:${(req as AuthRequest).user.id}`).emit('profile:changed');
-        if ((req as AuthRequest).user.coupleId)
-          io.to(`couple:${(req as AuthRequest).user.coupleId}`).emit('profile:changed');
-        res.status(201).json(await mediaView(id));
-      } catch (err) {
-        if (db.provider === 'postgres') await mediaRepository.discard([preview, thumbnail]);
-        if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
-          await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
-        if (req.file) await removeMediaFiles([req.file.path]);
-        next(err instanceof HttpError ? err : new HttpError(422, '头像无法处理，请选择有效图片'));
-      } finally {
-        if (req.file) await removeMediaFiles([req.file.path]);
-      }
-    }),
-  );
+          committed = true;
+          if (old)
+            await removeMediaFiles(
+              [String(old.preview), String(old.thumbnail)].map((name) => join(uploads, name)),
+            );
+          if (db.provider === 'postgres')
+            await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
+          if (req.file) await removeMediaFiles([req.file.path]);
+          io.to(`user:${(req as AuthRequest).user.id}`).emit('profile:changed');
+          if ((req as AuthRequest).user.coupleId)
+            io.to(`couple:${(req as AuthRequest).user.coupleId}`).emit('profile:changed');
+          res.status(201).json(await mediaView(id));
+        } catch (err) {
+          if (db.provider === 'postgres') await mediaRepository.discard([preview, thumbnail]);
+          if (db.provider === 'postgres' || (!committed && !(err instanceof CommitUncertainError)))
+            await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
+          if (req.file) await removeMediaFiles([req.file.path]);
+          next(
+            err instanceof HttpError
+              ? err
+              : isTransientPostgresError(err)
+                ? new PostgresUnavailableError(err)
+                : new HttpError(422, '头像无法处理，请选择有效图片'),
+          );
+        } finally {
+          finished();
+        }
+      };
+      if (req.file) void consume();
+      else avatarUpload.single('file')(req, res, (error) => void consume(error));
+    });
+  app.post('/api/me/avatar', (req, res, next) => void receiveAvatar(req, res, next));
   route('get', '/api/notifications/stream', async (req, res) => await streams.open(req, res));
   route('get', '/api/messages', async (req, res) => {
     const before =
@@ -795,21 +820,20 @@ export async function createApp(options: AppOptions = {}) {
         ),
       ),
   });
-  app.post(
-    '/api/media',
-    async (req, _res, next) => {
-      try {
-        const id = await couple(req as AuthRequest);
-        if ((await control.usage(id)) >= (await control.quota(id)))
-          fail(413, '两人空间存储已达到配额，请联系管理员');
-        if (processing >= 2) fail(429, '正在处理其他媒体，请稍后重试');
-        processing++;
-        next();
-      } catch (error) {
-        next(error);
-      }
-    },
-    (req, res, next) => {
+  const mediaGuard = async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const id = await couple(req as AuthRequest);
+      if ((await control.usage(id)) >= (await control.quota(id)))
+        fail(413, '两人空间存储已达到配额，请联系管理员');
+      if (processing >= 2) fail(429, '正在处理其他媒体，请稍后重试');
+      processing++;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+  const receiveMedia = (req: Request, res: Response, next: NextFunction): Promise<void> =>
+    new Promise((finished) => {
       const controller = new AbortController();
       const abort = () => controller.abort(new Error('上传已取消'));
       const close = () => {
@@ -819,13 +843,11 @@ export async function createApp(options: AppOptions = {}) {
       res.once('close', close);
       if (req.aborted || res.destroyed) abort();
       const signal = controller.signal;
-      upload.fields([
-        { name: 'file', maxCount: 1 },
-        { name: 'liveVideo', maxCount: 1 },
-      ])(req, res, async (error) => {
+      const consume = async (error?: unknown) => {
         const received = (req.files || {}) as Record<string, Express.Multer.File[]>;
-        req.file = received.file?.[0];
+        req.file = req.file || received.file?.[0];
         const liveVideo = received.liveVideo?.[0];
+        const spec = (req as AuthRequest).uploadSpec;
         let generatedFiles: string[] = [],
           committed = false;
         try {
@@ -846,6 +868,7 @@ export async function createApp(options: AppOptions = {}) {
             signal,
             liveVideo?.path,
           );
+          if (spec) media.id = spec.id;
           generatedFiles = [media.original, media.preview, media.thumbnail]
             .filter(Boolean)
             .map((name) => join(uploads, name));
@@ -880,7 +903,10 @@ export async function createApp(options: AppOptions = {}) {
           await commitMedia(
             db,
             async () =>
-              Boolean(await db.prepare('SELECT id FROM media_uploads WHERE id=?').get(media.id)),
+              Boolean(
+                (await db.prepare('SELECT id FROM media_uploads WHERE id=?').get(media.id)) ||
+                (await db.prepare('SELECT id FROM media WHERE id=?').get(media.id)),
+              ),
             async () => {
               signal.throwIfAborted();
               const current = await lookup(
@@ -904,11 +930,41 @@ export async function createApp(options: AppOptions = {}) {
                   JSON.stringify({ ...media, sizes, totalBytes, retainOriginal: keepOriginal }),
                   new Date().toISOString(),
                 );
+              if (spec && spec.target !== 'draft') {
+                await publishMediaDraft(db, media.id, user.id, user.coupleId!);
+                if (spec.target === 'album') {
+                  await db
+                    .prepare(
+                      'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
+                    )
+                    .run(
+                      spec.id,
+                      user.coupleId,
+                      user.id,
+                      spec.title,
+                      media.id,
+                      spec.date || media.capturedDate || today(),
+                    );
+                } else if (spec.target === 'avatar') {
+                  await db
+                    .prepare('UPDATE users SET avatarMediaId=? WHERE id=?')
+                    .run(media.id, user.id);
+                } else {
+                  await db
+                    .prepare(
+                      'INSERT INTO couple_ai_settings(coupleId,baseUrl,model,secret,enabled,avatarMediaId) VALUES(?,?,?,?,?,?) ON CONFLICT(coupleId) DO UPDATE SET avatarMediaId=excluded.avatarMediaId',
+                    )
+                    .run(user.coupleId, '', '', '', 0, media.id);
+                }
+              }
               signal.throwIfAborted();
             },
           );
           committed = true;
           if (db.provider === 'postgres') await removeMediaFiles(generatedFiles);
+          if (spec?.target === 'album') io.to(`couple:${user.coupleId}`).emit('moments:changed');
+          if (spec && ['avatar', 'ai-avatar'].includes(spec.target))
+            io.to(`couple:${user.coupleId}`).emit('profile:changed');
           res
             .status(201)
             .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
@@ -927,16 +983,167 @@ export async function createApp(options: AppOptions = {}) {
             next(
               err instanceof HttpError || err instanceof multer.MulterError
                 ? err
-                : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
+                : isTransientPostgresError(err)
+                  ? new PostgresUnavailableError(err)
+                  : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
             );
         } finally {
           req.off('aborted', abort);
           res.off('close', close);
           processing--;
+          finished();
         }
+      };
+      if ((req as AuthRequest).uploadSpec) void consume();
+      else
+        upload.fields([
+          { name: 'file', maxCount: 1 },
+          { name: 'liveVideo', maxCount: 1 },
+        ])(req, res, (error) => void consume(error));
+    });
+  app.post('/api/media', mediaGuard, (req, res, next) => void receiveMedia(req, res, next));
+  const completedUpload = async (req: AuthRequest, id: string) => {
+    const row =
+      (await db.prepare('SELECT ownerId,coupleId FROM media WHERE id=?').get(id)) ||
+      (await db.prepare('SELECT ownerId,coupleId,metadata FROM media_uploads WHERE id=?').get(id));
+    if (!row) return null;
+    if (
+      row.ownerId !== req.user.id ||
+      (row.coupleId !== null && row.coupleId !== req.user.coupleId)
+    )
+      fail(409, '上传任务编号冲突或配对已改变');
+    return {
+      ...(await mediaView(id)),
+      ...(row.metadata ? { capturedDate: JSON.parse(String(row.metadata)).capturedDate } : {}),
+    };
+  };
+  route('post', '/api/uploads', async (req, res) => {
+    const spec = uploadSchema.parse(req.body),
+      coupleId = spec.target === 'avatar' ? req.user.coupleId || '' : await couple(req);
+    if (spec.target === 'avatar' && spec.files[0].size > 64 * 1024 ** 2)
+      fail(413, '头像文件最大支持 64 MB');
+    const result = await completedUpload(req, spec.id);
+    if (result) {
+      res.json({
+        id: spec.id,
+        offsets: spec.files.map((f) => f.size),
+        chunkBytes: UPLOAD_CHUNK_BYTES,
+        result,
       });
+      return;
+    }
+    res
+      .status(201)
+      .json(
+        await uploadSessions.create(
+          req.user.id,
+          coupleId,
+          spec,
+          coupleId ? await control.quota(coupleId) : 64 * 1024 ** 2,
+        ),
+      );
+  });
+  route('get', '/api/uploads/:id', async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id),
+      coupleId = req.user.coupleId || '',
+      result = await completedUpload(req, id);
+    if (result) {
+      res.json({ id, result });
+      return;
+    }
+    res.json(await uploadSessions.status(await uploadSessions.get(req.user.id, coupleId, id)));
+  });
+  app.put(
+    '/api/uploads/:id/:part/:index',
+    rateLimit({
+      windowMs: 60000,
+      limit: 2400,
+      keyGenerator: (req) => (req as unknown as AuthRequest).user.id,
+      standardHeaders: 'draft-8',
+      legacyHeaders: false,
+      message: { error: '上传请求过于频繁，请稍后继续' },
+    }),
+    express.raw({ type: 'application/octet-stream', limit: UPLOAD_CHUNK_BYTES }),
+    async (req, res, next) => {
+      try {
+        const auth = req as unknown as AuthRequest;
+        const result = await uploadSessions.chunk(
+          auth.user.id,
+          auth.user.coupleId || '',
+          String(req.params.id),
+          Number(req.params.part),
+          Number(req.params.index),
+          req.body,
+          String(req.headers['x-chunk-sha256'] || ''),
+        );
+        res.json(result);
+      } catch (error) {
+        next(error);
+      }
     },
   );
+  route('post', '/api/uploads/:id/complete', async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id),
+      coupleId = req.user.coupleId || '';
+    await uploadSessions.locked(req.user.id, id, async () => {
+      const result = await completedUpload(req, id);
+      if (result) {
+        res.json(result);
+        await uploadSessions.release(req.user.id, id);
+        return;
+      }
+      const spec = await uploadSessions.get(req.user.id, coupleId, id);
+      if (spec.target !== 'avatar') await couple(req);
+      if (processing >= 2) fail(429, '正在处理其他媒体，请稍后重试');
+      processing++;
+      let paths: string[] = [];
+      try {
+        paths = await uploadSessions.assemble(spec);
+      } catch (e) {
+        processing--;
+        throw e;
+      }
+      req.uploadSpec = spec;
+      req.file = {
+        path: paths[0],
+        mimetype: spec.files[0].type,
+        originalname: spec.files[0].name,
+      } as Express.Multer.File;
+      req.files = {
+        liveVideo: paths[1]
+          ? [
+              {
+                path: paths[1],
+                mimetype: spec.files[1].type,
+                originalname: spec.files[1].name,
+              } as Express.Multer.File,
+            ]
+          : [],
+      };
+      let failure: unknown;
+      if (spec.target === 'avatar') {
+        await receiveAvatar(req, res, (error) => {
+          failure = error;
+        });
+        processing--;
+      } else
+        await receiveMedia(req, res, (error) => {
+          failure = error;
+        });
+      await Promise.all(paths.map((path) => rm(path, { force: true })));
+      if (failure) throw failure;
+      if (res.writableFinished && res.statusCode < 300)
+        await uploadSessions.release(req.user.id, id);
+    });
+  });
+  route('delete', '/api/uploads/:id', async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id),
+      coupleId = req.user.coupleId || '';
+    await uploadSessions.cancel(req.user.id, coupleId, id, async () =>
+      Boolean(await completedUpload(req, id)),
+    );
+    res.sendStatus(204);
+  });
   route('delete', '/api/media/:id', async (req, res) => {
     await couple(req);
     const id = z.string().uuid().parse(req.params.id);

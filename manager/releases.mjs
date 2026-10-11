@@ -5,7 +5,6 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import { extractManagerXZ } from './xz.mjs';
 const base = 'https://github.com/kevinhuang001/love-app/releases/download/';
 const api = 'https://api.github.com/repos/kevinhuang001/love-app/releases/latest';
 async function get(url, request, timeout = 30_000) {
@@ -23,28 +22,18 @@ export async function latestManager({ request = fetch, arch = process.arch } = {
   const metadata = await (
     await get(base + release.tag_name + '/manager-release.json', request)
   ).json();
-  const name = arch === 'x64' ? 'love-linux-x64' : arch === 'arm64' ? 'love-linux-arm64' : '';
+  const name = 'love-manager.mjs';
   const asset = metadata.assets?.find((x) => x.name === name);
   if (
-    !name ||
     !asset ||
-    !/^[a-f0-9]{64}$/.test(asset.sha256) ||
+    !/^[a-f0-9]{64}$/.test(asset.sha256 || '') ||
+    !Number.isSafeInteger(asset.bytes) ||
+    asset.bytes <= 0 ||
+    metadata.runtime !== 'node24' ||
     !/^[a-f0-9]{40}$/.test(metadata.source || '') ||
     'v' + metadata.version !== release.tag_name
   )
-    throw new Error('发布中缺少当前架构的管理工具或校验信息');
-  // Older managers use the uncompressed asset; new managers prefer its XZ download.
-  if (
-    asset.download !== undefined &&
-    (asset.download?.compression !== 'xz' ||
-      asset.download.name !== name + '.xz' ||
-      !/^[a-f0-9]{64}$/.test(asset.download.sha256 || '') ||
-      !Number.isSafeInteger(asset.download.bytes) ||
-      asset.download.bytes <= 0 ||
-      !Number.isSafeInteger(asset.bytes) ||
-      asset.bytes <= 0)
-  )
-    throw new Error('管理程序压缩包发布信息无效');
+    throw new Error('发布中缺少 Node.js 管理器或有效校验信息；请重新运行安装命令。');
   const files = [
     'compose.yml',
     'compose.postgres.yml',
@@ -67,12 +56,6 @@ export async function latestManager({ request = fetch, arch = process.arch } = {
     version: metadata.version,
     templates: metadata.templates,
     url: base + release.tag_name + '/' + name,
-    ...(asset.download && {
-      download: {
-        ...asset.download,
-        url: base + release.tag_name + '/' + asset.download.name,
-      },
-    }),
   };
 }
 export async function installManager(
@@ -81,8 +64,7 @@ export async function installManager(
   { request = fetch, onProgress = () => {} } = {},
 ) {
   const temp = dirname(destination) + '/.love-binary-' + randomUUID();
-  const download = release.download || release;
-  const archive = temp + '.xz';
+  const download = release;
   try {
     const r = await get(download.url, request, 15 * 60_000),
       hash = createHash('sha256');
@@ -101,12 +83,11 @@ export async function installManager(
           next(null, chunk);
         },
       }),
-      createWriteStream(release.download ? archive : temp, { flags: 'wx', mode: 0o700 }),
+      createWriteStream(temp, { flags: 'wx', mode: 0o700 }),
     );
     if (hash.digest('hex') !== download.sha256) throw new Error('管理工具下载校验失败，原程序保留');
     if (download.bytes && bytes !== download.bytes)
       throw new Error('管理程序大小校验失败，原程序保留');
-    if (release.download) await extractManagerXZ(archive, temp, release);
     await chmod(temp, 0o755);
     const f = await open(temp, 'r');
     try {
@@ -122,6 +103,6 @@ export async function installManager(
       await d.close();
     }
   } finally {
-    await Promise.all([rm(temp, { force: true }), rm(archive, { force: true })]);
+    await rm(temp, { force: true });
   }
 }

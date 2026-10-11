@@ -1,3 +1,5 @@
+import { useUploads } from '@/components/UploadCenter';
+import { nativeUploads, pickNativeFiles, type PickedFile } from '@/lib/upload-queue';
 import { pairLivePhotos } from '@/lib/live-photos';
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -37,8 +39,8 @@ import { albumDefaults, loadAlbumOptions, type AlbumOptions } from '@/lib/album'
 type AlbumPage = { items: Moment[]; total: number; nextCursor: string | null };
 type UploadFile = {
   id: string;
-  file: File;
-  liveVideo?: File;
+  file: PickedFile;
+  liveVideo?: PickedFile;
   media?: UploadedMedia;
   date: string;
   editDate: boolean;
@@ -57,7 +59,7 @@ function UploadSelection({
 }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
-    const next = files.map((item) => URL.createObjectURL(item.file));
+    const next = files.map((item) => (item.file.nativeUri ? '' : URL.createObjectURL(item.file)));
     setUrls(next);
     return () => next.forEach((url) => URL.revokeObjectURL(url));
   }, [files]);
@@ -71,11 +73,15 @@ function UploadSelection({
           className="space-y-3 rounded-xl border border-border p-3"
         >
           <div className="flex items-center gap-3">
-            {item.file.type.startsWith('image/') ? (
+            {item.file.type.startsWith('image/') && urls[index] ? (
               <img src={urls[index]} alt="待上传照片" className="size-12 rounded-lg object-cover" />
             ) : (
               <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-secondary">
-                <Film className="size-5" />
+                {item.file.type.startsWith('image/') ? (
+                  <Image className="size-5" />
+                ) : (
+                  <Film className="size-5" />
+                )}
               </span>
             )}
             <span className="min-w-0 flex-1">
@@ -95,57 +101,30 @@ function UploadSelection({
               <X className="size-4" />
             </Button>
           </div>
-          {!item.media ? (
-            <p
-              role={item.error ? 'alert' : 'status'}
-              className={item.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}
-            >
-              {item.error || '正在上传并识别日期…'}
+          <div className="space-y-2">
+            <Label htmlFor={`capture-${item.id}`} className="text-xs">
+              拍摄日期 · {item.file.name}
+            </Label>
+            <p className="text-[11px] text-muted-foreground">
+              自动识别拍摄日期；无法识别时使用今天，也可提前指定。
             </p>
-          ) : item.editDate ? (
-            <div className="space-y-2">
-              <Label htmlFor={`capture-${item.id}`} className="block break-all text-xs">
-                拍摄日期 · {item.file.name}
-              </Label>
-              {!item.media.capturedDate && (
-                <p className="text-[11px] text-muted-foreground">
-                  没有找到拍摄日期，请为这个文件填写。
-                </p>
-              )}
-              <Input
-                id={`capture-${item.id}`}
-                type="date"
-                required
-                disabled={busy}
-                min="1900-01-01"
-                max="2100-12-31"
-                value={item.date}
-                onChange={(e) => onChange(item.id, { date: e.target.value })}
-              />
-            </div>
-          ) : (
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span>
-                <span className="mr-2 text-muted-foreground">已识别</span>
-                <time>{item.date}</time>
-              </span>
-              <button
-                type="button"
-                className="shrink-0 py-2 text-primary"
-                disabled={busy}
-                aria-label={`修改${item.file.name}的日期`}
-                onClick={() => onChange(item.id, { editDate: true })}
-              >
-                修改日期
-              </button>
-            </div>
-          )}
+            <Input
+              id={`capture-${item.id}`}
+              type="date"
+              min="1900-01-01"
+              max="2100-12-31"
+              value={item.date}
+              disabled={busy}
+              onChange={(e) => onChange(item.id, { date: e.target.value })}
+            />
+          </div>
         </li>
       ))}
     </ul>
   );
 }
 export function Memories() {
+  const { queue } = useUploads();
   const [transferOpen, setTransferOpen] = useState(false),
     [transferBusy, setTransferBusy] = useState(false),
     [transferStatus, setTransferStatus] = useState('');
@@ -194,41 +173,25 @@ export function Memories() {
     [date, setDate] = useState(today()),
     [files, setFiles] = useState<UploadFile[]>([]),
     [busy, setBusy] = useState(false),
-    [progress, setProgress] = useState(0),
-    [uploadIndex, setUploadIndex] = useState(0),
     [remove, setRemove] = useState<Moment | null>(null);
   const [selected, setSelected] = useState<string | null>(null),
     [filterOpen, setFilterOpen] = useState(false),
     [draft, setDraft] = useState(options),
     [filterError, setFilterError] = useState('');
-  const uploadController = useRef<AbortController | null>(null);
-  const draftMedia = useRef(new Set<string>());
-  async function releaseDrafts(ids = [...draftMedia.current]) {
-    const results = await Promise.allSettled(
-      ids.map(async (id) => {
-        await api.delete(`/api/media/${id}`);
-        draftMedia.current.delete(id);
-      }),
-    );
-    if (ids.length) void cache.invalidateQueries({ queryKey: ['profile'] });
-    if (results.some((result) => result.status === 'rejected'))
-      toast.error('部分上传草稿未能清理，可稍后使用管理工具清理未使用媒体');
-  }
-  useEffect(
-    () => () => {
-      uploadController.current?.abort();
-      void releaseDrafts();
-    },
-    [api],
-  );
   function closeDraft() {
-    if (busy && !uploadController.current) return;
-    uploadController.current?.abort();
-    uploadController.current = null;
-    setBusy(false);
     setOpen(false);
     setFiles([]);
-    void releaseDrafts();
+  }
+  function choose(chosen: PickedFile[]) {
+    setFiles(
+      pairLivePhotos(chosen).map(({ file, liveVideo }) => ({
+        id: newId(),
+        file,
+        liveVideo,
+        date: '',
+        editDate: true,
+      })),
+    );
   }
   const input = useRef<HTMLInputElement>(null),
     scroller = useRef<HTMLElement>(null);
@@ -246,60 +209,7 @@ export function Memories() {
     setTitle(item?.title || '');
     setDate(item?.date || today());
     setFiles([]);
-    setProgress(0);
     setOpen(true);
-  }
-  async function prepare(chosen: UploadFile[]) {
-    const controller = new AbortController();
-    uploadController.current = controller;
-    setBusy(true);
-    try {
-      for (let i = 0; i < chosen.length; i++) {
-        if (controller.signal.aborted) break;
-        const item = chosen[i];
-        if (item.media) continue;
-        setUploadIndex(i + 1);
-        setProgress(0);
-        setFiles((items) => items.map((v) => (v.id === item.id ? { ...v, error: undefined } : v)));
-        try {
-          const media = await api.upload(
-            item.file,
-            setProgress,
-            '/api/media',
-            controller.signal,
-            item.liveVideo,
-          );
-          draftMedia.current.add(media.id);
-          if (controller.signal.aborted) {
-            void releaseDrafts([media.id]);
-            break;
-          }
-          setFiles((items) =>
-            items.map((v) =>
-              v.id === item.id
-                ? {
-                    ...v,
-                    media,
-                    date: media.capturedDate || '',
-                    editDate: !media.capturedDate,
-                    error: undefined,
-                  }
-                : v,
-            ),
-          );
-        } catch (error) {
-          if (controller.signal.aborted) break;
-          setFiles((items) =>
-            items.map((v) => (v.id === item.id ? { ...v, error: (error as Error).message } : v)),
-          );
-        }
-      }
-    } finally {
-      if (uploadController.current === controller) {
-        uploadController.current = null;
-        setBusy(false);
-      }
-    }
   }
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -309,44 +219,26 @@ export function Memories() {
         await api.patch(`/api/moments/${edit.id}`, { title, date });
         setOpen(false);
         toast.success('回忆已更新');
+        await cache.invalidateQueries({ queryKey: ['moments'] });
       } else {
         if (!files.length) throw new Error('请选择照片或视频');
-        const remaining: UploadFile[] = [];
-        let saved = 0;
-        const errors: string[] = [];
-        for (let i = 0; i < files.length; i++) {
-          setUploadIndex(i + 1);
-          setProgress(0);
-          try {
-            const item = files[i];
-            if (!item.media || !item.date) throw new Error('请先完成上传并填写这个文件的拍摄日期');
-            await api.post('/api/moments', {
-              title,
-              date: item.date,
-              mediaId: item.media.id,
-              clientId: item.id,
-            });
-            draftMedia.current.delete(item.media.id);
-            saved++;
-          } catch (error) {
-            remaining.push(files[i]);
-            errors.push(`${files[i].file.name}：${(error as Error).message}`);
-          }
-        }
-        setFiles(remaining);
-        if (!remaining.length) {
-          setOpen(false);
-          toast.success(saved === 1 ? '回忆已保存' : `已保存 ${saved} 个回忆`);
-        } else
-          toast.error(
-            `已保存 ${saved} 个，${remaining.length} 个失败。${errors[0]}；可重试剩余文件`,
-            { duration: 6000 },
-          );
+        await queue.enqueue(
+          files.map((item) => ({
+            id: item.id,
+            file: item.file,
+            liveVideo: item.liveVideo,
+            target: 'album',
+            title,
+            ...(item.date ? { date: item.date } : {}),
+          })),
+        );
+        setOpen(false);
+        setFiles([]);
+        toast.success('已加入上传队列，可以离开此页面');
       }
     } catch (error) {
       toast.error((error as Error).message);
     } finally {
-      await cache.invalidateQueries({ queryKey: ['moments'] });
       setBusy(false);
     }
   }
@@ -768,7 +660,7 @@ export function Memories() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{edit ? '编辑这个瞬间' : '收藏一个瞬间'}</DialogTitle>
-            <DialogDescription>选择后自动上传并读取拍摄日期，每个文件分别保存。</DialogDescription>
+            <DialogDescription>点击上传后加入队列，可以离开页面或切换到后台。</DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             {!edit && (
@@ -781,17 +673,8 @@ export function Memories() {
                   multiple
                   onChange={(e) => {
                     const chosen = Array.from(e.target.files || []);
-                    const drafts = pairLivePhotos(chosen).map(({ file, liveVideo }) => ({
-                      id: newId(),
-                      file,
-                      liveVideo,
-                      date: '',
-                      editDate: false,
-                    }));
-                    void releaseDrafts();
-                    setFiles(drafts);
+                    choose(chosen);
                     e.target.value = '';
-                    void prepare(drafts);
                   }}
                 />
                 <Button
@@ -799,7 +682,13 @@ export function Memories() {
                   type="button"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => input.current?.click()}
+                  onClick={() => {
+                    if (nativeUploads)
+                      void pickNativeFiles()
+                        .then(choose)
+                        .catch((e) => toast.error((e as Error).message));
+                    else input.current?.click();
+                  }}
                 >
                   {files.length ? (
                     <span className="truncate">已选择 {files.length} 个文件 · 点击重选</span>
@@ -819,25 +708,12 @@ export function Memories() {
                     files={files}
                     busy={busy}
                     onRemove={(index) => {
-                      const media = files[index]?.media;
-                      if (media) void releaseDrafts([media.id]);
                       setFiles((items) => items.filter((_, i) => i !== index));
                     }}
                     onChange={(id, value) =>
                       setFiles((items) => items.map((v) => (v.id === id ? { ...v, ...value } : v)))
                     }
                   />
-                )}
-                {files.some((item) => item.error && !item.media) && (
-                  <Button
-                    className="mt-3"
-                    type="button"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() => void prepare(files)}
-                  >
-                    重试上传失败的文件
-                  </Button>
                 )}
               </div>
             )}
@@ -866,23 +742,11 @@ export function Memories() {
               </div>
             )}
             <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy && !uploadController.current}
-                onClick={closeDraft}
-              >
-                {uploadController.current ? '取消上传' : '取消'}
+              <Button type="button" variant="outline" disabled={busy} onClick={closeDraft}>
+                取消
               </Button>
-              <Button
-                type="submit"
-                disabled={busy || (!edit && (!files.length || files.some((item) => !item.media)))}
-              >
-                {busy
-                  ? edit
-                    ? '保存中…'
-                    : `第 ${uploadIndex} / ${files.length} 个 · ${files.every((item) => item.media) ? '保存中…' : progress === 100 ? '处理并识别日期…' : `上传 ${progress}%`}`
-                  : '保存回忆'}
+              <Button type="submit" disabled={busy || (!edit && !files.length)}>
+                {busy ? '保存中…' : edit ? '保存回忆' : '上传'}
               </Button>
             </DialogFooter>
           </form>

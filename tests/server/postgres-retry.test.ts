@@ -44,7 +44,7 @@ test('PostgreSQL defaults increase timeouts, reject invalid settings and preserv
     connectionTimeoutMillis: 60000,
     statement_timeout: 120000,
     query_timeout: 130000,
-    attempts: 3,
+    attempts: 8,
     retryDelay: 1000,
   });
   assert.equal(postgresSettings({ PG_QUERY_TIMEOUT_MS: '240000' }).statement_timeout, 240000);
@@ -72,7 +72,7 @@ test('connections retry transient failures with a finite budget; authentication 
     },
   );
   await assert.rejects(exhausted.connection.query('SELECT 1', [], true), /ECONNREFUSED/);
-  assert.equal(exhausted.connects(), 3);
+  assert.equal(exhausted.connects(), settings.attempts);
   const fatal = fixture(
     () => {},
     () => {

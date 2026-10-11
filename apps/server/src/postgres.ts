@@ -36,7 +36,7 @@ export function postgresSettings(env: NodeJS.ProcessEnv = process.env): Postgres
     statement_timeout: queryTimeout,
     // Allow the server to report cancellation before the driver's local timer fires.
     query_timeout: queryTimeout + 10000,
-    attempts: integer('PG_RETRY_ATTEMPTS', 3, 1, 10),
+    attempts: integer('PG_RETRY_ATTEMPTS', 8, 1, 20),
     retryDelay: integer('PG_RETRY_DELAY_MS', 1000, 0, 60000),
   };
 }

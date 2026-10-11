@@ -114,7 +114,10 @@ test('compressed-only images and videos retain capture dates, previews, playback
     (await readdir(join(s.dir, 'media'))).filter((name) => name.endsWith('.source')).length,
     0,
   );
-  assert.equal((await readdir(join(s.dir, 'media', 'tmp'))).length, 0);
+  assert.equal(
+    (await readdir(join(s.dir, 'media', 'tmp'))).filter((name) => name !== 'sessions').length,
+    0,
+  );
   assert.equal((await s.api(a.token).get('/api/me')).body.couple.storageBytes, actualBytes);
   await s.api(a.token).patch('/api/couple/media-settings', { retainOriginal: true }).expect(200);
   const retained = await request(s.app)
@@ -138,5 +141,8 @@ test('compressed-only images and videos retain capture dates, previews, playback
       contentType: 'image/jpeg',
     })
     .expect(422);
-  assert.equal((await readdir(join(s.dir, 'media', 'tmp'))).length, 0);
+  assert.equal(
+    (await readdir(join(s.dir, 'media', 'tmp'))).filter((name) => name !== 'sessions').length,
+    0,
+  );
 });

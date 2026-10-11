@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Downloads the standalone manager only. Existing configuration and data stay in place.
+# Downloads the Node.js manager script only. Existing configuration and data stay in place.
 set -euo pipefail
 umask 077
 
@@ -11,11 +11,9 @@ verify_checksum() {
 }
 main() {
   [[ $(uname -s) == Linux ]] || fail '仅支持 Linux 部署主机。'
-  case "$(uname -m)" in
-    x86_64) asset=love-linux-x64 ;;
-    aarch64|arm64) asset=love-linux-arm64 ;;
-    *) fail '仅支持 AMD64 和 ARM64。' ;;
-  esac
+  command -v node >/dev/null 2>&1 || fail '缺少 Node.js，请先安装 Node.js 24 LTS；管理器不再自带运行时。'
+  node -e 'if (Number(process.versions.node.split(".")[0]) !== 24) process.exit(1)' || fail '需要 Node.js 24 LTS，请更新系统 Node.js。'
+  asset=love-manager.mjs
   for command in curl sha256sum mktemp awk; do
     command -v "$command" >/dev/null 2>&1 || fail "缺少 $command，请先安装。"
   done
@@ -26,7 +24,7 @@ main() {
   trap 'exit 130' INT
   trap 'exit 143' HUP TERM
   download=(curl --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 20 --max-time 900 --retry 3 --retry-delay 2)
-  printf '\nLove · 安装管理程序\n\n  架构  %s\n  目录  %s\n\n' "${asset#love-linux-}" "$directory"
+  printf '\nLove · 安装管理程序\n\n  文件  %s\n  目录  %s\n\n' "$asset" "$directory"
   # Resolve once, then use fixed-version URLs for both binary and checksum.
   release_url=$("${download[@]}" --silent --show-error --head --output /dev/null --write-out '%{url_effective}' https://github.com/kevinhuang001/love-app/releases/latest)
   [[ "$release_url" =~ ^https://github\.com/kevinhuang001/love-app/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+)$ ]] || fail '无法获取正式发布版本。'
@@ -34,17 +32,7 @@ main() {
   base="https://github.com/kevinhuang001/love-app/releases/download/$version"
   printf '正在下载 %s…\n' "$version"
   "${download[@]}" --silent --show-error "$base/SHA256SUMS" --output "$stage/SHA256SUMS"
-  archive="$asset.xz"
-  if awk -v asset="$archive" '$2 == asset { found=1 } END { exit !found }' "$stage/SHA256SUMS"; then
-    command -v xz >/dev/null 2>&1 || fail '缺少 xz，请先安装 xz-utils（Debian/Ubuntu）或 xz。'
-    "${download[@]}" --progress-bar "$base/$archive" --output "$stage/$archive"
-    verify_checksum "$stage" "$archive"
-    printf '正在解压管理程序…\n'
-    XZ_OPT= XZ_DEFAULTS= xz --decompress --stdout -- "$stage/$archive" > "$stage/$asset" || fail '压缩包解压失败，原程序保留。'
-  else
-    # Compatibility with releases published before XZ downloads were introduced.
-    "${download[@]}" --progress-bar "$base/$asset" --output "$stage/$asset"
-  fi
+  "${download[@]}" --progress-bar "$base/$asset" --output "$stage/$asset"
   verify_checksum "$stage" "$asset"
   chmod 755 "$stage/$asset"
   mv -fT -- "$stage/$asset" "$directory/love"

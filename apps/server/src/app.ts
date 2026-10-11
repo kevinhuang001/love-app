@@ -1209,7 +1209,8 @@ export async function createApp(options: AppOptions = {}) {
       req.user.id,
       coupleId,
       id,
-      async () => Boolean(await completedUpload(req, id)),
+      // Wait on the database transaction lock before resolving an ambiguous prior COMMIT.
+      async () => Boolean(await db.transaction(() => completedUpload(req, id))),
       async (names) => {
         await mediaRepository.discard(names, true);
         await Promise.all(names.map((name) => rm(join(uploads, name), { force: true })));

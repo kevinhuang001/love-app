@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { readdir } from 'node:fs/promises';
+import { today } from '@love/calendar';
 import request from 'supertest';
 import sharp from 'sharp';
 import { setup } from './support.js';
@@ -59,9 +61,12 @@ test('staged chunks survive a restart and commit media, memory and quota exactly
     .post(`/api/uploads/${s.spec.id}/complete`, {})
     .expect(201);
   assert.equal(response.body.id, s.spec.id);
+  assert.equal(response.body.capturedDate, '2024-02-29');
+  assert.equal(response.body.fallbackDate, undefined);
   await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(200);
   const retry = await s.api(s.a.token).post('/api/uploads', s.spec).expect(200);
   assert.equal(retry.body.result.id, s.spec.id);
+  assert.equal(retry.body.result.capturedDate, '2024-02-29');
   const album = (await s.api(s.b.token).get('/api/moments')).body.items;
   assert.equal(album.length, 1);
   assert.equal(album[0].date, '2024-02-29');
@@ -91,10 +96,50 @@ test('failed publication rolls back every billable row and retained chunks allow
   for (const table of ['media', 'media_sizes', 'media_uploads', 'moments'])
     assert.equal((await s.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get())!.n, 0);
   assert.equal(await s.control.usage(pair), 0);
-  assert.deepEqual((await s.api(s.a.token).get(`/api/uploads/${s.spec.id}`)).body.offsets, [
-    s.image.length,
-  ]);
+  const pending = (await s.api(s.a.token).get(`/api/uploads/${s.spec.id}`)).body;
+  assert.deepEqual(pending.offsets, [s.image.length]);
+  assert.equal(pending.result, undefined);
   await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(201);
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM moments').get())!.n, 1);
+});
+test('missing capture date uses today and its notice survives cleanup and a lost completion response', async (t) => {
+  const s = await fixture(t);
+  const image = await sharp({
+    create: { width: 80, height: 60, channels: 3, background: '#53765b' },
+  })
+    .png()
+    .toBuffer();
+  const spec = {
+    ...s.spec,
+    date: '2000-01-01',
+    files: [{ name: 'no-date.png', type: 'image/png', size: image.length }],
+  };
+  const date = today();
+  await s.api(s.a.token).post('/api/uploads', spec).expect(201);
+  await s.chunk(spec.id, 0, 0, image).expect(200);
+  const result = await s.api(s.a.token).post(`/api/uploads/${spec.id}/complete`, {}).expect(201);
+  assert.equal(result.body.capturedDate, null);
+  assert.equal(result.body.fallbackDate, date);
+  assert.equal((await s.api(s.b.token).get('/api/moments')).body.items[0].date, date);
+  // Reconciliation waits for commit cleanup under the same task lock.
+  await s.api(s.a.token).get(`/api/uploads/${spec.id}`).expect(200);
+  const sessions = new UploadSessions(join(s.dir, 'media', 'tmp', 'sessions'));
+  assert.deepEqual(await readdir(sessions.directory(s.a.user.id, spec.id)), ['result.json']);
+  assert.deepEqual(await sessions.outcome(s.a.user.id, spec.id), {
+    capturedDate: null,
+    fallbackDate: date,
+  });
+  const retried = await s.api(s.a.token).post('/api/uploads', spec).expect(200);
+  assert.equal(retried.body.result.fallbackDate, date);
+  assert.equal(
+    (await s.api(s.a.token).get(`/api/uploads/${spec.id}`)).body.result.fallbackDate,
+    date,
+  );
+  assert.equal(
+    (await s.api(s.a.token).post(`/api/uploads/${spec.id}/complete`, {}).expect(200)).body
+      .fallbackDate,
+    date,
+  );
   assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM moments').get())!.n, 1);
 });
 test('chunk corruption, incomplete files, changed identity and partner access are rejected', async (t) => {

@@ -5,6 +5,9 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.provider.OpenableColumns;
 import androidx.activity.result.ActivityResult;
+import androidx.activity.result.PickVisualMediaRequest;
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia;
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.*;
 import org.json.*;
@@ -15,11 +18,13 @@ public class BackgroundUploadsPlugin extends Plugin {
  @Override public void load(){instance=this;}
  static void changed(){BackgroundUploadsPlugin p=instance;if(p!=null)p.getActivity().runOnUiThread(()->p.notifyListeners("changed",new JSObject()));}
  @Override protected void handleOnDestroy(){if(instance==this)instance=null;}
+ static Intent pickerIntent(Context context,boolean multiple,boolean imagesOnly){
+  PickVisualMediaRequest request=new PickVisualMediaRequest.Builder().setMediaType(imagesOnly?PickVisualMedia.ImageOnly.INSTANCE:PickVisualMedia.ImageAndVideo.INSTANCE).build();
+  int limit=android.os.Build.VERSION.SDK_INT>=33?Math.min(100,android.provider.MediaStore.getPickImagesMaxLimit()):100;
+  return multiple?new PickMultipleVisualMedia(limit).createIntent(context,request):new PickVisualMedia().createIntent(context,request);
+ }
  @PluginMethod public void pick(PluginCall call){
-  Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(call.getBoolean("imagesOnly",false)?"image/*":"*/*");
-  if(!call.getBoolean("imagesOnly",false))intent.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"});
-  intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,call.getBoolean("multiple",true));intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-  startActivityForResult(call,intent,"picked");
+  startActivityForResult(call,pickerIntent(getContext(),call.getBoolean("multiple",true),call.getBoolean("imagesOnly",false)),"picked");
  }
  @ActivityCallback private void picked(PluginCall call,ActivityResult result){
   if(call==null)return;if(result.getResultCode()!=Activity.RESULT_OK||result.getData()==null){call.resolve(new JSObject().put("files",new JSArray()));return;}

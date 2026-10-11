@@ -119,7 +119,6 @@ test('production Web on a non-localhost HTTP origin loads assets, chats and uplo
   await page
     .locator('input[type=file]')
     .setInputFiles({ name: 'public.png', mimeType: 'image/png', buffer: image });
-  await page.getByLabel('拍摄日期 · public.png').fill('2026-06-15');
   await page.getByLabel('写下这一刻').fill('公网图片上传正常');
   await page.getByRole('button', { name: '上传' }).click();
   await expect(page.getByText('公网图片上传正常', { exact: true })).toBeVisible();

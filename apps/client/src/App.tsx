@@ -1,6 +1,6 @@
 import { UploadProvider, UploadButton } from '@/components/UploadCenter';
 import { pauseNativeUploads } from '@/lib/upload-queue';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
 import { Heart, MessageCircle, Images, CalendarDays, UsersRound, ListTodo } from 'lucide-react';
@@ -42,6 +42,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
       }),
     [session, end],
   );
+  const openMemories = useCallback(() => setTab('memories'), []);
   const profile = useQuery({
     queryKey: ['profile'],
     queryFn: () => api.request<Profile>('/api/me'),
@@ -212,6 +213,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
               ? false
               : null,
         openUs: () => setTab('us'),
+        openMemories,
       }}
     >
       <UploadProvider>
@@ -222,7 +224,7 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
                 love
                 <span className="brand-dot" />
               </h1>
-              <UploadButton />
+              {paired && tab === 'memories' && <UploadButton />}
             </header>
           )}
           <div className="flex min-h-0 flex-1 flex-col">

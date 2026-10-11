@@ -24,6 +24,11 @@ public class UploadBackgroundTest {
  }
  @Test public void uploadsAfterHomeAndResumesWithoutDuplicatingCommit()throws Exception {
   Instrumentation instrument=InstrumentationRegistry.getInstrumentation();Context context=instrument.getTargetContext();
+  Intent gallery=BackgroundUploadsPlugin.pickerIntent(context,true,false),avatarPicker=BackgroundUploadsPlugin.pickerIntent(context,false,true);
+  assertEquals("media selection opens the gallery Photo Picker",android.provider.MediaStore.ACTION_PICK_IMAGES,gallery.getAction());
+  assertNull("gallery allows both photos and videos",gallery.getType());
+  assertNotNull(context.getPackageManager().resolveActivity(gallery,0));
+  assertEquals(android.provider.MediaStore.ACTION_PICK_IMAGES,avatarPicker.getAction());assertEquals("image/*",avatarPicker.getType());
   Intent activity=new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);foreground(instrument,context,activity);
   byte[] original=new byte[2*1048576+113];for(int i=0;i<original.length;i++)original[i]=(byte)(i%251);
   File source=new File(context.getCacheDir(),"background-upload-fixture.jpg");try(FileOutputStream out=new FileOutputStream(source)){out.write(original);out.getFD().sync();}
@@ -40,6 +45,7 @@ public class UploadBackgroundTest {
    limit=System.currentTimeMillis()+40000;JSONObject result;
    do{Thread.sleep(100);result=UploadStore.task(context,scope,id);}while(!"done".equals(result.optString("status"))&&System.currentTimeMillis()<limit);
    assertEquals(result.toString(),"done",result.getString("status"));assertEquals(original.length,result.getLong("bytes"));assertEquals(100,result.getInt("progress"));assertEquals("lost commit response did not publish twice",1,server.commits);assertArrayEquals(original,server.received.toByteArray());assertFalse("local input removed only after confirmed completion",UploadStore.directory(context,id).exists());
+   assertEquals("missing-date notice persists with native history","2026-10-11",UploadStore.task(context,scope,id).getJSONObject("result").getString("fallbackDate"));
   }finally{UploadService.stop(context);UploadService.preferences(context).edit().clear().commit();UploadStore.write(context,new JSONArray());source.delete();}
  }
  static final class FixtureServer implements AutoCloseable {
@@ -56,7 +62,7 @@ public class UploadBackgroundTest {
     if(firstChunk){firstChunk=false;status=503;reply.put("error","temporary database outage");}
     else{int index=Integer.parseInt(path.substring(path.lastIndexOf('/')+1));StringBuilder actual=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(body))actual.append(String.format(java.util.Locale.ROOT,"%02x",b&255));if(!hash.equals(actual.toString()))throw new Exception("chunk checksum mismatch");
      if(index*1048576==received.size()){received.write(body);chunks++;}Thread.sleep(700);reply.put("offsets",new JSONArray().put(received.size()));}
-   }else if(path.endsWith("/complete")){if(commits==0)commits++;if(firstCommit){firstCommit=false;continue;}reply.put("id",path.split("/")[3]).put("kind","image").put("previewUrl","/fixture").put("thumbnailUrl","/fixture");}
+   }else if(path.endsWith("/complete")){if(commits==0)commits++;if(firstCommit){firstCommit=false;continue;}reply.put("id",path.split("/")[3]).put("kind","image").put("previewUrl","/fixture").put("thumbnailUrl","/fixture").put("capturedDate",JSONObject.NULL).put("fallbackDate","2026-10-11");}
    byte[] data=reply.toString().getBytes(StandardCharsets.UTF_8);OutputStream out=socket.getOutputStream();out.write(("HTTP/1.1 "+status+" OK\r\nContent-Type: application/json\r\nContent-Length: "+data.length+"\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));out.write(data);out.flush();
   }catch(IOException disconnected){/* Restart deliberately disconnects an in-flight response. */}catch(Exception error){if(!closed)throw new RuntimeException(error);}}
   public void close()throws Exception{closed=true;listener.close();worker.join(2000);}

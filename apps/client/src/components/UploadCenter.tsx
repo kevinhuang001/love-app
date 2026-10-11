@@ -1,14 +1,18 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { CloudUpload, RotateCw, X } from 'lucide-react';
+import { Bell, CloudUpload, RotateCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/lib/context';
 import { UploadQueue, pendingTask, nativeUploads, BackgroundUploads } from '@/lib/upload-queue';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
-const Context = createContext<UploadQueue | null>(null);
+const Context = createContext<{
+  queue: UploadQueue;
+  open: boolean;
+  setOpen: (value: boolean) => void;
+} | null>(null);
 export function UploadProvider({ children }: { children: React.ReactNode }) {
-  const { api, profile } = useApp(),
+  const { api, profile, openMemories } = useApp(),
     cache = useQueryClient();
   const makeQueue = () =>
     new UploadQueue(api, profile, (task) => {
@@ -19,19 +23,40 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       void cache.invalidateQueries({ queryKey: ['ai-settings'] });
     });
   const [queue, setQueue] = useState(makeQueue);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!nativeUploads) return;
+    let active = true;
+    const show = () => {
+      if (!active) return;
+      openMemories();
+      setOpen(true);
+    };
+    const handle = BackgroundUploads.addListener('openUploads', show);
+    void BackgroundUploads.consumeOpen()
+      .then((value) => {
+        if (value.opened) show();
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      void handle.then((listener) => listener.remove());
+    };
+  }, [openMemories]);
   useEffect(() => {
     const active = makeQueue();
     setQueue(active);
     void active.start().catch((error) => toast.error((error as Error).message));
     return () => active.dispose();
   }, [api, profile.user.id, profile.user.coupleId, cache]);
-  return <Context.Provider value={queue}>{children}</Context.Provider>;
+  return <Context.Provider value={{ queue, open, setOpen }}>{children}</Context.Provider>;
 }
 export function useUploads() {
-  const queue = useContext(Context);
-  if (!queue) throw new Error('上传队列不可用');
+  const context = useContext(Context);
+  if (!context) throw new Error('上传队列不可用');
+  const { queue } = context;
   const tasks = useSyncExternalStore(queue.subscribe, queue.getSnapshot);
-  return { queue, tasks };
+  return { ...context, tasks };
 }
 const labels = {
   queued: '等待上传',
@@ -45,29 +70,23 @@ const labels = {
   paused: '已暂停',
 };
 export function UploadButton() {
-  const { queue, tasks } = useUploads(),
-    [open, setOpen] = useState(false),
-    [tab, setTab] = useState<'active' | 'history'>('active');
+  const { queue, tasks, open, setOpen } = useUploads(),
+    [tab, setTab] = useState<'active' | 'history' | 'notifications'>('active');
   useEffect(() => {
-    if (!nativeUploads) return;
-    const handle = BackgroundUploads.addListener('openUploads', () => {
-      setOpen(true);
-      setTab('active');
-    });
-    void BackgroundUploads.consumeOpen().then((value) => {
-      if (value.opened) setOpen(true);
-    });
-    return () => {
-      void handle.then((listener) => listener.remove());
-    };
-  }, []);
+    if (open) setTab('active');
+  }, [open]);
   const active = tasks.filter(pendingTask),
-    remaining = tasks.filter((t) => ['failed', 'paused'].includes(t.status));
+    remaining = tasks.filter((t) => ['failed', 'paused'].includes(t.status)),
+    notices = tasks.filter(
+      (t) => t.target === 'album' && t.status === 'done' && t.result?.fallbackDate,
+    );
   const shown = tasks
     .filter((t) =>
       tab === 'active'
         ? pendingTask(t) || ['failed', 'paused'].includes(t.status)
-        : !pendingTask(t),
+        : tab === 'notifications'
+          ? notices.includes(t)
+          : !pendingTask(t),
     )
     .slice()
     .sort((a, b) => b.created - a.created);
@@ -88,6 +107,14 @@ export function UploadButton() {
           : remaining.length
             ? `上传待处理 ${remaining.length}`
             : '上传记录'}
+        {notices.length > 0 && (
+          <span
+            className="rounded-full bg-secondary px-1.5 text-[10px]"
+            aria-label={`${notices.length} 条上传通知`}
+          >
+            {notices.length}
+          </span>
+        )}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
@@ -112,82 +139,116 @@ export function UploadButton() {
             >
               上传历史
             </Button>
+            <Button
+              size="sm"
+              variant={tab === 'notifications' ? 'secondary' : 'ghost'}
+              onClick={() => setTab('notifications')}
+            >
+              通知 {notices.length}
+            </Button>
           </div>
           <div className="max-h-[55dvh] space-y-3 overflow-auto">
             {!shown.length && (
               <p className="py-8 text-center text-sm text-muted-foreground">
-                {tab === 'active' ? '没有正在上传的任务' : '还没有上传记录'}
+                {tab === 'active'
+                  ? '没有正在上传的任务'
+                  : tab === 'notifications'
+                    ? '没有上传通知'
+                    : '还没有上传记录'}
               </p>
             )}
-            {shown.map((task) => (
-              <article key={task.id} className="space-y-2 rounded-xl border p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm">{task.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {task.target === 'album'
-                        ? '相册'
-                        : task.target === 'draft'
-                          ? '聊天附件'
-                          : task.target === 'avatar'
-                            ? '个人头像'
-                            : 'AI 头像'}{' '}
-                      · {labels[task.status]}
-                      {task.target === 'draft' && task.status === 'done' && !task.claimed
-                        ? '，待发送'
-                        : ''}
-                    </p>
+            {shown.map((task) =>
+              tab === 'notifications' ? (
+                <article
+                  key={task.id}
+                  className="space-y-2 rounded-xl border p-3"
+                  data-testid="upload-date-notice"
+                >
+                  <div className="flex items-start gap-2">
+                    <Bell size={16} className="mt-0.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="break-all text-sm">{task.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        未识别到拍摄日期，上传时已使用 {task.result!.fallbackDate}。
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex shrink-0 gap-1">
-                    {['failed', 'paused'].includes(task.status) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`重试 ${task.name}`}
-                        onClick={() => action(task.id, 'retry')}
-                      >
-                        <RotateCw size={15} />
-                      </Button>
-                    )}
-                    {(pendingTask(task) || ['failed', 'paused'].includes(task.status)) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={`取消 ${task.name}`}
-                        onClick={() => action(task.id, 'cancel')}
-                      >
-                        <X size={15} />
-                      </Button>
-                    )}
-                    {!pendingTask(task) &&
-                      !(task.target === 'draft' && !task.claimed && task.status === 'done') && (
-                        <Button variant="ghost" size="sm" onClick={() => action(task.id, 'clear')}>
-                          清除记录
+                  <p className="text-[11px] text-muted-foreground">可在回忆中编辑日期。</p>
+                </article>
+              ) : (
+                <article key={task.id} className="space-y-2 rounded-xl border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm">{task.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {task.target === 'album'
+                          ? '相册'
+                          : task.target === 'draft'
+                            ? '聊天附件'
+                            : task.target === 'avatar'
+                              ? '个人头像'
+                              : 'AI 头像'}{' '}
+                        · {labels[task.status]}
+                        {task.target === 'draft' && task.status === 'done' && !task.claimed
+                          ? '，待发送'
+                          : ''}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      {['failed', 'paused'].includes(task.status) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`重试 ${task.name}`}
+                          onClick={() => action(task.id, 'retry')}
+                        >
+                          <RotateCw size={15} />
                         </Button>
                       )}
+                      {(pendingTask(task) || ['failed', 'paused'].includes(task.status)) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`取消 ${task.name}`}
+                          onClick={() => action(task.id, 'cancel')}
+                        >
+                          <X size={15} />
+                        </Button>
+                      )}
+                      {!pendingTask(task) &&
+                        !(task.target === 'draft' && !task.claimed && task.status === 'done') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => action(task.id, 'clear')}
+                          >
+                            清除记录
+                          </Button>
+                        )}
+                    </div>
                   </div>
-                </div>
-                <progress
-                  className="h-1.5 w-full accent-primary"
-                  value={task.progress}
-                  max={100}
-                  aria-label={`${task.name} 上传进度`}
-                />
-                <div className="flex justify-between text-[11px] text-muted-foreground">
-                  <span>
-                    {(task.bytes / 1024 ** 2).toFixed(1)} / {(task.total / 1024 ** 2).toFixed(1)} MB
-                    · {task.progress}%
-                  </span>
-                  <span>{new Date(task.created).toLocaleString()}</span>
-                </div>
-                {task.error && (
-                  <p className="break-words text-xs text-destructive" role="status">
-                    {task.error}
-                    {task.attempt ? `（第 ${task.attempt} 次重试）` : ''}
-                  </p>
-                )}
-              </article>
-            ))}
+                  <progress
+                    className="h-1.5 w-full accent-primary"
+                    value={task.progress}
+                    max={100}
+                    aria-label={`${task.name} 上传进度`}
+                  />
+                  <div className="flex justify-between text-[11px] text-muted-foreground">
+                    <span>
+                      {(task.bytes / 1024 ** 2).toFixed(1)} / {(task.total / 1024 ** 2).toFixed(1)}{' '}
+                      MB · {task.progress}%
+                    </span>
+                    <span>{new Date(task.created).toLocaleString()}</span>
+                  </div>
+                  {task.error && (
+                    <p className="break-words text-xs text-destructive" role="status">
+                      {task.error}
+                      {task.attempt ? `（第 ${task.attempt} 次重试）` : ''}
+                    </p>
+                  )}
+                </article>
+              ),
+            )}
           </div>
         </DialogContent>
       </Dialog>

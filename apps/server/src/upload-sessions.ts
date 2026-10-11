@@ -48,6 +48,18 @@ export const uploadSchema = z
     '头像请选择图片',
   );
 export type UploadSpec = z.infer<typeof uploadSchema>;
+const outcomeSchema = z
+  .object({
+    capturedDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable(),
+    fallbackDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+  })
+  .strict();
 type Saved = UploadSpec & { owner: string; couple: string; updated: number; cancelled?: boolean };
 // Only transport staging lives on disk. Publication and billable media stay in one DB transaction.
 // Immutable chunks and fsynced manifests survive restarts, including an unavailable remote DB.
@@ -241,8 +253,33 @@ export class UploadSessions {
       throw e;
     }
   }
+  async saveOutcome(owner: string, id: string, outcome: z.infer<typeof outcomeSchema>) {
+    await this.durable(
+      join(this.directory(owner, id), 'result.json'),
+      JSON.stringify(outcomeSchema.parse(outcome)),
+    );
+  }
+  async outcome(owner: string, id: string) {
+    try {
+      return outcomeSchema.parse(
+        JSON.parse(await readFile(join(this.directory(owner, id), 'result.json'), 'utf8')),
+      );
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
   async release(owner: string, id: string) {
-    await rm(this.directory(owner, id), { recursive: true, force: true });
+    const directory = this.directory(owner, id);
+    try {
+      // Retain a small receipt for seven days so lost responses/restarts preserve date notices.
+      // It is returned only after the database proves this upload was committed.
+      for (const name of await readdir(directory))
+        if (name !== 'result.json') await rm(join(directory, name), { force: true });
+      if (!(await this.outcome(owner, id))) await rm(directory, { recursive: true, force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
   async cancel(owner: string, couple: string, id: string, committed: () => Promise<boolean>) {
     return this.locked(owner, id, async () => {

@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.11.0
+        description: New version tag, for example v2.11.1
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.11.0' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.11.1' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,14 +125,14 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           cat > release/NOTES.md <<'NOTES'
-          Love 2.11.0：系统 Node.js 管理器、后台上传队列与分片续传。
+          Love 2.11.1：图库选择、自动拍摄日期与上传通知。
 
-          - 管理器只安装一个 JS 文件，需要系统 Node.js 24；不再内嵌 Bun/Node 或使用 XZ。
-          - 相册点击上传即可离开页面，统一上传中心查看进度、历史、取消和重试。
-          - 安卓原生 dataSync 前台服务持续上传，通知显示进度；本地原子日志保存任务。
-          - 分片持久化、校验与断点续传；重试通过固定任务 ID 防止重复保存。
-          - 媒体、相册回忆和存储容量在一个数据库事务中提交；外部 PostgreSQL 默认重试 8 次，上传重试 12 次。
-          - 旧版二进制管理器请重新运行安装命令以切换到 JS；保留现有配置和数据。
+          - 安卓使用系统 Photo Picker 选择照片/视频，保留后台续传的读取权限。
+          - 上传前不再选择日期；后台自动识别拍摄日期，无法识别时使用今天。
+          - 上传中心新增通知页，列出未识别拍摄日期的文件及采用的日期。
+          - 上传中心按钮仅显示在回忆页；点击系统上传通知会打开回忆中的上传中心。
+          - 上传日期结果和本地历史持久化，重试与重新打开应用后仍可查看通知。
+          - 保留 Node.js 24 单文件管理器、断点续传与原子提交；配置和已有数据无需清空。
 
           发布产物来自通过完整 CI 的提交，附 SHA-256；APK 附固定签名指纹。
           请覆盖安装以保留登录信息；既有数据卷无需清空。

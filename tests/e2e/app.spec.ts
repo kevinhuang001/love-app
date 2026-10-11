@@ -270,7 +270,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   const image = await sharp({
     create: { width: 900, height: 600, channels: 3, background: '#789684' },
   })
-    .withExif({ IFD2: { DateTimeOriginal: '2026:06:20 12:00:00' } })
+    .withExif({ IFD2: { DateTimeOriginal: '2026:06:15 12:00:00' } })
     .jpeg()
     .toBuffer();
   await page.locator('input[type=file]').setInputFiles([

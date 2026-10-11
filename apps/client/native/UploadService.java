@@ -69,8 +69,9 @@ public class UploadService extends Service {
   UploadStore.patch(this,scope,id,new JSONObject().put("status","done").put("progress",100).put("bytes",total).put("result",result).put("error",JSONObject.NULL).put("cancelRequested",false));UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);
  }
  private void cancel(String scope,String id,long total)throws Exception{
-  try{JSONObject state=http(scope,id,"GET","/api/uploads/"+id,null,null,null);if(state.has("result")){done(scope,id,state.getJSONObject("result"),total);return;}http(scope,id,"DELETE","/api/uploads/"+id,null,null,null);}
-  catch(StatusError error){if(error.status==409){JSONObject state=http(scope,id,"GET","/api/uploads/"+id,null,null,null);if(state.has("result")){done(scope,id,state.getJSONObject("result"),total);return;}throw error;}if(error.status!=404&&error.status!=410)throw error;}
+  // DELETE also records a tombstone before initialization, blocking late POST requests.
+  try{http(scope,id,"DELETE","/api/uploads/"+id,null,null,null);}
+  catch(StatusError error){if(error.status==409){JSONObject state=http(scope,id,"GET","/api/uploads/"+id,null,null,null);if(state.has("result")){done(scope,id,state.getJSONObject("result"),total);return;}throw error;}if(error.status!=410)throw error;}
   UploadStore.patch(this,scope,id,new JSONObject().put("status","cancelled").put("error",JSONObject.NULL));UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);
  }
  private void transfer(JSONObject task)throws Exception{

@@ -16,9 +16,15 @@ import java.security.MessageDigest;
 import java.util.UUID;
 @RunWith(AndroidJUnit4.class)
 public class UploadBackgroundTest {
+ static void foreground(Instrumentation instrument,Context context,Intent activity)throws Exception {
+  // singleTask resumes an existing Activity; startActivitySync waits for a new launch.
+  instrument.runOnMainSync(()->context.startActivity(activity));
+  long limit=System.currentTimeMillis()+15000;while(!LocalNotificationService.foreground&&System.currentTimeMillis()<limit)Thread.sleep(50);
+  assertTrue("activity resumed before starting the foreground service",LocalNotificationService.foreground);
+ }
  @Test public void uploadsAfterHomeAndResumesWithoutDuplicatingCommit()throws Exception {
   Instrumentation instrument=InstrumentationRegistry.getInstrumentation();Context context=instrument.getTargetContext();
-  Intent activity=new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);instrument.startActivitySync(activity);Thread.sleep(1500);
+  Intent activity=new Intent(context,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);foreground(instrument,context,activity);
   byte[] original=new byte[2*1048576+113];for(int i=0;i<original.length;i++)original[i]=(byte)(i%251);
   File source=new File(context.getCacheDir(),"background-upload-fixture.jpg");try(FileOutputStream out=new FileOutputStream(source)){out.write(original);out.getFD().sync();}
   Uri uri=FileProvider.getUriForFile(context,context.getPackageName()+".fileprovider",source);
@@ -30,7 +36,7 @@ public class UploadBackgroundTest {
    UploadService.start(context);instrument.getUiAutomation().executeShellCommand("input keyevent 3").close();
    long limit=System.currentTimeMillis()+15000;while(server.chunks<1&&System.currentTimeMillis()<limit)Thread.sleep(50);assertTrue("service sent a chunk after Home",server.chunks>=1);assertFalse("activity is backgrounded",LocalNotificationService.foreground);
    UploadService.stop(context);Thread.sleep(500);JSONObject persisted=UploadStore.task(context,scope,id);assertNotNull(persisted);assertTrue("private input copy survives service restart",new File(UploadStore.directory(context,id),"file-0").isFile());
-   instrument.startActivitySync(activity);Thread.sleep(700);UploadService.start(context);instrument.getUiAutomation().executeShellCommand("input keyevent 3").close();
+   foreground(instrument,context,activity);UploadService.start(context);instrument.getUiAutomation().executeShellCommand("input keyevent 3").close();
    limit=System.currentTimeMillis()+40000;JSONObject result;
    do{Thread.sleep(100);result=UploadStore.task(context,scope,id);}while(!"done".equals(result.optString("status"))&&System.currentTimeMillis()<limit);
    assertEquals(result.toString(),"done",result.getString("status"));assertEquals(original.length,result.getLong("bytes"));assertEquals(100,result.getInt("progress"));assertEquals("lost commit response did not publish twice",1,server.commits);assertArrayEquals(original,server.received.toByteArray());assertFalse("local input removed only after confirmed completion",UploadStore.directory(context,id).exists());

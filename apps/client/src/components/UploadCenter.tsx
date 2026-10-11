@@ -1,11 +1,4 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  useSyncExternalStore,
-} from 'react';
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { CloudUpload, RotateCw, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -18,7 +11,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const { api, profile } = useApp(),
     cache = useQueryClient();
   const makeQueue = () =>
-    new UploadQueue(api, profile, () => {
+    new UploadQueue(api, profile, (task) => {
+      if (task?.target === 'avatar') toast.success('头像已更新');
+      if (task?.target === 'ai-avatar') toast.success('AI 头像已更新');
       void cache.invalidateQueries({ queryKey: ['moments'] });
       void cache.invalidateQueries({ queryKey: ['profile'] });
       void cache.invalidateQueries({ queryKey: ['ai-settings'] });
@@ -55,7 +50,6 @@ export function UploadButton() {
     [tab, setTab] = useState<'active' | 'history'>('active');
   useEffect(() => {
     if (!nativeUploads) return;
-    let active = true;
     const handle = BackgroundUploads.addListener('openUploads', () => {
       setOpen(true);
       setTab('active');
@@ -64,7 +58,6 @@ export function UploadButton() {
       if (value.opened) setOpen(true);
     });
     return () => {
-      active = false;
       void handle.then((listener) => listener.remove());
     };
   }, []);

@@ -306,7 +306,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Build background upload instrumentation test
         working-directory: apps/client/android
-        run: ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon
       - name: Verify Home, service restart, retries and lost commit response on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:

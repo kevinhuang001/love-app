@@ -943,7 +943,7 @@ export async function createApp(options: AppOptions = {}) {
                       user.id,
                       spec.title,
                       media.id,
-                      spec.date || media.capturedDate || new Date().toISOString().slice(0, 10),
+                      spec.date || media.capturedDate || today(),
                     );
                 } else if (spec.target === 'avatar') {
                   await db

@@ -134,7 +134,7 @@ export class UploadQueue {
   constructor(
     public api: Api,
     profile: Profile,
-    private changed: () => void,
+    private changed: (task?: Task) => void,
   ) {
     this.scope = JSON.stringify([api.session.server, profile.user.id, profile.user.coupleId]);
   }
@@ -183,16 +183,20 @@ export class UploadQueue {
   async refresh() {
     if (this.disposed) return;
     const { tasks } = await BackgroundUploads.list({ scope: this.scope });
-    const completed = tasks.some(
+    const completed = tasks.filter(
       (t) => t.status === 'done' && this.tasks.find((v) => v.id === t.id)?.status !== 'done',
     );
+    const newlyFinished = completed.filter((t) => this.tasks.some((v) => v.id === t.id));
     if (this.disposed) return;
     this.tasks = tasks.map((t) => ({
       ...t,
       ...(this.signed.has(t.id) ? { result: this.signed.get(t.id) } : {}),
     })) as Stored[];
     this.emit();
-    if (completed) this.changed();
+    if (completed.length) {
+      if (newlyFinished.length) for (const task of newlyFinished) this.changed(task);
+      else this.changed();
+    }
     void this.refreshDrafts();
   }
   private async refreshDrafts() {
@@ -363,7 +367,7 @@ export class UploadQueue {
       bytes: task.total,
       error: undefined,
     });
-    this.changed();
+    this.changed(task);
   }
   private async run() {
     if (this.running || this.disposed) return;

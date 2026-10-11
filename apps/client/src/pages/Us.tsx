@@ -527,9 +527,9 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file)
-                void action(async () => {
-                  await queueAvatar(file, 'ai-avatar');
-                }, 'AI 头像已更新');
+                void queueAvatar(file, 'ai-avatar').catch((error) =>
+                  toast.error((error as Error).message),
+                );
               e.target.value = '';
             }}
           />

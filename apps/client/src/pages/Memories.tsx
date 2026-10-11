@@ -77,7 +77,11 @@ function UploadSelection({
               <img src={urls[index]} alt="待上传照片" className="size-12 rounded-lg object-cover" />
             ) : (
               <span className="grid size-12 shrink-0 place-items-center rounded-lg bg-secondary">
-                <Film className="size-5" />
+                {item.file.type.startsWith('image/') ? (
+                  <Image className="size-5" />
+                ) : (
+                  <Film className="size-5" />
+                )}
               </span>
             )}
             <span className="min-w-0 flex-1">

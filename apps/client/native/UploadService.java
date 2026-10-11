@@ -53,7 +53,8 @@ public class UploadService extends Service {
      if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type",mime);c.setFixedLengthStreamingMode(body.length);try(OutputStream out=c.getOutputStream()){out.write(body);}}
      int status=c.getResponseCode();InputStream stream=status<400?c.getInputStream():c.getErrorStream();String text="";
      if(stream!=null)try(InputStream input=stream;ByteArrayOutputStream output=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=input.read(buffer))!=-1){if(output.size()+n>1024*1024)throw new IOException("服务器响应过大");output.write(buffer,0,n);}text=output.toString(StandardCharsets.UTF_8.name());}
-     JSONObject result=text.isEmpty()?new JSONObject():new JSONObject(text);
+     JSONObject result;
+     try{result=text.isEmpty()?new JSONObject():new JSONObject(text);}catch(JSONException invalid){if(status>=200&&status<300)throw new IOException("服务器响应无效");result=new JSONObject();}
      if(status<200||status>=300)throw new StatusError(status,result.optString("error","服务器返回 "+status));return result;
     }finally{c.disconnect();connection=null;}
    }catch(StatusError error){if(error.status!=408&&error.status!=429&&error.status<500)throw error;if(attempt==11)throw error;retry(scope,id,attempt,error.getMessage());}

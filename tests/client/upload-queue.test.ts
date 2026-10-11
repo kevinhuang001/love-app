@@ -189,3 +189,77 @@ test('a late transient chunk failure cannot restart a confirmed cancellation', a
   expect(chunks).toBe(1);
   expect(commits).toBe(0);
 });
+
+test('batch media remain independent; database progress and cancellation confirmation survive retries', async () => {
+  environment();
+  let started = false,
+    cleanupFails = true,
+    cancelled = false;
+  let complete!: (response: Response) => void;
+  const ids = new Map<string, string>();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/api/uploads')) {
+        const spec = JSON.parse(init.body as string);
+        expect(spec.title).toBe('同批描述');
+        ids.set(spec.files[0].name, spec.id);
+        return Response.json({ offsets: [0] });
+      }
+      if (init.method === 'PUT') return Response.json({});
+      if (init.method === 'DELETE') {
+        if (cleanupFails) return Response.json({ error: '清理未确认' }, { status: 409 });
+        cancelled = true;
+        return new Response(null, { status: 204 });
+      }
+      if (init.method === 'GET' || !init.method)
+        return Response.json({
+          phase: 'database',
+          storage: 'postgres',
+          databaseBytes: 512,
+          databaseTotal: 1024,
+        });
+      if (url.endsWith('/complete')) {
+        if (url.includes(ids.get('second.jpg')!))
+          return Response.json({ id: ids.get('second.jpg'), kind: 'image', capturedDate: null });
+        started = true;
+        return new Promise<Response>((resolve, reject) => {
+          complete = resolve;
+          init.signal!.addEventListener(
+            'abort',
+            () => reject(new DOMException('cancelled', 'AbortError')),
+            { once: true },
+          );
+        });
+      }
+      throw new Error('unexpected request');
+    }),
+  );
+  const queue = make();
+  await queue.start();
+  await queue.enqueue(
+    ['first.jpg', 'second.jpg'].map((name) => ({
+      file: new File(['image'], name, { type: 'image/jpeg' }),
+      target: 'album' as const,
+      title: '同批描述',
+    })),
+  );
+  await until(() => started);
+  await until(() => queue.getSnapshot()[0]?.phase === 'database');
+  expect(queue.getSnapshot()[0]).toMatchObject({
+    status: 'processing',
+    databaseBytes: 512,
+    databaseTotal: 1024,
+  });
+  const first = queue.getSnapshot()[0].id;
+  await expect(queue.action(first, 'cancel')).rejects.toThrow('清理未确认');
+  await until(() => queue.getSnapshot()[1]?.status === 'done');
+  expect(queue.getSnapshot()[0]).toMatchObject({ status: 'failed', cancelRequested: true });
+  cleanupFails = false;
+  await queue.action(first, 'retry');
+  await until(() => queue.getSnapshot()[0]?.status === 'cancelled');
+  expect(cancelled).toBe(true);
+  expect(ids.size).toBe(2);
+  expect(queue.getSnapshot()[1].status).toBe('done');
+  complete(Response.json({})); // A late response cannot change confirmed cancellation.
+});

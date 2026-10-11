@@ -507,7 +507,28 @@ test('automatic capture dates, fallback to today and durable upload notices surv
   expect(uploads).toBe(0);
   await expect(page.getByRole('dialog').locator('input[type=date]')).toHaveCount(0);
   await page.getByLabel('写下这一刻').fill('逐张日期');
-  let failed = false;
+  let failed = false,
+    holdingId = '',
+    phaseStorage = 'postgres';
+  let releaseResult!: () => void;
+  const heldResult = new Promise<void>((resolve) => {
+    releaseResult = resolve;
+  });
+  await page.route('**/api/uploads/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'GET' && holdingId && req.url().endsWith('/' + holdingId))
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          phase: 'database',
+          storage: phaseStorage,
+          databaseBytes: 512,
+          databaseTotal: phaseStorage === 'postgres' ? 1024 : 0,
+        }),
+      });
+    else await route.continue();
+  });
   await page.route('**/api/uploads/*/complete', async (route) => {
     if (!failed) {
       failed = true;
@@ -516,6 +537,11 @@ test('automatic capture dates, fallback to today and durable upload notices surv
         contentType: 'application/json',
         body: JSON.stringify({ error: '测试保存失败' }),
       });
+    } else if (!holdingId) {
+      const response = await route.fetch();
+      holdingId = route.request().url().split('/').at(-2)!;
+      await heldResult;
+      await route.fulfill({ response });
     } else await route.continue();
   });
   await page.getByRole('button', { name: '上传', exact: true }).click();
@@ -525,6 +551,10 @@ test('automatic capture dates, fallback to today and durable upload notices surv
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await page.getByRole('button', { name: '上传中心' }).click();
   await expect(page.getByRole('dialog')).toContainText('上传中心');
+  await expect(page.getByRole('dialog')).toContainText('入库中 · 写入数据库', { timeout: 30000 });
+  phaseStorage = 'sqlite';
+  await expect(page.getByRole('dialog')).toContainText('入库中 · 写入元数据');
+  releaseResult();
   await expect(page.getByRole('dialog').getByText('没有正在上传的任务')).toBeVisible({
     timeout: 30000,
   });

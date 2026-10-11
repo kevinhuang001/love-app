@@ -34,7 +34,13 @@ export class MediaRepository {
       }
     }
   }
-  async stage(names: string[], sizes: number[], transactional = false, signal?: AbortSignal) {
+  async stage(
+    names: string[],
+    sizes: number[],
+    transactional = false,
+    signal?: AbortSignal,
+    progress?: (bytes: number, total: number) => void,
+  ) {
     const write = (action: () => Promise<unknown>) => {
       signal?.throwIfAborted();
       return transactional
@@ -45,6 +51,12 @@ export class MediaRepository {
           });
     };
     if (this.db.provider !== 'postgres') return;
+    const expected = sizes.reduce(
+      (n, size, i) => n + (names[i] && names.indexOf(names[i]) === i ? size : 0),
+      0,
+    );
+    let uploaded = 0;
+    progress?.(0, expected);
     for (const [i, name] of names.entries()) {
       if (!name || names.indexOf(name) !== i) continue;
       const file = await open(this.path(name), 'r');
@@ -84,6 +96,8 @@ export class MediaRepository {
               .run(name, index, data, new Date().toISOString(), name),
           );
           total += length;
+          uploaded += length;
+          progress?.(uploaded, expected);
         }
         if (total !== sizes[i] || (await file.stat()).size !== total)
           throw new HttpError(422, '媒体写入不完整，未计入容量');
@@ -110,12 +124,13 @@ export class MediaRepository {
       if (result.changes !== 1) throw new HttpError(503, '媒体未完整写入数据库，上传未提交');
     }
   }
-  async discard(names: string[]) {
+  async discard(names: string[], strict = false) {
     if (this.db.provider !== 'postgres') return;
     for (const name of new Set(names.filter(Boolean))) {
       try {
         await this.db.prepare('DELETE FROM media_files WHERE name=? AND mediaId IS NULL').run(name);
-      } catch {
+      } catch (error) {
+        if (strict) throw error;
         console.error('Uncommitted database media cleanup deferred');
       }
     }

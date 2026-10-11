@@ -321,7 +321,7 @@ jobs:
             adb install -r apps/client/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w -e class com.kevinhuang.love.UploadBackgroundTest com.kevinhuang.love.test/androidx.test.runner.AndroidJUnitRunner > android-background-test.txt
             cat android-background-test.txt
-            grep -q 'OK (1 test)' android-background-test.txt
+            grep -q 'OK (2 tests)' android-background-test.txt
       - name: Prepare verified Android artifact
         run: |
           mkdir -p android-artifact

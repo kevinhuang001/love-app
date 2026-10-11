@@ -22,6 +22,7 @@ final class UploadStore {
  static synchronized void patch(Context c,String scope,String id,JSONObject changes) throws Exception {
   JSONArray tasks=read(c);for(int i=0;i<tasks.length();i++){JSONObject t=tasks.getJSONObject(i);if(scope.equals(t.optString("scope"))&&id.equals(t.optString("id"))){for(java.util.Iterator<String> keys=changes.keys();keys.hasNext();){String key=keys.next();if(changes.isNull(key))t.remove(key);else t.put(key,changes.get(key));}t.put("updated",System.currentTimeMillis());}}write(c,tasks);BackgroundUploadsPlugin.changed();
  }
+ static synchronized boolean progress(Context c,String scope,String id,JSONObject changes)throws Exception {JSONObject t=task(c,scope,id);if(t==null||t.optBoolean("cancelRequested")||!t.optString("status").equals("processing"))return false;patch(c,scope,id,changes);return true;}
  static boolean active(JSONObject t) {String s=t.optString("status");return !(s.equals("done")||s.equals("failed")||s.equals("cancelled")||s.equals("paused"));}
  static synchronized void pause(Context c,String message) throws Exception {
   JSONArray tasks=read(c);for(int i=0;i<tasks.length();i++){JSONObject t=tasks.getJSONObject(i);if(active(t))t.put("status","paused").put("error",message);}write(c,tasks);BackgroundUploadsPlugin.changed();

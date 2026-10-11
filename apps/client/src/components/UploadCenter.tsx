@@ -61,8 +61,9 @@ export function useUploads() {
 const labels = {
   queued: '等待上传',
   preparing: '正在保存本地文件',
-  uploading: '正在上传',
-  processing: '正在处理并保存',
+  uploading: '上传服务器中',
+  processing: '正在处理媒体',
+  cancelling: '正在取消并清理',
   retrying: '正在重试',
   done: '上传完成',
   failed: '上传失败',
@@ -188,7 +189,12 @@ export function UploadButton() {
                             : task.target === 'avatar'
                               ? '个人头像'
                               : 'AI 头像'}{' '}
-                        · {labels[task.status]}
+                        ·{' '}
+                        {task.status === 'processing' && task.phase === 'database'
+                          ? task.storage === 'sqlite'
+                            ? '入库中 · 写入元数据'
+                            : '入库中 · 写入数据库'
+                          : labels[task.status]}
                         {task.target === 'draft' && task.status === 'done' && !task.claimed
                           ? '，待发送'
                           : ''}
@@ -205,16 +211,17 @@ export function UploadButton() {
                           <RotateCw size={15} />
                         </Button>
                       )}
-                      {(pendingTask(task) || ['failed', 'paused'].includes(task.status)) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`取消 ${task.name}`}
-                          onClick={() => action(task.id, 'cancel')}
-                        >
-                          <X size={15} />
-                        </Button>
-                      )}
+                      {task.status !== 'cancelling' &&
+                        (pendingTask(task) || ['failed', 'paused'].includes(task.status)) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`取消 ${task.name}`}
+                            onClick={() => action(task.id, 'cancel')}
+                          >
+                            <X size={15} />
+                          </Button>
+                        )}
                       {!pendingTask(task) &&
                         !(task.target === 'draft' && !task.claimed && task.status === 'done') && (
                           <Button
@@ -229,17 +236,37 @@ export function UploadButton() {
                   </div>
                   <progress
                     className="h-1.5 w-full accent-primary"
-                    value={task.progress}
+                    value={
+                      task.status === 'processing'
+                        ? task.phase === 'database' && task.databaseTotal
+                          ? Math.round(((task.databaseBytes || 0) * 100) / task.databaseTotal)
+                          : undefined
+                        : task.progress
+                    }
                     max={100}
                     aria-label={`${task.name} 上传进度`}
                   />
                   <div className="flex justify-between text-[11px] text-muted-foreground">
                     <span>
                       {(task.bytes / 1024 ** 2).toFixed(1)} / {(task.total / 1024 ** 2).toFixed(1)}{' '}
-                      MB · {task.progress}%
+                      MB · {task.progress}% 已传至服务器
                     </span>
                     <span>{new Date(task.created).toLocaleString()}</span>
                   </div>
+                  {task.phase === 'database' && task.status === 'processing' && (
+                    <p className="text-xs text-muted-foreground">
+                      {task.storage === 'sqlite'
+                        ? '文件已保存在服务器，正在提交 SQLite 元数据。'
+                        : task.databaseTotal
+                          ? `数据库 ${(task.databaseBytes || 0) / 1024 ** 2 < 0.1 ? '0.0' : ((task.databaseBytes || 0) / 1024 ** 2).toFixed(1)} / ${(task.databaseTotal / 1024 ** 2).toFixed(1)} MB；提交确认后完成。`
+                          : '正在提交数据库，确认后完成。'}
+                    </p>
+                  )}
+                  {task.status === 'cancelling' && (
+                    <p className="text-xs text-muted-foreground">
+                      正在清理服务器文件和数据库中的未提交内容。
+                    </p>
+                  )}
                   {task.error && (
                     <p className="break-words text-xs text-destructive" role="status">
                       {task.error}

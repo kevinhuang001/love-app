@@ -16,11 +16,17 @@ export type Task = {
     | 'preparing'
     | 'uploading'
     | 'processing'
+    | 'cancelling'
     | 'retrying'
     | 'done'
     | 'failed'
     | 'cancelled'
     | 'paused';
+  phase?: 'processing' | 'database';
+  storage?: 'sqlite' | 'postgres';
+  databaseBytes?: number;
+  databaseTotal?: number;
+  cancelRequested?: boolean;
   progress: number;
   bytes: number;
   total: number;
@@ -132,6 +138,8 @@ export class UploadQueue {
   private refreshed = new Map<string, number>();
   private signed = new Map<string, UploadedMedia>();
   private cancelled = new Set<string>();
+  private transfers = new Map<string, AbortController>();
+  private cancellations = new Map<string, Promise<void>>();
   constructor(
     public api: Api,
     profile: Profile,
@@ -284,14 +292,28 @@ export class UploadQueue {
     await save([task]);
     this.emit();
   }
-  private async request<T>(task: Stored, path: string, init: RequestInit = {}): Promise<T> {
+  private async request<T>(
+    task: Stored,
+    path: string,
+    init: RequestInit = {},
+    transfer = true,
+  ): Promise<T> {
+    const operationSignal =
+      transfer && this.transfers.has(task.id)
+        ? AbortSignal.any([this.controller.signal, this.transfers.get(task.id)!.signal])
+        : this.controller.signal;
     for (let attempt = 0; attempt < 12; attempt++) {
       this.controller.signal.throwIfAborted();
-      if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
+      if (transfer && (this.cancelled.has(task.id) || task.cancelRequested))
+        throw new DOMException('上传已取消', 'AbortError');
       while (!navigator.onLine) {
-        if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
-        await this.update(task, { status: 'retrying', error: '等待网络连接' });
-        await wait(2000, this.controller.signal);
+        if (transfer && (this.cancelled.has(task.id) || task.cancelRequested))
+          throw new DOMException('上传已取消', 'AbortError');
+        await this.update(task, {
+          status: task.cancelRequested ? 'cancelling' : 'retrying',
+          error: '等待网络连接',
+        });
+        await wait(2000, operationSignal);
       }
       try {
         const response = await fetch(this.api.url(path), {
@@ -299,6 +321,9 @@ export class UploadQueue {
           headers: { Authorization: `Bearer ${this.api.session.token}`, ...init.headers },
           signal: AbortSignal.any([
             this.controller.signal,
+            ...(transfer && this.transfers.has(task.id)
+              ? [this.transfers.get(task.id)!.signal]
+              : []),
             AbortSignal.timeout(path.endsWith('/complete') ? 15 * 60_000 : 60_000),
           ]),
         });
@@ -308,16 +333,17 @@ export class UploadQueue {
         return result as T;
       } catch (error) {
         this.controller.signal.throwIfAborted();
-        if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
+        if (transfer && (this.cancelled.has(task.id) || task.cancelRequested))
+          throw new DOMException('上传已取消', 'AbortError');
         const status = (error as TransferError).status || 0;
         if ((status && status !== 408 && status !== 429 && status < 500) || attempt === 11)
           throw error;
         await this.update(task, {
-          status: 'retrying',
+          status: task.cancelRequested ? 'cancelling' : 'retrying',
           attempt: attempt + 1,
           error: (error as Error).message,
         });
-        await wait(Math.min(1000 * 2 ** attempt, 30_000), this.controller.signal);
+        await wait(Math.min(1000 * 2 ** attempt, 30_000), operationSignal);
       }
     }
     throw new Error('上传重试次数已用尽');
@@ -357,14 +383,28 @@ export class UploadQueue {
         }
       }
     if (String(task.status) === 'cancelled') return;
-    await this.update(task, { status: 'processing', progress: 100, error: undefined });
-    const result =
-      state.result ||
-      (await this.request<UploadedMedia>(task, `/api/uploads/${task.id}/complete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-      }));
+    await this.update(task, {
+      status: 'processing',
+      phase: 'processing',
+      progress: 100,
+      error: undefined,
+    });
+    const monitor = new AbortController();
+    const polling = this.watchProgress(task, monitor.signal);
+    let result: UploadedMedia;
+    try {
+      result =
+        state.result ||
+        (await this.request<UploadedMedia>(task, `/api/uploads/${task.id}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        }));
+    } finally {
+      monitor.abort();
+      await polling;
+    }
+    if (task.cancelRequested) return;
     task.files = undefined;
     await this.update(task, {
       status: 'done',
@@ -375,6 +415,67 @@ export class UploadQueue {
     });
     this.changed(task);
   }
+  private async watchProgress(task: Stored, signal: AbortSignal) {
+    while (!signal.aborted && !this.disposed && !task.cancelRequested) {
+      try {
+        await wait(500, signal);
+        const state = await this.api.request<
+          Pick<Task, 'phase' | 'storage' | 'databaseBytes' | 'databaseTotal'>
+        >(`/api/uploads/${task.id}`, { signal });
+        if (!signal.aborted && !task.cancelRequested && state.phase)
+          await this.update(task, {
+            phase: state.phase,
+            storage: state.storage,
+            databaseBytes: state.databaseBytes,
+            databaseTotal: state.databaseTotal,
+            status: 'processing',
+          });
+      } catch {
+        /* A status read never retries or duplicates the media mutation. */
+      }
+    }
+  }
+  private async cancelTask(task: Stored) {
+    const existing = this.cancellations.get(task.id);
+    if (existing) return existing;
+    const job = (async () => {
+      task.cancelRequested = true;
+      this.transfers.get(task.id)?.abort(new DOMException('上传已取消', 'AbortError'));
+      await this.update(task, { status: 'cancelling', error: undefined });
+      try {
+        await this.request(task, `/api/uploads/${task.id}`, { method: 'DELETE' }, false);
+      } catch (error) {
+        const state = await this.api
+          .request<{ result?: UploadedMedia }>(`/api/uploads/${task.id}`)
+          .catch(() => null);
+        if (state?.result) {
+          task.files = undefined;
+          await this.update(task, {
+            status: 'done',
+            result: state.result,
+            cancelRequested: false,
+            error: undefined,
+          });
+          this.changed(task);
+          return;
+        }
+        await this.update(task, {
+          status: 'failed',
+          error: `取消未确认，保留文件以便重试：${(error as Error).message}`,
+        });
+        throw error;
+      }
+      this.cancelled.add(task.id);
+      task.files = undefined;
+      await this.update(task, { status: 'cancelled', cancelRequested: false, error: undefined });
+    })();
+    this.cancellations.set(task.id, job);
+    try {
+      await job;
+    } finally {
+      this.cancellations.delete(task.id);
+    }
+  }
   private async run() {
     if (this.running || this.disposed) return;
     this.running = true;
@@ -382,9 +483,18 @@ export class UploadQueue {
       for (const task of this.tasks)
         if (pendingTask(task)) {
           try {
-            await this.transfer(task);
+            if (task.cancelRequested) await this.cancelTask(task);
+            else {
+              const controller = new AbortController();
+              this.transfers.set(task.id, controller);
+              try {
+                await this.transfer(task);
+              } finally {
+                this.transfers.delete(task.id);
+              }
+            }
           } catch (error) {
-            if (this.cancelled.has(task.id)) continue;
+            if (this.cancelled.has(task.id) || task.cancelRequested) continue;
             if (this.disposed) {
               task.status = 'paused';
               await save([task]);
@@ -407,28 +517,11 @@ export class UploadQueue {
     const task = this.tasks.find((t) => t.id === id);
     if (!task) return;
     if (action === 'retry') {
-      await this.update(task, { status: 'queued', error: undefined });
+      await this.update(task, { status: 'queued', attempt: 0, error: undefined });
       void this.run();
     } else if (action === 'claim') await this.update(task, { claimed: true });
     else if (action === 'cancel') {
-      // The server serializes cancellation against commit. A completed upload remains completed.
-      try {
-        await this.api.delete(`/api/uploads/${id}`);
-      } catch (error) {
-        const state = await this.api
-          .request<{ result?: UploadedMedia }>(`/api/uploads/${id}`)
-          .catch(() => null);
-        if (state?.result) {
-          task.files = undefined;
-          await this.update(task, { status: 'done', result: state.result, error: undefined });
-          this.changed(task);
-          return;
-        }
-        throw error;
-      }
-      this.cancelled.add(id);
-      task.files = undefined;
-      await this.update(task, { status: 'cancelled', error: undefined });
+      await this.cancelTask(task);
     } else if (action === 'clear') {
       if (pendingTask(task) || (task.target === 'draft' && !task.claimed && task.status === 'done'))
         return;

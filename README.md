@@ -15,7 +15,7 @@ Love 是一个可以自己部署的两人生活应用。一起聊天、保存照
 
 ## 自己部署
 
-准备一台 Linux 服务器，安装 Docker Engine 和 Docker Compose **2.24.4 或更新版本**。支持 AMD64 和 ARM64。只需下载管理程序，不需要安装 Node.js、Bun 或编译源码。
+准备一台 Linux 服务器，安装 **Node.js 24 LTS**、Docker Engine 和 Docker Compose **2.24.4 或更新版本**。支持 AMD64 和 ARM64。只需下载管理程序，不需要安装 Node.js、Bun 或编译源码。
 
 在服务器终端进入部署目录，执行：
 

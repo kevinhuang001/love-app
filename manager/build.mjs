@@ -1,62 +1,51 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { build } from 'esbuild';
 import { templates } from './templates.mjs';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import pkg from '../package.json';
+import pkg from '../package.json' with { type: 'json' };
 const source = process.env.LOVE_SOURCE_SHA || process.env.GITHUB_SHA || '0'.repeat(40);
 if (!/^[a-f0-9]{40}$/.test(source)) throw new Error('Manager source SHA is required');
 await mkdir('.artifacts/manager', { recursive: true });
-const targets = process.argv.includes('--native')
-  ? [process.arch === 'arm64' ? 'arm64' : 'x64']
-  : ['x64', 'arm64'];
-const assets = [];
-const run = promisify(execFile);
-for (const arch of targets) {
-  const name = 'love-linux-' + arch;
-  const build = await Bun.build({
-    entrypoints: ['manager/entry.mjs'],
-    compile: {
-      target: 'bun-linux-' + arch + (arch === 'x64' ? '-baseline' : ''),
-      outfile: '.artifacts/manager/' + name,
-      autoloadDotenv: false,
-      autoloadBunfig: false,
-    },
-    minify: true,
-    external: ['pg-native'],
-    define: { LOVE_SOURCE_SHA: JSON.stringify(source) },
-  });
-  if (!build.success) throw new AggregateError(build.logs, 'Manager compilation failed');
-  const data = await readFile('.artifacts/manager/' + name);
-  const { stdout: compressed } = await run(
-    'xz',
-    ['-6', '--threads=1', '--stdout', '--', '.artifacts/manager/' + name],
+for (const name of [
+  'love-linux-x64',
+  'love-linux-arm64',
+  'love-linux-x64.xz',
+  'love-linux-arm64.xz',
+])
+  await rm('.artifacts/manager/' + name, { force: true });
+const name = 'love-manager.mjs';
+await build({
+  entryPoints: ['manager/entry.mjs'],
+  outfile: '.artifacts/manager/' + name,
+  bundle: true,
+  platform: 'node',
+  target: 'node24',
+  format: 'esm',
+  minify: true,
+  external: ['pg-native'],
+  banner: {
+    js: '#!/usr/bin/env node\nimport { createRequire as loveCreateRequire } from "node:module"; const require = loveCreateRequire(import.meta.url);',
+  },
+  define: { 'import.meta.main': 'false', LOVE_SOURCE_SHA: JSON.stringify(source) },
+  plugins: [
     {
-      encoding: 'buffer',
-      maxBuffer: data.length + 1048576,
-      env: { ...process.env, XZ_OPT: '', XZ_DEFAULTS: '' },
+      name: 'embedded-deployment-templates',
+      setup(build) {
+        build.onLoad({ filter: /manager[\\/]templates\.mjs$/ }, () => ({
+          contents: 'export const templates=' + JSON.stringify(templates),
+          loader: 'js',
+        }));
+      },
     },
-  );
-  await writeFile('.artifacts/manager/' + name + '.xz', compressed);
-  assets.push({
-    name,
-    sha256: createHash('sha256').update(data).digest('hex'),
-    bytes: data.length,
-    download: {
-      name: name + '.xz',
-      compression: 'xz',
-      sha256: createHash('sha256').update(compressed).digest('hex'),
-      bytes: compressed.length,
-    },
-  });
-}
-await writeFile(
-  '.artifacts/manager/SHA256SUMS',
-  assets
-    .flatMap((x) => [x.sha256 + '  ' + x.name, x.download.sha256 + '  ' + x.download.name])
-    .join('\n') + '\n',
-);
+  ],
+});
+const data = await readFile('.artifacts/manager/' + name);
+const assets = [
+  { name, sha256: createHash('sha256').update(data).digest('hex'), bytes: data.length },
+];
+await writeFile('.artifacts/manager/SHA256SUMS', assets[0].sha256 + '  ' + name + '\n');
 await writeFile(
   '.artifacts/manager/manager-release.json',
-  JSON.stringify({ version: pkg.version, source, assets, templates }, null, 2) + '\n',
+  JSON.stringify({ version: pkg.version, source, runtime: 'node24', assets, templates }, null, 2) +
+    '\n',
 );

@@ -52,13 +52,13 @@ PostgreSQL 来源不直接复制 `media_files`、`media_chunks` 或 `database_re
 
 格式 2 的新备份默认生成 data.tar.zst，使用 Zstandard 级别 15（标准默认级别为 3），开启帧校验。压缩无损，不重新编码图片或视频。数据按文件流入 tar，再流入压缩器，不把整个相册或归档装进内存。
 
-实现使用 Node 24 / Bun 1.4 的 node:zlib 流式 API，不调用外部 zstd 命令，也不要求宿主机安装额外工具。较高压缩级别会增加备份 CPU 时间和编码器内存；数据库、JSON 和文本通常更容易压缩，已压缩的 WebP / MP4 往往节省较少，不能保证整份备份的固定压缩比例。
+实现使用 Node 24 的 node:zlib 流式 API，不调用外部 zstd 命令，也不要求宿主机安装额外工具。较高压缩级别会增加备份 CPU 时间和编码器内存；数据库、JSON 和文本通常更容易压缩，已压缩的 WebP / MP4 往往节省较少，不能保证整份备份的固定压缩比例。
 
 普通恢复器只接受格式 2 的 Zstandard 归档。格式 1 的 data.tar.gz 由注册表中的格式 1 模块和 1 → 2 转换器处理：在私有目录解码 gzip，校验旧内容，转换清单，再生成完整的格式 2 Zstandard 临时归档。转换成功后，这份新归档才交给普通恢复器。原备份保持原样。更改后缀不能替代转换；格式 2 清单装在 gzip 里也会被拒绝。
 
 外层 SHA256SUMS 只允许一种数据归档。如果同时列出 data.tar.gz 和 data.tar.zst，拒绝导入，避免恢复器猜错。损坏或截断的 Zstandard 流也会停止解包。
 
-技术参考：[Node Zlib](https://nodejs.org/docs/latest-v24.x/api/zlib.html)、[Bun node:zlib](https://bun.com/reference/node/zlib)。
+技术参考：[Node Zlib](https://nodejs.org/docs/latest-v24.x/api/zlib.html)。
 
 ## 格式 2 的 manifest.json
 

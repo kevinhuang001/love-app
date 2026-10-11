@@ -712,13 +712,13 @@ export class Manager {
     }
     if (managerChanged) {
       const progress = this.ui.spinner?.();
-      progress?.start(release.download ? '正在下载管理程序 XZ 压缩包…' : '正在下载独立管理程序…');
+      progress?.start('正在下载管理程序 JS 文件…');
       try {
         await installManager(release, this.executable, {
           request: this.request,
           onProgress: (bytes) =>
             progress?.message(
-              `正在下载管理程序：${(bytes / 1048576).toFixed(1)} MiB${release.download?.bytes || release.bytes ? ' / ' + ((release.download?.bytes || release.bytes) / 1048576).toFixed(1) + ' MiB' : ''}`,
+              `正在下载管理程序：${(bytes / 1048576).toFixed(1)} MiB${release.bytes ? ' / ' + (release.bytes / 1048576).toFixed(1) + ' MiB' : ''}`,
             ),
         });
         progress?.stop('管理程序已校验并安装');

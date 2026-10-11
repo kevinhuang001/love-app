@@ -1,3 +1,6 @@
+import { useUploads, UploadButton } from '@/components/UploadCenter';
+import { nativeUploads, pickNativeFiles, pendingTask, type PickedFile } from '@/lib/upload-queue';
+import { pairLivePhotos } from '@/lib/live-photos';
 import { PartnerAvatar } from '@/components/PartnerAvatar';
 import { useEffect, useRef, useState } from 'react';
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
@@ -17,14 +20,11 @@ type Pending = {
   failed?: boolean;
 };
 export function Chat() {
+  const { queue, tasks } = useUploads();
   const { api, profile, socket, connected, partnerOnline, openUs } = useApp(),
     cache = useQueryClient();
   const key = `love.outbox.v2:${api.session.server}:${profile.user.id}:${profile.user.coupleId}`;
   const [text, setText] = useState(''),
-    [attachments, setAttachments] = useState<Media[]>([]),
-    [uploading, setUploading] = useState<{ index: number; total: number; percent: number } | null>(
-      null,
-    ),
     [caret, setCaret] = useState(0),
     [mentionDismissed, setMentionDismissed] = useState(false),
     [sending, setSending] = useState(false),
@@ -36,9 +36,28 @@ export function Chat() {
       return [];
     }
   });
+  const draftTasks = tasks.filter(
+    (t) => t.target === 'draft' && !t.claimed && t.status !== 'cancelled',
+  );
+  const attachments = draftTasks
+    .filter((t) => t.status === 'done' && t.result)
+    .map((t) => t.result!);
+  const pendingUpload = draftTasks.find(pendingTask);
+  const uploading = pendingUpload
+    ? {
+        index: draftTasks.indexOf(pendingUpload) + 1,
+        total: draftTasks.length,
+        percent: pendingUpload.progress,
+      }
+    : null;
+  const setAttachments = (update: ((items: Media[]) => Media[]) | Media[]) => {
+    const next = typeof update === 'function' ? update(attachments) : update;
+    for (const task of draftTasks)
+      if (task.result && !next.some((m) => m.id === task.result!.id))
+        void queue.action(task.id, 'claim');
+  };
   const file = useRef<HTMLInputElement>(null),
     composer = useRef<HTMLTextAreaElement>(null),
-    uploadLock = useRef(false),
     scroller = useRef<HTMLDivElement>(null),
     bottom = useRef<HTMLDivElement>(null),
     typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined),
@@ -123,7 +142,7 @@ export function Chat() {
   }, [connected]);
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    if ((!text.trim() && !attachments.length) || sending || uploadLock.current) return;
+    if ((!text.trim() && !attachments.length) || sending || !!pendingUpload) return;
     if (pending.length >= 100) {
       toast.error('请先处理待发送的消息');
       return;
@@ -140,24 +159,13 @@ export function Chat() {
     autoScroll.current = true;
     await deliver(item);
   }
-  async function attach(values: File[]) {
-    if (!values.length || uploadLock.current) return;
-    uploadLock.current = true;
+  async function attach(values: PickedFile[]) {
     try {
-      for (const [index, value] of values.entries()) {
-        setUploading({ index: index + 1, total: values.length, percent: 0 });
-        try {
-          const media = await api.upload(value, (percent) =>
-            setUploading({ index: index + 1, total: values.length, percent }),
-          );
-          setAttachments((items) => [...items, media]);
-        } catch (err) {
-          toast.error(`${value.name}：${(err as Error).message}`);
-        }
-      }
+      await queue.enqueue(pairLivePhotos(values).map((item) => ({ ...item, target: 'draft' })));
+      toast.success('附件已加入上传队列');
+    } catch (error) {
+      toast.error((error as Error).message);
     } finally {
-      uploadLock.current = false;
-      setUploading(null);
       if (file.current) file.current.value = '';
     }
   }
@@ -200,6 +208,9 @@ export function Chat() {
                   ? '在线'
                   : '离线'}
           </p>
+        </div>
+        <div className="ml-auto">
+          <UploadButton />
         </div>
       </div>
       {!connected && (
@@ -483,7 +494,13 @@ export function Chat() {
             className="size-11 shrink-0"
             disabled={uploading !== null || sending}
             aria-label="添加图片或视频"
-            onClick={() => file.current?.click()}
+            onClick={() => {
+              if (nativeUploads)
+                void pickNativeFiles()
+                  .then(attach)
+                  .catch((e) => toast.error((e as Error).message));
+              else file.current?.click();
+            }}
           >
             <Paperclip size={21} />
           </Button>

@@ -1,3 +1,10 @@
+import { useUploads } from '@/components/UploadCenter';
+import {
+  nativeUploads,
+  pickNativeFiles,
+  type UploadTarget,
+  type PickedFile,
+} from '@/lib/upload-queue';
 import { PartnerAvatar } from '@/components/PartnerAvatar';
 import { checkAndroidUpdate, downloadAndroidUpdate, type AndroidUpdate } from '@/lib/updates';
 import { useEffect, useRef, useState } from 'react';
@@ -34,6 +41,18 @@ type AISettings = {
   avatar: import('@/lib/types').Media | null;
 };
 export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: () => void }) {
+  const { queue } = useUploads();
+  async function queueAvatar(file: PickedFile, target: UploadTarget) {
+    await queue.enqueue([{ file, target }]);
+    toast.success('已加入上传队列');
+  }
+  function selectAvatar(target: UploadTarget, input: React.RefObject<HTMLInputElement | null>) {
+    if (nativeUploads)
+      void pickNativeFiles(false, true)
+        .then((files) => files[0] && queueAvatar(files[0], target))
+        .catch((e) => toast.error((e as Error).message));
+    else input.current?.click();
+  }
   const { api, profile } = useApp(),
     cache = useQueryClient();
   const [name, setName] = useState(profile.user.name),
@@ -120,7 +139,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             aria-label="修改头像"
             className="relative shrink-0"
             disabled={busy}
-            onClick={() => avatarFile.current?.click()}
+            onClick={() => selectAvatar('avatar', avatarFile)}
           >
             {profile.user.avatar ? (
               <img
@@ -143,10 +162,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file)
-                void action(async () => {
-                  const media = await api.upload(file, () => {}, '/api/me/avatar');
-                  void media;
-                }, '头像已更新');
+                void queueAvatar(file, 'avatar').catch((e) => toast.error((e as Error).message));
               e.target.value = '';
             }}
           />
@@ -159,7 +175,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               size="sm"
               disabled={busy}
               className="mt-2 h-7 px-0 text-xs text-primary"
-              onClick={() => avatarFile.current?.click()}
+              onClick={() => selectAvatar('avatar', avatarFile)}
             >
               {busy ? '保存中…' : '更换头像'}
             </Button>
@@ -480,7 +496,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               disabled={busy}
               aria-label="更换 AI 头像"
               className="shrink-0 rounded-full"
-              onClick={() => aiAvatarFile.current?.click()}
+              onClick={() => selectAvatar('ai-avatar', aiAvatarFile)}
             >
               {profile.ai.avatar ? (
                 <img
@@ -512,12 +528,7 @@ export function Us({ logout, onChat }: { logout: () => Promise<void>; onChat: ()
               const file = e.target.files?.[0];
               if (file)
                 void action(async () => {
-                  const media = await api.upload(file, () => {});
-                  await api.patch('/api/ai/profile', {
-                    name: profile.ai.name,
-                    avatarMediaId: media.id,
-                  });
-                  await cache.invalidateQueries({ queryKey: ['ai-settings'] });
+                  await queueAvatar(file, 'ai-avatar');
                 }, 'AI 头像已更新');
               e.target.value = '';
             }}

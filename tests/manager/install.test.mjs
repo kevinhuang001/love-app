@@ -22,20 +22,12 @@ async function fixture(
   const bin = join(directory, 'bin');
   await mkdir(bin);
   const binary = 'standalone-manager-fixture';
-  const asset = arch === 'x86_64' ? 'love-linux-x64' : 'love-linux-arm64';
+  const asset = 'love-manager.mjs';
   const digest = createHash('sha256').update(binary).digest('hex');
-  const archive = invalidXZ
-    ? Buffer.from('invalid-xz')
-    : execFileSync('xz', ['--compress', '--stdout'], { input: binary });
   await writeFile(join(directory, 'binary'), binary);
-  await writeFile(join(directory, 'archive'), archive);
   await writeFile(
     join(directory, 'checksums'),
-    (wrongBinary ? '0'.repeat(64) : digest) +
-      '  ' +
-      asset +
-      '\n' +
-      (legacy ? '' : createHash('sha256').update(archive).digest('hex') + '  ' + asset + '.xz\n'),
+    (wrongBinary ? '0'.repeat(64) : digest) + '  ' + asset + '\n',
   );
   await writeFile(
     join(bin, 'uname'),
@@ -59,8 +51,7 @@ printf '%s\\n' "$url" >> "$FIXTURE_DIR/requests"
 case "$url" in
   */releases/latest) printf 'https://github.com/kevinhuang001/love-app/releases/tag/v2.9.2';;
   */download/v2.9.2/SHA256SUMS) cp "$FIXTURE_DIR/checksums" "$output";;
-  */download/v2.9.2/love-linux-*.xz) ${fail ? 'exit 22' : corrupt ? 'printf corrupted > "$output"' : 'cp "$FIXTURE_DIR/archive" "$output"'};;
-  */download/v2.9.2/love-linux-*) ${fail ? 'exit 22' : corrupt ? 'printf corrupted > "$output"' : 'cp "$FIXTURE_DIR/binary" "$output"'};;
+  */download/v2.9.2/love-manager.mjs) ${fail ? 'exit 22' : corrupt ? 'printf corrupted > "$output"' : 'cp "$FIXTURE_DIR/binary" "$output"'};;
   *) exit 23;;
 esac
 `,
@@ -83,7 +74,7 @@ esac
   return { directory, binary, asset, run };
 }
 for (const arch of ['x86_64', 'aarch64'])
-  test(`piped installer downloads, verifies and extracts a pinned ${arch} XZ archive without modifying deployment files`, async (t) => {
+  test(`piped installer downloads, verifies a pinned JS file on ${arch} without modifying deployment files`, async (t) => {
     const f = await fixture(t, { arch });
     const output = f.run();
     assert.match(output, /安装完成 · v2.9.2/);
@@ -93,16 +84,10 @@ for (const arch of ['x86_64', 'aarch64'])
     const urls = (await readFile(join(f.directory, 'requests'), 'utf8')).trim().split('\n');
     assert.equal(urls.length, 3);
     assert.ok(urls.slice(1).every((url) => url.includes('/download/v2.9.2/')));
-    assert.ok(urls.at(-1).endsWith('/' + f.asset + '.xz'));
+    assert.ok(urls.at(-1).endsWith('/' + f.asset));
     assert.ok(!(await readdir(f.directory)).some((name) => name.startsWith('.love-install.')));
   });
-for (const options of [
-  { corrupt: true },
-  { fail: true },
-  { arch: 'riscv64' },
-  { invalidXZ: true },
-  { wrongBinary: true },
-])
+for (const options of [{ corrupt: true }, { fail: true }, { wrongBinary: true }])
   test(
     'installation failure preserves the existing executable and removes temporary downloads ' +
       JSON.stringify(options),
@@ -114,9 +99,10 @@ for (const options of [
       assert.ok(!(await readdir(f.directory)).some((name) => name.startsWith('.love-install.')));
     },
   );
-test('installer remains compatible with releases that have no XZ asset', async (t) => {
-  const f = await fixture(t, { legacy: true });
-  f.run();
-  assert.equal(await readFile(join(f.directory, 'love'), 'utf8'), f.binary);
-  assert.ok((await readFile(join(f.directory, 'requests'), 'utf8')).trim().endsWith('/' + f.asset));
+test('wrong system Node fails before downloading or replacing anything', async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.directory, 'bin', 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  assert.throws(f.run, /需要 Node.js 24/);
+  assert.equal(await readFile(join(f.directory, 'love'), 'utf8'), 'previous-manager');
+  await assert.rejects(readFile(join(f.directory, 'requests')), /ENOENT/);
 });

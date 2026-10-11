@@ -23,29 +23,29 @@
 
 ## 测试统一放在 tests
 
-| 目录                  | 内容                                              | 如何运行                         |
-| --------------------- | ------------------------------------------------- | -------------------------------- |
-| `tests/server/`       | 服务端单元、数据库与接口测试，包含共用 support.ts | `npm test -w apps/server`        |
-| `tests/client/`       | 客户端工具与状态逻辑测试                          | `npm test -w apps/client`        |
-| `tests/manager/`      | 安装器、管理流程、菜单、升级和编译后二进制自检    | `npm test`；二进制 `--self-test` |
-| `tests/android/`      | 签名测试与推送代码验证                            | `npm test`；Android CI           |
-| `tests/certificates/` | Certbot 申请、续期和失败重试测试                  | `npm test`                       |
-| `tests/integration/`  | 需要真实 Docker 的部署、恢复和代理验证            | Docker CI                        |
-| `tests/e2e/`          | 浏览器用户流程                                    | `npm run test:e2e`               |
+| 目录                  | 内容                                              | 如何运行                     |
+| --------------------- | ------------------------------------------------- | ---------------------------- |
+| `tests/server/`       | 服务端单元、数据库与接口测试，包含共用 support.ts | `npm test -w apps/server`    |
+| `tests/client/`       | 客户端工具与状态逻辑测试                          | `npm test -w apps/client`    |
+| `tests/manager/`      | 安装器、管理流程、菜单、升级和JS 独立文件自检     | `npm test`；JS `--self-test` |
+| `tests/android/`      | 签名测试与推送代码验证                            | `npm test`；Android CI       |
+| `tests/certificates/` | Certbot 申请、续期和失败重试测试                  | `npm test`                   |
+| `tests/integration/`  | 需要真实 Docker 的部署、恢复和代理验证            | Docker CI                    |
+| `tests/e2e/`          | 浏览器用户流程                                    | `npm run test:e2e`           |
 
 Vitest 和 Playwright 配置也在 tests 下。运行上述 npm 命令无需手动指定配置路径。Docker 集成脚本不会被普通单元测试扫描，避免本地 npm test 意外启动容器。
 
-客户端测试的类型检查与应用源码一起执行。测试辅助代码只放在对应测试目录，不混入业务源码。管理程序的二进制自检会在编译时嵌入，因此独立运行时无需带上 tests 目录。
+客户端测试的类型检查与应用源码一起执行。测试辅助代码只放在对应测试目录，不混入业务源码。管理程序自检会随 JS 交付文件内联，因此独立运行时无需带上 tests 目录。
 
 ## 源码布局和安装后的布局
 
-仓库中的 `infra/` 是模板来源。编译时，`manager/templates.mjs` 把模板嵌入二进制；安装后，管理程序在 love 可执行文件旁生成 `.env`、Compose 文件和证书脚本。部署目录仍是用户可以直接运行 docker compose 的完整目录，已有安装无需手动搬配置。
+仓库中的 `infra/` 是模板来源。构建时，`manager/templates.mjs` 把模板内联到 JS 文件；安装后，管理程序在 love 可执行文件旁生成 `.env`、Compose 文件和证书脚本。部署目录仍是用户可以直接运行 docker compose 的完整目录，已有安装无需手动搬配置。
 
 仓库中的证书实现集中在 infra/certificates；部署时证书脚本仍生成在 deploy 子目录。这是已发布部署文件的布局，由模板映射明确管理，不是仓库残留源码。
 
 ## 生成文件放在哪里
 
-管理程序二进制、SHA256SUMS 和发布清单写入 `.artifacts/manager/`。浏览器测试截图、视频和 trace 写入 `.artifacts/test-results/`，HTML 报告写入 `.artifacts/playwright-report/`。
+管理程序 JS 文件、SHA256SUMS 和发布清单写入 `.artifacts/manager/`。浏览器测试截图、视频和 trace 写入 `.artifacts/test-results/`，HTML 报告写入 `.artifacts/playwright-report/`。
 
 应用编译结果仍在各自工作区的 dist 目录，Android 生成工程仍在 apps/client/android。它们是相应工具的标准输出目录，都已忽略，不作为源码提交。
 

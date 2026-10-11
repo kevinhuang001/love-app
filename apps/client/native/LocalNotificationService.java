@@ -17,7 +17,8 @@ public class LocalNotificationService extends Service {
  static SharedPreferences preferences(Context c) { return c.getSharedPreferences("love.local-notifications",MODE_PRIVATE); }
  static void disable(Context c) {
   preferences(c).edit().remove("enabled").apply(); c.stopService(new Intent(c,LocalNotificationService.class));
-  ((NotificationManager)c.getSystemService(NOTIFICATION_SERVICE)).cancelAll();
+  NotificationManager notifications=(NotificationManager)c.getSystemService(NOTIFICATION_SERVICE);
+  for(android.service.notification.StatusBarNotification item:notifications.getActiveNotifications()) if(item.getId()!=3) notifications.cancel(item.getTag(),item.getId());
  }
  @Override public IBinder onBind(Intent intent) { return null; }
  private PendingIntent open(boolean chat) {

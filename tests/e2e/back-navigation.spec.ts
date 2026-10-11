@@ -66,8 +66,8 @@ test('mobile back dismisses media and sheets before returning to chat; login ses
     .locator('input[type=file]')
     .setInputFiles({ name: 'back.jpg', mimeType: 'image/jpeg', buffer: photo });
   await page.getByLabel('写下这一刻').fill('返回预览测试');
-  await expect(page.getByRole('button', { name: '保存回忆', exact: true })).toBeEnabled();
-  await page.getByRole('button', { name: '保存回忆', exact: true }).click();
+  await expect(page.getByRole('button', { name: '上传', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '上传', exact: true }).click();
   await page.getByRole('button', { name: '查看图片' }).click();
   await expect(page.getByRole('img', { name: '照片大图' })).toBeVisible();
   expect(await back()).toBe(true);

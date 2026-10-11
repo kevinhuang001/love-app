@@ -4,9 +4,10 @@
 
 ## 1. 准备服务器
 
-需要 Linux 服务器，CPU 为 AMD64 或 ARM64，并已安装 Docker Engine 和 Docker Compose 2.24.4 或更新版本。可以用下面两条命令检查：
+需要 Linux 服务器，CPU 为 AMD64 或 ARM64，并已安装 **Node.js 24 LTS**、Docker Engine 和 Docker Compose 2.24.4 或更新版本。可以用下面两条命令检查：
 
 ```sh
+node --version
 docker --version
 docker compose version
 ```
@@ -23,9 +24,11 @@ cd ~/love
 curl -fsSL https://raw.githubusercontent.com/kevinhuang001/love-app/main/manager/install.sh | bash
 ```
 
-安装器下载正式发布的管理程序 XZ 压缩包，校验、解压为 `love` 后打开菜单，不需要手动解压。以后在此目录运行 `./love`；普通账户需要管理数据卷时运行 `sudo ./love`。服务器已用 root 登录时不需要 sudo。
+安装器只下载一个 `love-manager.mjs` JS 文件，校验后安装为 `love` 并打开菜单。它依赖系统 Node.js 24，不内嵌运行时、不下载 XZ，也不要求 Bun。缺少 Node.js 或版本不兼容时会直接报错；安装器不会替你安装 Node.js。
 
-解压使用系统的 `xz` 工具。若提示缺少 xz，Debian / Ubuntu 安装 `xz-utils`，其他发行版安装 `xz`，再运行安装命令。压缩只减少下载流量，安装后的程序大小不变，运行时不需要解压。
+以后在此目录运行 `./love`；普通账户需要管理数据卷时运行 `sudo ./love`。sudo 环境也必须能找到 Node.js 24，建议使用系统级安装，避免只在个人 shell 里配置的 nvm 路径。
+
+已有二进制管理器请在原部署目录重新运行上述安装命令，以切换到 JS；现有 `.env`、Compose、证书及数据保持不变。
 
 `love` 是服务器上的管理工具。手机 APK 和网页是使用 Love 的客户端，三者不是同一个文件。安装器不会帮你安装 Docker。
 

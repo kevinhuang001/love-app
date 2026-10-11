@@ -10,7 +10,7 @@
 sudo apt-get install ffmpeg fonts-dejavu-core
 ```
 
-Android 构建另需 Java 21 和 Android SDK 36。编译独立管理程序另需 Bun；运行已经编译好的管理程序不需要 Bun 或 Node.js。
+Android 构建另需 Java 21 和 Android SDK 36。管理器也使用系统 Node.js 24；构建与运行均无需 Bun。
 
 ## 启动前后端
 
@@ -65,13 +65,13 @@ TEST_DATABASE_URL='postgresql://user:password@localhost:5432/love_test' npm test
 ## 编译管理程序
 
 ```sh
-bun manager/build.mjs
+npm run manager:build
 ```
 
-输出在 `.artifacts/manager/`，包含 Linux AMD64／ARM64 二进制、校验文件和发布清单。只编译本机架构可加 `--native`。Linux AMD64 上可以运行：
+输出在 `.artifacts/manager/`，包含 `love-manager.mjs`、SHA256SUMS 和发布清单。一个 JS 文件共用于 AMD64 / ARM64，无内嵌运行时；依赖 JS 和部署模板内联，运行时不需要仓库或 node_modules。自测：
 
 ```sh
-.artifacts/manager/love-linux-x64 --self-test
+node .artifacts/manager/love-manager.mjs --self-test
 ```
 
 ## 仓库目录

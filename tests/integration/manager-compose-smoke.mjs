@@ -46,7 +46,7 @@ try {
   await copyFile(binary, join(native, 'love'));
   execFileSync(join(native, 'love'), ['--self-test'], {
     cwd: native,
-    env: { PATH: '/usr/bin:/bin' },
+    env: { PATH: process.env.PATH },
     stdio: 'inherit',
   });
 } finally {

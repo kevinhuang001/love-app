@@ -30,27 +30,10 @@ export async function managerSelfTest() {
   const schema = 'manager_' + randomUUID().replaceAll('-', '');
   try {
     // Exercise the update stream inside the compiled runtime on both architectures.
-    const replacement = Buffer.from('native-manager-xz-update-fixture');
-    const archive = execFileSync('xz', ['--compress', '--stdout'], { input: replacement });
-    const archivePath = join(root, 'update.xz');
+    const replacement = Buffer.from('node-manager-js-update-fixture');
     const executable = join(root, 'love');
-    await writeFile(archivePath, archive);
     await writeFile(executable, 'old-manager');
-    await installManager(
-      {
-        url: 'https://fixture/binary',
-        sha256: createHash('sha256').update(replacement).digest('hex'),
-        bytes: replacement.length,
-        download: {
-          url: 'https://fixture/binary.xz',
-          sha256: await digestFile(archivePath),
-          bytes: archive.length,
-          compression: 'xz',
-        },
-      },
-      executable,
-      { request: async () => new Response(archive) },
-    );
+    await installManager({ url: 'https://fixture/love-manager.mjs', sha256: createHash('sha256').update(replacement).digest('hex'), bytes: replacement.length }, executable, {request: async () => new Response(replacement)});
     assert.deepEqual(await readFile(executable), replacement);
     const path = join(root, 'source', 'love.sqlite'),
       media = join(root, 'source', 'media');
@@ -172,7 +155,7 @@ export async function managerSelfTest() {
       await target.exec(`DROP SCHEMA "${schema}" CASCADE`);
     }
     console.log(
-      'Native manager self-test passed: XZ manager update, transaction rollback, cleanup, integrity, streamed backup, validation, SQLite restore' +
+      'Node manager self-test passed: JS manager update, transaction rollback, cleanup, integrity, streamed backup, validation, SQLite restore' +
         (process.env.TEST_DATABASE_URL ? ', PostgreSQL round-trip' : '') +
         '.',
     );

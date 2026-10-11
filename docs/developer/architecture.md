@@ -14,7 +14,7 @@ Love 的 Web 与 Android 共用 React 界面。Node.js 后端负责身份校验�
 | 数据库         | SQLite 或 PostgreSQL；通过统一异步 `DB` 接口访问                       |
 | 媒体处理       | Sharp 与 FFmpeg；生成压缩预览、缩略图和视频封面                        |
 | 日历模块       | `packages/calendar`；前后端和 AI 共用日期规则                          |
-| 管理程序       | JavaScript、Clack、Bun 编译；生成配置、调用 Compose、备份与恢复        |
+| 管理程序       | JavaScript、Clack、系统 Node.js 24；生成配置、调用 Compose、备份与恢复 |
 | 可选代理       | Caddy／Certbot 或已有代理；提供 HTTPS 和转发                           |
 
 推荐单个后端进程部署。使用 PostgreSQL 并不自动获得多实例实时通信能力；水平扩展还需处理 Socket.IO 房间、在线状态、任务协调和通知连接的跨实例共享。

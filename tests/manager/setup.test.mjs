@@ -242,7 +242,7 @@ test('PostgreSQL timeout/retry deployment defaults and custom values survive rec
   const keys = {
     PG_CONNECTION_TIMEOUT_MS: '60000',
     PG_QUERY_TIMEOUT_MS: '120000',
-    PG_RETRY_ATTEMPTS: '3',
+    PG_RETRY_ATTEMPTS: '8',
     PG_RETRY_DELAY_MS: '1000',
   };
   const initial = await setup({ output, ui: fakeUI({ database: 'postgres' }), env: {} });

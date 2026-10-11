@@ -1,0 +1,176 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import request from 'supertest';
+import sharp from 'sharp';
+import { setup } from './support.js';
+import { UploadSessions, UPLOAD_CHUNK_BYTES } from '../../apps/server/src/upload-sessions.js';
+import { HttpError } from '../../apps/server/src/errors.js';
+const digest = (b: Buffer) => createHash('sha256').update(b).digest('hex');
+async function fixture(t: Parameters<typeof setup>[0]) {
+  const s = await setup(t),
+    a = await s.register('queue_a'),
+    b = await s.register('queue_b');
+  await s.pair(a.token, b.token);
+  const image = await sharp({
+    create: { width: 800, height: 600, channels: 3, background: '#526c5a' },
+  })
+    .withExif({ IFD2: { DateTimeOriginal: '2024:02:29 12:00:00' } })
+    .jpeg()
+    .toBuffer();
+  const spec = {
+    id: randomUUID(),
+    files: [{ name: 'photo.jpg', type: 'image/jpeg', size: image.length }],
+    target: 'album',
+    title: '背景回忆',
+  };
+  const chunk = (
+    id = spec.id,
+    part = 0,
+    index = 0,
+    bytes = image,
+    hash = digest(bytes),
+    token = a.token,
+  ) =>
+    request(s.app)
+      .put(`/api/uploads/${id}/${part}/${index}`)
+      .auth(token, { type: 'bearer' })
+      .set('Content-Type', 'application/octet-stream')
+      .set('X-Chunk-Sha256', hash)
+      .send(bytes);
+  return { ...s, a, b, image, spec, chunk };
+}
+test('staged chunks survive a restart and commit media, memory and quota exactly once', async (t) => {
+  const s = await fixture(t);
+  const profile = (await s.api(s.a.token).get('/api/me')).body;
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(201);
+  await s.chunk().expect(200);
+  await s.chunk().expect(200);
+  const restarted = new UploadSessions(join(s.dir, 'media', 'tmp', 'sessions'));
+  assert.deepEqual(
+    (await restarted.status(await restarted.get(s.a.user.id, profile.couple.id, s.spec.id)))
+      .offsets,
+    [s.image.length],
+  );
+  assert.equal(await s.control.usage(profile.couple.id), 0);
+  const response = await s
+    .api(s.a.token)
+    .post(`/api/uploads/${s.spec.id}/complete`, {})
+    .expect(201);
+  assert.equal(response.body.id, s.spec.id);
+  await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(200);
+  const retry = await s.api(s.a.token).post('/api/uploads', s.spec).expect(200);
+  assert.equal(retry.body.result.id, s.spec.id);
+  const album = (await s.api(s.b.token).get('/api/moments')).body.items;
+  assert.equal(album.length, 1);
+  assert.equal(album[0].date, '2024-02-29');
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM media').get())!.n, 1);
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM media_sizes').get())!.n, 1);
+  await s.api(s.a.token).delete(`/api/uploads/${s.spec.id}`).expect(409);
+});
+test('failed publication rolls back every billable row and retained chunks allow retry', async (t) => {
+  const s = await fixture(t),
+    pair = (await s.api(s.a.token).get('/api/me')).body.couple.id;
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(201);
+  await s.chunk().expect(200);
+  const prepare = s.db.prepare.bind(s.db),
+    fault = t.mock.method(s.db, 'prepare', (sql: string) => {
+      const statement = prepare(sql);
+      return sql.startsWith('INSERT INTO moments')
+        ? {
+            ...statement,
+            run: async () => {
+              throw new HttpError(503, '数据库暂时不可用');
+            },
+          }
+        : statement;
+    });
+  await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(503);
+  fault.mock.restore();
+  for (const table of ['media', 'media_sizes', 'media_uploads', 'moments'])
+    assert.equal((await s.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get())!.n, 0);
+  assert.equal(await s.control.usage(pair), 0);
+  assert.deepEqual((await s.api(s.a.token).get(`/api/uploads/${s.spec.id}`)).body.offsets, [
+    s.image.length,
+  ]);
+  await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(201);
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM moments').get())!.n, 1);
+});
+test('chunk corruption, incomplete files, changed identity and partner access are rejected', async (t) => {
+  const s = await fixture(t);
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(201);
+  await s.chunk(s.spec.id, 0, 0, s.image, '0'.repeat(64)).expect(422);
+  await s.api(s.a.token).post(`/api/uploads/${s.spec.id}/complete`, {}).expect(409);
+  await s
+    .api(s.a.token)
+    .post('/api/uploads', { ...s.spec, title: 'changed' })
+    .expect(409);
+  await s.chunk(s.spec.id, 0, 0, s.image, digest(s.image), s.b.token).expect(404);
+  await s.chunk().expect(200);
+  const changed = Buffer.from(s.image);
+  changed[12] ^= 1;
+  await s.chunk(s.spec.id, 0, 0, changed).expect(409);
+  await s.api(s.a.token).delete(`/api/uploads/${s.spec.id}`).expect(204);
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(410);
+  await s.chunk().expect(410);
+});
+test('personal avatar supports the queue before pairing and stays personal', async (t) => {
+  const s = await setup(t),
+    a = await s.register('avatar_queue');
+  const bytes = await sharp({
+      create: { width: 80, height: 60, channels: 3, background: '#426547' },
+    })
+      .png()
+      .toBuffer(),
+    id = randomUUID();
+  await s
+    .api(a.token)
+    .post('/api/uploads', {
+      id,
+      target: 'avatar',
+      files: [{ name: 'avatar.png', type: 'image/png', size: bytes.length }],
+    })
+    .expect(201);
+  await request(s.app)
+    .put(`/api/uploads/${id}/0/0`)
+    .auth(a.token, { type: 'bearer' })
+    .set('Content-Type', 'application/octet-stream')
+    .set('X-Chunk-Sha256', digest(bytes))
+    .send(bytes)
+    .expect(200);
+  await s.api(a.token).post(`/api/uploads/${id}/complete`, {}).expect(201);
+  await s.api(a.token).post(`/api/uploads/${id}/complete`, {}).expect(200);
+  assert.equal((await s.api(a.token).get('/api/me')).body.user.avatar.id, id);
+  assert.equal(
+    (await s.db.prepare('SELECT coupleId FROM media WHERE id=?').get(id))!.coupleId,
+    null,
+  );
+});
+test('a multi-chunk upload resumes at the first missing chunk, including a partial last chunk', async (t) => {
+  const s = await fixture(t),
+    bytes = Buffer.alloc(UPLOAD_CHUNK_BYTES + 37, 123),
+    id = randomUUID();
+  const spec = {
+    ...s.spec,
+    id,
+    files: [{ name: 'big.jpg', type: 'image/jpeg', size: bytes.length }],
+  };
+  await s.api(s.a.token).post('/api/uploads', spec).expect(201);
+  await s.chunk(id, 0, 1, bytes.subarray(UPLOAD_CHUNK_BYTES)).expect(200);
+  assert.deepEqual((await s.api(s.a.token).get(`/api/uploads/${id}`)).body.offsets, [0]);
+  await s.chunk(id, 0, 0, bytes.subarray(0, UPLOAD_CHUNK_BYTES)).expect(200);
+  assert.deepEqual((await s.api(s.a.token).get(`/api/uploads/${id}`)).body.offsets, [bytes.length]);
+});
+
+test('cancelling before creation blocks late init and remains idempotent', async (t) => {
+  const s = await fixture(t),
+    id = randomUUID();
+  await s.api(s.a.token).delete(`/api/uploads/${id}`).expect(204);
+  await s.api(s.a.token).delete(`/api/uploads/${id}`).expect(204);
+  await s
+    .api(s.a.token)
+    .post('/api/uploads', { ...s.spec, id })
+    .expect(410);
+  assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM media').get())!.n, 0);
+});

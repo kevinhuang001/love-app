@@ -1,3 +1,5 @@
+import { UploadProvider, UploadButton } from '@/components/UploadCenter';
+import { pauseNativeUploads } from '@/lib/upload-queue';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { io, type Socket } from 'socket.io-client';
@@ -212,61 +214,64 @@ function Space({ session, end }: { session: Session; end: () => Promise<void> })
         openUs: () => setTab('us'),
       }}
     >
-      <Tabs value={tab} onValueChange={setTab} className="app-shell gap-0">
-        {(!paired || tab !== 'chat') && (
-          <header className="app-bar flex shrink-0 items-center justify-between px-6 py-4">
-            <h1 className="wordmark">
-              love
-              <span className="brand-dot" />
-            </h1>
-          </header>
-        )}
-        <div className="flex min-h-0 flex-1 flex-col">
-          {!paired ? (
-            <Us logout={logout} onChat={() => setTab('chat')} />
-          ) : tab === 'chat' ? (
-            <Chat key={profile.data.user.coupleId} />
-          ) : tab === 'memories' ? (
-            <Memories />
-          ) : tab === 'dates' ? (
-            <Dates />
-          ) : tab === 'todos' ? (
-            <Todos />
-          ) : (
-            <Us logout={logout} onChat={() => setTab('chat')} />
+      <UploadProvider>
+        <Tabs value={tab} onValueChange={setTab} className="app-shell gap-0">
+          {(!paired || tab !== 'chat') && (
+            <header className="app-bar flex shrink-0 items-center justify-between px-6 py-4">
+              <h1 className="wordmark">
+                love
+                <span className="brand-dot" />
+              </h1>
+              <UploadButton />
+            </header>
           )}
-        </div>
-        {paired && (
-          <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
-            <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-5 rounded-none bg-transparent p-1">
-              {[
-                ['chat', '聊天', MessageCircle],
-                ['memories', '回忆', Images],
-                ['dates', '纪念日', CalendarDays],
-                ['todos', 'To Do', ListTodo],
-                ['us', '我们', UsersRound],
-              ].map(([value, label, Icon]) => {
-                const Glyph = Icon as typeof MessageCircle;
-                return (
-                  <TabsTrigger
-                    key={value as string}
-                    value={value as string}
-                    className="relative flex h-full flex-col gap-1.5 rounded-none border-0 text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                  >
-                    <Glyph className="size-5" size={20} strokeWidth={tab === value ? 2 : 1.6} />
-                    <span className="text-[10px]">{label as string}</span>
-                    {value === 'chat' && unread > 0 && (
-                      <span className="absolute top-1 right-1/4 rounded-full bg-primary px-1 text-[9px] text-primary-foreground">
-                        {unread > 99 ? '99+' : unread}
-                      </span>
-                    )}
-                  </TabsTrigger>
-                );
-              })}
-            </TabsList>
-          </nav>
-        )}
-      </Tabs>
+          <div className="flex min-h-0 flex-1 flex-col">
+            {!paired ? (
+              <Us logout={logout} onChat={() => setTab('chat')} />
+            ) : tab === 'chat' ? (
+              <Chat key={profile.data.user.coupleId} />
+            ) : tab === 'memories' ? (
+              <Memories />
+            ) : tab === 'dates' ? (
+              <Dates />
+            ) : tab === 'todos' ? (
+              <Todos />
+            ) : (
+              <Us logout={logout} onChat={() => setTab('chat')} />
+            )}
+          </div>
+          {paired && (
+            <nav aria-label="主导航" className="bottom-nav shrink-0 border-t bg-card">
+              <TabsList className="grid h-16 group-data-[orientation=horizontal]/tabs:h-16 w-full grid-cols-5 rounded-none bg-transparent p-1">
+                {[
+                  ['chat', '聊天', MessageCircle],
+                  ['memories', '回忆', Images],
+                  ['dates', '纪念日', CalendarDays],
+                  ['todos', 'To Do', ListTodo],
+                  ['us', '我们', UsersRound],
+                ].map(([value, label, Icon]) => {
+                  const Glyph = Icon as typeof MessageCircle;
+                  return (
+                    <TabsTrigger
+                      key={value as string}
+                      value={value as string}
+                      className="relative flex h-full flex-col gap-1.5 rounded-none border-0 text-muted-foreground data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                    >
+                      <Glyph className="size-5" size={20} strokeWidth={tab === value ? 2 : 1.6} />
+                      <span className="text-[10px]">{label as string}</span>
+                      {value === 'chat' && unread > 0 && (
+                        <span className="absolute top-1 right-1/4 rounded-full bg-primary px-1 text-[9px] text-primary-foreground">
+                          {unread > 99 ? '99+' : unread}
+                        </span>
+                      )}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+            </nav>
+          )}
+        </Tabs>
+      </UploadProvider>
     </AppContext.Provider>
   );
 }
@@ -298,6 +303,7 @@ export default function App() {
   const end = useMemo(
     () => async () => {
       await disableNotifications();
+      await pauseNativeUploads().catch(() => {});
       await saveSession(null);
       setSession(null);
       cache.clear();

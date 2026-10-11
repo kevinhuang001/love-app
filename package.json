@@ -1,6 +1,6 @@
 {
   "name": "love-app",
-  "version": "2.10.2",
+  "version": "2.11.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,12 +21,14 @@
     "android:prepare": "npm run build -w apps/client && node tools/android/prepare.mjs",
     "android:sync": "npm run android:prepare",
     "setup": "node manager/setup.mjs",
-    "manager:build": "bun manager/build.mjs"
+    "manager:build": "node manager/build.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@types/node": "24.19.1",
     "concurrently": "10.0.5",
+    "esbuild": "0.28.2",
+    "fake-indexeddb": "6.2.5",
     "prettier": "3.9.9",
     "tsx": "4.23.15",
     "typescript": "7.0.2"

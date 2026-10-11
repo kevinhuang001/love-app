@@ -27,10 +27,19 @@ mkdirSync(native, { recursive: true });
 for (const file of [
   'MainActivity.java',
   'AppUpdatesPlugin.java',
+  'BackgroundUploadsPlugin.java',
+  'UploadService.java',
+  'UploadStore.java',
   'LocalNotificationsPlugin.java',
   'LocalNotificationService.java',
 ])
   copyFileSync(resolve(client, 'native', file), resolve(native, file));
+const nativeTests = resolve(app, 'src/androidTest/java/com/kevinhuang/love');
+mkdirSync(nativeTests, { recursive: true });
+copyFileSync(
+  resolve(client, 'native/tests/UploadBackgroundTest.java'),
+  resolve(nativeTests, 'UploadBackgroundTest.java'),
+);
 writeFileSync(
   resolve(app, 'src/main/AndroidManifest.xml'),
   `<?xml version="1.0" encoding="utf-8"?>
@@ -40,8 +49,12 @@ writeFileSync(
  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+ <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+ <uses-permission android:name="android.permission.WAKE_LOCK"/>
  <application android:allowBackup="false" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true" android:theme="@style/AppTheme" android:usesCleartextTraffic="true">
   <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask" android:theme="@style/AppTheme.NoActionBarLaunch" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+  <service android:name=".UploadService" android:exported="false" android:foregroundServiceType="dataSync"/>
   <service android:name=".LocalNotificationService" android:exported="false" android:foregroundServiceType="specialUse"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled continuous reception of private chat messages from a self-hosted server, with a visible stop action"/></service>
   <provider android:name="androidx.core.content.FileProvider" android:authorities="\${applicationId}.fileprovider" android:exported="false" android:grantUriPermissions="true"><meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/></provider>
  </application>

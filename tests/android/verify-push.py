@@ -21,7 +21,7 @@ with ZipFile(apk) as archive:
     assert config['server']['cleartext'] is True, 'HTTP backend access disabled'
     assert config['android']['allowMixedContent'] is True, 'WebView blocks HTTP API/media requests'
     dex=b'\n'.join(archive.read(n) for n in archive.namelist() if n.endswith('.dex'))
-    for name in ['LocalNotificationsPlugin','LocalNotificationService','MainActivity']:
+    for name in ['LocalNotificationsPlugin','LocalNotificationService','MainActivity','BackgroundUploadsPlugin','UploadService','UploadStore']:
         assert ('Lcom/kevinhuang/love/'+name+';').encode() in dex, name
     for package, name in [('com/capacitorjs/plugins/filetransfer','FileTransferPlugin'),('com/capacitorjs/plugins/filesystem','FilesystemPlugin'),('com/capacitorjs/plugins/share','SharePlugin')]:
         assert ('L'+package+'/'+name+';').encode() in dex, f'Missing native album export integration: {name}'
@@ -31,12 +31,14 @@ with ZipFile(apk) as archive:
 aapt=Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0/aapt'
 manifest=subprocess.check_output([str(aapt),'dump','xmltree',str(apk),'AndroidManifest.xml'],text=True)
 assert 'LocalNotificationService' in manifest
+assert 'UploadService' in manifest
+assert re.search(r'foregroundServiceType[^\n]*\(type 0x11\)0x1\b',manifest), 'Missing dataSync upload service type'
 assert re.search(r'usesCleartextTraffic[^\n]*\(type 0x12\)0xffffffff\b', manifest), 'Android blocks HTTP servers'
 # aapt renders enum flags as integers rather than their source XML names.
 assert re.search(r'foregroundServiceType[^\n]*\(type 0x11\)0x40000000\b', manifest), 'Missing specialUse service type'
 assert 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' in manifest
 permissions=subprocess.check_output([str(aapt),'dump','permissions',str(apk)],text=True)
-for permission in ['POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE_SPECIAL_USE']:
+for permission in ['POST_NOTIFICATIONS','FOREGROUND_SERVICE','FOREGROUND_SERVICE_SPECIAL_USE','FOREGROUND_SERVICE_DATA_SYNC','ACCESS_NETWORK_STATE','WAKE_LOCK']:
     assert permission in permissions
 for permission in ['ACCESS_FINE_LOCATION','ACCESS_COARSE_LOCATION','READ_PHONE_STATE','QUERY_ALL_PACKAGES','READ_EXTERNAL_STORAGE','WRITE_EXTERNAL_STORAGE','RECEIVE_BOOT_COMPLETED']:
     assert permission not in permissions

@@ -45,7 +45,6 @@ async function fixture(
     notes = [];
   const binary = Buffer.from('verified-binary');
   const binaryHash = createHash('sha256').update(binary).digest('hex');
-  const compressed = execFileSync('xz', ['--compress', '--stdout'], { input: binary });
   const image = repo + '@sha256:' + 'e'.repeat(64),
     executable = join(directory, 'love');
   await writeFile(executable, 'old-binary');
@@ -124,24 +123,19 @@ async function fixture(
     if (url.endsWith('/manager-release.json'))
       return Response.json({
         version: '2.9.0',
+        runtime: 'node24',
         source: sync ? remoteRevision : old,
         assets: [
           {
-            name: 'love-linux-x64',
+            name: 'love-manager.mjs',
             sha256: binaryHash,
             bytes: binary.length,
-            download: {
-              name: 'love-linux-x64.xz',
-              compression: 'xz',
-              sha256: createHash('sha256').update(compressed).digest('hex'),
-              bytes: compressed.length,
-            },
           },
         ],
         templates,
       });
-    if (url.endsWith('/love-linux-x64.xz'))
-      return new Response(fail === 'binary' ? Buffer.from('corrupt') : compressed);
+    if (url.endsWith('/love-manager.mjs'))
+      return new Response(fail === 'binary' ? Buffer.from('corrupt') : binary);
     throw new Error('unexpected request ' + url);
   };
   const manager = new Manager({

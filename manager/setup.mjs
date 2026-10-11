@@ -101,7 +101,7 @@ export function validateConfig(config) {
     config.PG_RETRY_ATTEMPTS !== undefined &&
     (!/^\d+$/.test(config.PG_RETRY_ATTEMPTS) ||
       Number(config.PG_RETRY_ATTEMPTS) < 1 ||
-      Number(config.PG_RETRY_ATTEMPTS) > 10)
+      Number(config.PG_RETRY_ATTEMPTS) > 20)
   )
     throw new Error('PostgreSQL 最大尝试次数无效');
   if (
@@ -209,7 +209,7 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
   config.DATABASE_URL = '';
   config.PG_CONNECTION_TIMEOUT_MS = prior('PG_CONNECTION_TIMEOUT_MS') || '60000';
   config.PG_QUERY_TIMEOUT_MS = prior('PG_QUERY_TIMEOUT_MS') || '120000';
-  config.PG_RETRY_ATTEMPTS = prior('PG_RETRY_ATTEMPTS') || '3';
+  config.PG_RETRY_ATTEMPTS = prior('PG_RETRY_ATTEMPTS') || '8';
   config.PG_RETRY_DELAY_MS = prior('PG_RETRY_DELAY_MS') || '1000';
 
   if (config.LOVE_DATABASE === 'postgres') {
@@ -359,9 +359,9 @@ export async function setup({ output = '.env', ui = prompts, env = process.env }
         'PostgreSQL 最大尝试次数',
         config.PG_RETRY_ATTEMPTS,
         (value) =>
-          /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 10
+          /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 20
             ? undefined
-            : '填写 1–10 的整数',
+            : '填写 1–20 的整数',
       );
       config.PG_RETRY_DELAY_MS = await text(
         'PostgreSQL 重试初始间隔（毫秒）',

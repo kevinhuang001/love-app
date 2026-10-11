@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
+import { MediaRepository } from '../../apps/server/src/media-repository.js';
 import { today } from '@love/calendar';
 import request from 'supertest';
 import sharp from 'sharp';
@@ -122,7 +123,7 @@ test('missing capture date uses today and its notice survives cleanup and a lost
   assert.equal(result.body.fallbackDate, date);
   assert.equal((await s.api(s.b.token).get('/api/moments')).body.items[0].date, date);
   // Reconciliation waits for commit cleanup under the same task lock.
-  await s.api(s.a.token).get(`/api/uploads/${spec.id}`).expect(200);
+  await s.api(s.a.token).post('/api/uploads', spec).expect(200);
   const sessions = new UploadSessions(join(s.dir, 'media', 'tmp', 'sessions'));
   assert.deepEqual(await readdir(sessions.directory(s.a.user.id, spec.id)), ['result.json']);
   assert.deepEqual(await sessions.outcome(s.a.user.id, spec.id), {
@@ -218,4 +219,82 @@ test('cancelling before creation blocks late init and remains idempotent', async
     .post('/api/uploads', { ...s.spec, id })
     .expect(410);
   assert.equal((await s.db.prepare('SELECT COUNT(*) n FROM media').get())!.n, 0);
+});
+
+test('database phase is observable; cancellation retains cleanup proof until files and database chunks are removed', async (t) => {
+  const s = await fixture(t);
+  let reached!: () => void;
+  const staged = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const originalStage = MediaRepository.prototype.stage;
+  const originalDiscard = MediaRepository.prototype.discard;
+  let names: string[] = [],
+    failCleanup = true;
+  t.mock.method(
+    MediaRepository.prototype,
+    'stage',
+    async function (
+      this: MediaRepository,
+      files: string[],
+      sizes: number[],
+      transactional: boolean,
+      signal: AbortSignal,
+      progress: (bytes: number, total: number) => void,
+    ) {
+      names = files.filter(Boolean);
+      await originalStage.call(this, files, sizes, transactional, signal, progress);
+      reached();
+      await new Promise<void>((_resolve, reject) => {
+        if (signal.aborted) reject(signal.reason);
+        else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      });
+    },
+  );
+  t.mock.method(
+    MediaRepository.prototype,
+    'discard',
+    async function (this: MediaRepository, files: string[], strict = false) {
+      if (!strict) return; // Simulate a failed best-effort cleanup while the external DB is unavailable.
+      if (files.length && failCleanup) throw new HttpError(503, '数据库暂时不可用，取消未确认');
+      return originalDiscard.call(this, files, strict);
+    },
+  );
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(201);
+  await s.chunk().expect(200);
+  const completion = s
+    .api(s.a.token)
+    .post(`/api/uploads/${s.spec.id}/complete`, {})
+    .then((r) => r);
+  await staged;
+  const state = (await s.api(s.a.token).get(`/api/uploads/${s.spec.id}`).expect(200)).body;
+  assert.equal(state.phase, 'database');
+  assert.equal(state.storage, s.db.provider);
+  assert.equal(state.databaseBytes, state.databaseTotal);
+  assert.equal(state.result, undefined);
+  await s.api(s.b.token).get(`/api/uploads/${s.spec.id}`).expect(404);
+  if (s.db.provider === 'postgres') {
+    assert.ok(state.databaseTotal > 0);
+    assert.ok(Number((await s.db.prepare('SELECT COUNT(*) n FROM media_chunks').get())!.n) > 0);
+  } else assert.equal(state.databaseTotal, 0); // SQLite writes metadata, no second binary transfer.
+  await s.api(s.a.token).delete(`/api/uploads/${s.spec.id}`).expect(503);
+  assert.equal((await completion).status, 410);
+  const sessions = new UploadSessions(join(s.dir, 'media', 'tmp', 'sessions'));
+  assert.deepEqual(await sessions.cleanupNames(s.a.user.id, s.spec.id), names);
+  assert.ok((await readdir(sessions.directory(s.a.user.id, s.spec.id))).includes('0-0'));
+  failCleanup = false;
+  await s.api(s.a.token).delete(`/api/uploads/${s.spec.id}`).expect(204);
+  await s.api(s.a.token).delete(`/api/uploads/${s.spec.id}`).expect(204);
+  assert.deepEqual(await readdir(sessions.directory(s.a.user.id, s.spec.id)), ['session.json']);
+  for (const name of names)
+    await assert.rejects(stat(join(s.dir, 'media', name)), { code: 'ENOENT' });
+  for (const table of [
+    'media',
+    'media_uploads',
+    'media_sizes',
+    'moments',
+    ...(s.db.provider === 'postgres' ? ['media_files', 'media_chunks'] : []),
+  ])
+    assert.equal(Number((await s.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get())!.n), 0);
+  await s.api(s.a.token).post('/api/uploads', s.spec).expect(410);
 });

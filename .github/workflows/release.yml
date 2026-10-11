@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       tag:
-        description: New version tag, for example v2.11.1
+        description: New version tag, for example v2.11.2
         required: true
         type: string
 permissions:
@@ -29,7 +29,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       SOURCE_RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
-      RELEASE_TAG: ${{ inputs.tag || 'v2.11.1' }}
+      RELEASE_TAG: ${{ inputs.tag || 'v2.11.2' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,14 +125,14 @@ jobs:
         if: steps.source.outputs.publish == 'true'
         run: |
           cat > release/NOTES.md <<'NOTES'
-          Love 2.11.1：图库选择、自动拍摄日期与上传通知。
+          Love 2.11.2：分阶段上传进度与单项取消清理。
 
-          - 安卓使用系统 Photo Picker 选择照片/视频，保留后台续传的读取权限。
-          - 上传前不再选择日期；后台自动识别拍摄日期，无法识别时使用今天。
-          - 上传中心新增通知页，列出未识别拍摄日期的文件及采用的日期。
-          - 上传中心按钮仅显示在回忆页；点击系统上传通知会打开回忆中的上传中心。
-          - 上传日期结果和本地历史持久化，重试与重新打开应用后仍可查看通知。
-          - 保留 Node.js 24 单文件管理器、断点续传与原子提交；配置和已有数据无需清空。
+          - 上传中心区分上传服务器、处理媒体、写入数据库和完成；SQLite 写元数据也显示入库。
+          - PostgreSQL 显示媒体块写入进度，服务器上传 100% 后继续等待数据库提交确认。
+          - 浏览器与安卓后台服务均同步实际入库阶段，切到后台后仍可查看系统通知。
+          - 取消中止未提交的处理，并清理服务器分片、临时文件和数据库未提交媒体块；清理确认后才显示已取消。
+          - 清理失败保留取消请求和清理清单，重试继续取消；同批其他任务仍独立运行。
+          - 保留单文件任务、同批描述、自动拍摄日期与通知，管理器继续使用系统 Node.js 24。
 
           发布产物来自通过完整 CI 的提交，附 SHA-256；APK 附固定签名指纹。
           请覆盖安装以保留登录信息；既有数据卷无需清空。

@@ -64,7 +64,12 @@ import {
   tools as aiTools,
 } from './ai.js';
 
-type AuthRequest = Request & { user: User; sessionHash: string; uploadSpec?: UploadSpec };
+type AuthRequest = Request & {
+  user: User;
+  sessionHash: string;
+  uploadSpec?: UploadSpec;
+  uploadSignal?: AbortSignal;
+};
 const text = z.string().trim();
 const date = z
   .string()
@@ -639,7 +644,9 @@ export async function createApp(options: AppOptions = {}) {
       const consume = async (error?: unknown) => {
         const id = (req as AuthRequest).uploadSpec?.id || randomUUID(),
           preview = `${id}.avatar.webp`,
-          thumbnail = `${id}.avatar-thumb.webp`;
+          thumbnail = `${id}.avatar-thumb.webp`,
+          signal = (req as AuthRequest).uploadSignal,
+          spec = (req as AuthRequest).uploadSpec;
         let committed = false;
         try {
           if (error) throw error;
@@ -653,13 +660,35 @@ export async function createApp(options: AppOptions = {}) {
             writeFile(join(uploads, preview), large),
             writeFile(join(uploads, thumbnail), small),
           ]);
+          signal?.throwIfAborted();
           const sizes = await syncMediaFiles(uploads, [preview, thumbnail]);
-          await mediaRepository.stage([preview, thumbnail], sizes);
+          if (spec) {
+            await uploadSessions.saveCleanup((req as AuthRequest).user.id, id, [
+              preview,
+              thumbnail,
+            ]);
+            uploadSessions.phase((req as AuthRequest).user.id, id, { phase: 'database' });
+          }
+          await mediaRepository.stage(
+            [preview, thumbnail],
+            sizes,
+            false,
+            signal,
+            spec
+              ? (databaseBytes, databaseTotal) =>
+                  uploadSessions.phase((req as AuthRequest).user.id, id, {
+                    databaseBytes,
+                    databaseTotal,
+                  })
+              : undefined,
+          );
+          signal?.throwIfAborted();
           const old = await commitMedia(
             db,
             async () =>
               Boolean(await db.prepare('SELECT mediaId FROM media_sizes WHERE mediaId=?').get(id)),
             async () => {
+              signal?.throwIfAborted();
               const auth = await lookup(req.headers.authorization?.replace(/^Bearer /, '') || '');
               if (!auth) fail(401, '登录已过期');
               const previous = await db
@@ -694,6 +723,7 @@ export async function createApp(options: AppOptions = {}) {
                 await db.prepare('DELETE FROM media_sizes WHERE mediaId=?').run(previous.id);
                 await db.prepare('DELETE FROM media WHERE id=?').run(previous.id);
               }
+              signal?.throwIfAborted();
               return previous;
             },
           );
@@ -715,11 +745,13 @@ export async function createApp(options: AppOptions = {}) {
             await removeMediaFiles([preview, thumbnail].map((name) => join(uploads, name)));
           if (req.file) await removeMediaFiles([req.file.path]);
           next(
-            err instanceof HttpError
-              ? err
-              : isTransientPostgresError(err)
-                ? new PostgresUnavailableError(err)
-                : new HttpError(422, '头像无法处理，请选择有效图片'),
+            signal?.aborted
+              ? signal.reason
+              : err instanceof HttpError
+                ? err
+                : isTransientPostgresError(err)
+                  ? new PostgresUnavailableError(err)
+                  : new HttpError(422, '头像无法处理，请选择有效图片'),
           );
         } finally {
           finished();
@@ -842,7 +874,9 @@ export async function createApp(options: AppOptions = {}) {
       req.once('aborted', abort);
       res.once('close', close);
       if (req.aborted || res.destroyed) abort();
-      const signal = controller.signal;
+      const signal = (req as AuthRequest).uploadSignal
+        ? AbortSignal.any([controller.signal, (req as AuthRequest).uploadSignal!])
+        : controller.signal;
       const consume = async (error?: unknown) => {
         const received = (req.files || {}) as Record<string, Express.Multer.File[]>;
         req.file = req.file || received.file?.[0];
@@ -900,11 +934,23 @@ export async function createApp(options: AppOptions = {}) {
               (await control.quota(user.coupleId!))
           )
             fail(413, '两人空间存储已达到配额，请联系管理员');
+          if (spec) {
+            await uploadSessions.saveCleanup(user.id, spec.id, [
+              media.original,
+              media.preview,
+              media.thumbnail,
+            ]);
+            uploadSessions.phase(user.id, spec.id, { phase: 'database' });
+          }
           await mediaRepository.stage(
             [media.original, media.preview, media.thumbnail],
             sizes,
             false,
             signal,
+            spec
+              ? (databaseBytes, databaseTotal) =>
+                  uploadSessions.phase(user.id, spec.id, { databaseBytes, databaseTotal })
+              : undefined,
           );
           signal.throwIfAborted();
           if (spec) await uploadSessions.saveOutcome(user.id, spec.id, outcome);
@@ -978,13 +1024,15 @@ export async function createApp(options: AppOptions = {}) {
               ...(req.file ? [req.file.path] : []),
               ...(liveVideo ? [liveVideo.path] : []),
             ]);
-          if (!signal.aborted)
+          if (!res.destroyed)
             next(
-              err instanceof HttpError || err instanceof multer.MulterError
-                ? err
-                : isTransientPostgresError(err)
-                  ? new PostgresUnavailableError(err)
-                  : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
+              signal.aborted
+                ? signal.reason
+                : err instanceof HttpError || err instanceof multer.MulterError
+                  ? err
+                  : isTransientPostgresError(err)
+                    ? new PostgresUnavailableError(err)
+                    : new HttpError(422, '媒体无法解码，请确认文件完整且格式受支持'),
             );
         } finally {
           req.off('aborted', abort);
@@ -1049,7 +1097,12 @@ export async function createApp(options: AppOptions = {}) {
   route('get', '/api/uploads/:id', async (req, res) => {
     const id = z.string().uuid().parse(req.params.id),
       coupleId = req.user.coupleId || '',
-      result = await completedUpload(req, id);
+      active = uploadSessions.progress(req.user.id, coupleId, id);
+    if (active) {
+      res.json({ id, ...active });
+      return;
+    }
+    const result = await completedUpload(req, id);
     if (result) {
       await uploadSessions.locked(req.user.id, id, () => uploadSessions.release(req.user.id, id));
       res.json({ id, result });
@@ -1098,53 +1151,69 @@ export async function createApp(options: AppOptions = {}) {
       }
       const spec = await uploadSessions.get(req.user.id, coupleId, id);
       if (spec.target !== 'avatar') await couple(req);
+      const staleNames = await uploadSessions.cleanupNames(req.user.id, id);
+      await mediaRepository.discard(staleNames, true);
+      await Promise.all(staleNames.map((name) => rm(join(uploads, name), { force: true })));
       if (processing >= 2) fail(429, '正在处理其他媒体，请稍后重试');
       processing++;
-      let paths: string[] = [];
+      const signal = uploadSessions.begin(req.user.id, coupleId, id, db.provider);
+      req.uploadSignal = signal;
       try {
-        paths = await uploadSessions.assemble(spec);
-      } catch (e) {
-        processing--;
-        throw e;
+        let paths: string[] = [];
+        try {
+          paths = await uploadSessions.assemble(spec, signal);
+        } catch (e) {
+          processing--;
+          throw e;
+        }
+        req.uploadSpec = spec;
+        req.file = {
+          path: paths[0],
+          mimetype: spec.files[0].type,
+          originalname: spec.files[0].name,
+        } as Express.Multer.File;
+        req.files = {
+          liveVideo: paths[1]
+            ? [
+                {
+                  path: paths[1],
+                  mimetype: spec.files[1].type,
+                  originalname: spec.files[1].name,
+                } as Express.Multer.File,
+              ]
+            : [],
+        };
+        let failure: unknown;
+        if (spec.target === 'avatar') {
+          await receiveAvatar(req, res, (error) => {
+            failure = error;
+          });
+          processing--;
+        } else
+          await receiveMedia(req, res, (error) => {
+            failure = error;
+          });
+        await Promise.all(paths.map((path) => rm(path, { force: true })));
+        if (failure) throw failure;
+        if (res.writableFinished && res.statusCode < 300)
+          await uploadSessions.release(req.user.id, id);
+      } finally {
+        uploadSessions.end(req.user.id, id);
       }
-      req.uploadSpec = spec;
-      req.file = {
-        path: paths[0],
-        mimetype: spec.files[0].type,
-        originalname: spec.files[0].name,
-      } as Express.Multer.File;
-      req.files = {
-        liveVideo: paths[1]
-          ? [
-              {
-                path: paths[1],
-                mimetype: spec.files[1].type,
-                originalname: spec.files[1].name,
-              } as Express.Multer.File,
-            ]
-          : [],
-      };
-      let failure: unknown;
-      if (spec.target === 'avatar') {
-        await receiveAvatar(req, res, (error) => {
-          failure = error;
-        });
-        processing--;
-      } else
-        await receiveMedia(req, res, (error) => {
-          failure = error;
-        });
-      await Promise.all(paths.map((path) => rm(path, { force: true })));
-      if (failure) throw failure;
-      if (res.writableFinished && res.statusCode < 300)
-        await uploadSessions.release(req.user.id, id);
     });
   });
   route('delete', '/api/uploads/:id', async (req, res) => {
     const id = z.string().uuid().parse(req.params.id),
       coupleId = req.user.coupleId || '';
-    await uploadSessions.cancel(req.user.id, coupleId, id, async () =>
-      Boolean(await completedUpload(req, id)),
+    await uploadSessions.cancel(
+      req.user.id,
+      coupleId,
+      id,
+      async () => Boolean(await completedUpload(req, id)),
+      async (names) => {
+        await mediaRepository.discard(names, true);
+        await Promise.all(names.map((name) => rm(join(uploads, name), { force: true })));
+      },
     );
     res.sendStatus(204);
   });

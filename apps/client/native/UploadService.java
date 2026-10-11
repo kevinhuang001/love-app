@@ -15,6 +15,8 @@ public class UploadService extends Service {
  private volatile boolean stopping=false;
  private volatile HttpURLConnection connection;
  private Thread worker;
+ private volatile String activeId="",activeScope="";
+ static void cancelCurrent(String scope,String id){UploadService s=instance;if(s!=null&&scope.equals(s.activeScope)&&id.equals(s.activeId)&&s.connection!=null)s.connection.disconnect();}
  private boolean runRequested=false;
  private PowerManager.WakeLock wake;
  static SharedPreferences preferences(Context c){return c.getSharedPreferences("love.uploads",MODE_PRIVATE);}
@@ -38,12 +40,13 @@ public class UploadService extends Service {
  }
  @Override public void onTimeout(int startId,int fgsType){stopping=true;if(connection!=null)connection.disconnect();if(worker!=null)worker.interrupt();try{UploadStore.pause(this,"系统暂停了后台上传，打开应用后继续");}catch(Exception ignored){}stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
  @Override public void onDestroy(){stopping=true;if(connection!=null)connection.disconnect();if(worker!=null)worker.interrupt();if(wake!=null&&wake.isHeld())wake.release();if(instance==this)instance=null;super.onDestroy();}
+ private static final class Cancelled extends Exception {}
  private static final class StatusError extends IOException {final int status;StatusError(int s,String m){super(m);status=s;}}
  private void check()throws InterruptedException{if(stopping||Thread.currentThread().isInterrupted())throw new InterruptedException();}
  private boolean cancelled(String scope,String id)throws Exception{check();JSONObject t=UploadStore.task(this,scope,id);return t==null||t.optBoolean("cancelRequested");}
  private JSONObject http(String scope,String id,String method,String path,byte[] body,String mime,String digest)throws Exception{
   for(int attempt=0;attempt<12;attempt++){
-   check();while(!online()){UploadStore.patch(this,scope,id,new JSONObject().put("status","retrying").put("error","等待网络连接"));notifyProgress("等待网络连接",-1);Thread.sleep(2000);check();}
+   check();boolean mutation=!method.equals("DELETE")&&!method.equals("GET");if(mutation&&cancelled(scope,id))throw new Cancelled();while(!online()){if(mutation&&cancelled(scope,id))throw new Cancelled();UploadStore.patch(this,scope,id,new JSONObject().put("status",cancelled(scope,id)?"cancelling":"retrying").put("error","等待网络连接"));notifyProgress("等待网络连接",-1);Thread.sleep(2000);check();}
    SharedPreferences prefs=preferences(this);String token=prefs.getString("token","");if(!scope.equals(prefs.getString("scope",""))||token.isEmpty())throw new InterruptedException();
    try{
     HttpURLConnection c=(HttpURLConnection)new URL(prefs.getString("server","")+path).openConnection();connection=c;
@@ -57,22 +60,23 @@ public class UploadService extends Service {
      try{result=text.isEmpty()?new JSONObject():new JSONObject(text);}catch(JSONException invalid){if(status>=200&&status<300)throw new IOException("服务器响应无效");result=new JSONObject();}
      if(status<200||status>=300)throw new StatusError(status,result.optString("error","服务器返回 "+status));return result;
     }finally{c.disconnect();connection=null;}
-   }catch(StatusError error){if(error.status!=408&&error.status!=429&&error.status<500)throw error;if(attempt==11)throw error;retry(scope,id,attempt,error.getMessage());}
-   catch(IOException error){if(attempt==11)throw error;retry(scope,id,attempt,"连接服务器失败，正在重试");}
+   }catch(StatusError error){if(mutation&&cancelled(scope,id))throw new Cancelled();if(error.status!=408&&error.status!=429&&error.status<500)throw error;if(attempt==11)throw error;retry(scope,id,attempt,error.getMessage(),mutation);}
+   catch(IOException error){if(mutation&&cancelled(scope,id))throw new Cancelled();if(attempt==11)throw error;retry(scope,id,attempt,"连接服务器失败，正在重试",mutation);}
   }throw new IOException("上传重试次数已用尽");
  }
  private boolean online(){ConnectivityManager manager=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);NetworkCapabilities capabilities=manager.getNetworkCapabilities(manager.getActiveNetwork());return capabilities!=null&&capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);}
- private void retry(String scope,String id,int attempt,String message)throws Exception{check();UploadStore.patch(this,scope,id,new JSONObject().put("status","retrying").put("attempt",attempt+1).put("error",message));notifyProgress("等待重试 · "+(attempt+1),-1);Thread.sleep(Math.min(1000L*(1L<<attempt),30000L));}
+ private void retry(String scope,String id,int attempt,String message,boolean mutation)throws Exception{check();UploadStore.patch(this,scope,id,new JSONObject().put("status",cancelled(scope,id)?"cancelling":"retrying").put("attempt",attempt+1).put("error",message));notifyProgress("等待重试 · "+(attempt+1),-1);long end=System.currentTimeMillis()+Math.min(1000L*(1L<<attempt),30000L);while(System.currentTimeMillis()<end){check();if(mutation&&cancelled(scope,id))return;Thread.sleep(100);}}
  private byte[] json(JSONObject data){return data.toString().getBytes(StandardCharsets.UTF_8);}
  private String digest(byte[] bytes)throws Exception{StringBuilder result=new StringBuilder();for(byte b:MessageDigest.getInstance("SHA-256").digest(bytes))result.append(String.format(java.util.Locale.ROOT,"%02x",b&255));return result.toString();}
  private void done(String scope,String id,JSONObject result,long total)throws Exception{
-  UploadStore.patch(this,scope,id,new JSONObject().put("status","done").put("progress",100).put("bytes",total).put("result",result).put("error",JSONObject.NULL).put("cancelRequested",false));UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);
+  UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);UploadStore.patch(this,scope,id,new JSONObject().put("status","done").put("progress",100).put("bytes",total).put("result",result).put("error",JSONObject.NULL).put("cancelRequested",false));
  }
  private void cancel(String scope,String id,long total)throws Exception{
+  UploadStore.patch(this,scope,id,new JSONObject().put("status","cancelling").put("error",JSONObject.NULL));notifyProgress("正在取消并清理服务器和数据库",-1);
   // DELETE also records a tombstone before initialization, blocking late POST requests.
   try{http(scope,id,"DELETE","/api/uploads/"+id,null,null,null);}
   catch(StatusError error){if(error.status==409){JSONObject state=http(scope,id,"GET","/api/uploads/"+id,null,null,null);if(state.has("result")){done(scope,id,state.getJSONObject("result"),total);return;}throw error;}if(error.status!=410)throw error;}
-  UploadStore.patch(this,scope,id,new JSONObject().put("status","cancelled").put("error",JSONObject.NULL));UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);
+  UploadStore.releasePermissions(this,UploadStore.task(this,scope,id));UploadStore.removeFiles(this,id);UploadStore.patch(this,scope,id,new JSONObject().put("status","cancelled").put("cancelRequested",false).put("error",JSONObject.NULL));
  }
  private void transfer(JSONObject task)throws Exception{
   String scope=task.getString("scope"),id=task.getString("id");long total=task.getLong("total");JSONObject spec=task.getJSONObject("spec");JSONArray files=spec.getJSONArray("files"),uris=task.getJSONArray("uris");
@@ -104,8 +108,25 @@ public class UploadService extends Service {
    }
   }
   if(cancelled(scope,id)){cancel(scope,id,total);return;}
-  UploadStore.patch(this,scope,id,new JSONObject().put("status","processing").put("progress",100).put("error",JSONObject.NULL));notifyProgress("正在处理并保存",-1);
-  done(scope,id,http(scope,id,"POST","/api/uploads/"+id+"/complete",json(new JSONObject()),"application/json",null),total);
+  UploadStore.patch(this,scope,id,new JSONObject().put("status","processing").put("phase","processing").put("progress",100).put("error",JSONObject.NULL));notifyProgress("正在处理媒体",-1);
+  java.util.concurrent.atomic.AtomicBoolean monitoring=new java.util.concurrent.atomic.AtomicBoolean(true);
+  Thread monitor=new Thread(()->monitorProgress(scope,id,monitoring),"love-upload-progress");monitor.start();
+  try{JSONObject result=http(scope,id,"POST","/api/uploads/"+id+"/complete",json(new JSONObject()),"application/json",null);if(cancelled(scope,id))cancel(scope,id,total);else done(scope,id,result,total);}
+  finally{monitoring.set(false);monitor.interrupt();monitor.join(6000);}
+ }
+ private void monitorProgress(String scope,String id,java.util.concurrent.atomic.AtomicBoolean monitoring){
+  while(monitoring.get()&&!stopping)try{
+   Thread.sleep(500);if(!monitoring.get()||cancelled(scope,id))return;
+   SharedPreferences prefs=preferences(this);if(!scope.equals(prefs.getString("scope","")))return;
+   HttpURLConnection c=(HttpURLConnection)new URL(prefs.getString("server","")+"/api/uploads/"+id).openConnection();
+   try{c.setConnectTimeout(2000);c.setReadTimeout(2000);c.setRequestProperty("Authorization","Bearer "+prefs.getString("token",""));if(c.getResponseCode()!=200)continue;
+    ByteArrayOutputStream out=new ByteArrayOutputStream();try(InputStream in=c.getInputStream()){byte[] buffer=new byte[2048];int n;while((n=in.read(buffer))!=-1){if(out.size()+n>65536)throw new IOException();out.write(buffer,0,n);}}
+    JSONObject state=new JSONObject(out.toString(StandardCharsets.UTF_8.name()));String phase=state.optString("phase");if(!monitoring.get()||cancelled(scope,id)||!(phase.equals("processing")||phase.equals("database")))continue;
+    JSONObject patch=new JSONObject().put("status","processing").put("phase",phase).put("storage",state.optString("storage")).put("databaseBytes",state.optLong("databaseBytes")).put("databaseTotal",state.optLong("databaseTotal"));
+    if(!UploadStore.progress(this,scope,id,patch))continue;long bytes=state.optLong("databaseBytes"),total=state.optLong("databaseTotal");notifyProgress(phase.equals("database")?(state.optString("storage").equals("sqlite")?"入库中 · 写入元数据":"入库中 · "+bytes/1024/1024+" / "+total/1024/1024+" MB"):"正在处理媒体",phase.equals("database")&&total>0?(int)(bytes*100/total):-1);
+   }finally{c.disconnect();}
+  }catch(InterruptedException stopped){return;}catch(Exception ignored){/* Status reads never consume the transfer retry budget. */}
+
  }
  private void finishWorker(){if(wake!=null&&wake.isHeld())wake.release();worker=null;stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();}
  private void runQueue(){
@@ -113,7 +134,8 @@ public class UploadService extends Service {
    while(!stopping){synchronized(this){runRequested=false;}String scope=preferences(this).getString("scope","");if(preferences(this).getString("token","").isEmpty())break;JSONObject next=null;
     JSONArray tasks=UploadStore.read(this);for(int i=0;i<tasks.length();i++){JSONObject t=tasks.getJSONObject(i);if(scope.equals(t.optString("scope"))&&UploadStore.active(t)){next=t;break;}}
     if(next==null){synchronized(this){if(runRequested)continue;finishWorker();return;}}
-    try{transfer(next);}catch(InterruptedException stopped){throw stopped;}catch(Exception error){check();UploadStore.patch(this,scope,next.getString("id"),new JSONObject().put("status","failed").put("error",error.getMessage()==null?"上传失败，请重试":error.getMessage()));}
+    activeScope=scope;activeId=next.getString("id");
+    try{transfer(next);}catch(Cancelled cancelled){try{cancel(scope,activeId,next.getLong("total"));}catch(Exception error){check();UploadStore.patch(this,scope,activeId,new JSONObject().put("status","failed").put("error","取消未确认，保留文件以便重试："+error.getMessage()));}}catch(InterruptedException stopped){throw stopped;}catch(Exception error){check();UploadStore.patch(this,scope,next.getString("id"),new JSONObject().put("status","failed").put("error",error.getMessage()==null?"上传失败，请重试":error.getMessage()));}finally{activeId="";activeScope="";}
    }
   }catch(InterruptedException stopped){/* Explicit stop/timeout persists state in the caller. */}
   catch(Exception error){try{UploadStore.pause(this,"无法读取上传任务，请检查设备存储");}catch(Exception ignored){}}

@@ -60,11 +60,69 @@ const outcomeSchema = z
       .optional(),
   })
   .strict();
+export type UploadProgress = {
+  phase: 'processing' | 'database';
+  storage: 'sqlite' | 'postgres';
+  databaseBytes: number;
+  databaseTotal: number;
+};
 type Saved = UploadSpec & { owner: string; couple: string; updated: number; cancelled?: boolean };
 // Only transport staging lives on disk. Publication and billable media stay in one DB transaction.
 // Immutable chunks and fsynced manifests survive restarts, including an unavailable remote DB.
 export class UploadSessions {
   private locks = new Map<string, Promise<unknown>>();
+  private active = new Map<
+    string,
+    { couple: string; controller: AbortController; progress: UploadProgress }
+  >();
+  begin(owner: string, couple: string, id: string, storage: UploadProgress['storage']) {
+    const controller = new AbortController();
+    this.active.set(this.directory(owner, id), {
+      couple,
+      controller,
+      progress: { phase: 'processing', storage, databaseBytes: 0, databaseTotal: 0 },
+    });
+    return controller.signal;
+  }
+  progress(owner: string, couple: string, id: string) {
+    const entry = this.active.get(this.directory(owner, id));
+    if (entry && entry.couple !== couple) throw new HttpError(409, '配对关系已改变');
+    return entry ? { ...entry.progress } : undefined;
+  }
+  phase(owner: string, id: string, patch: Partial<UploadProgress>) {
+    const entry = this.active.get(this.directory(owner, id));
+    if (entry && !entry.controller.signal.aborted) Object.assign(entry.progress, patch);
+  }
+  end(owner: string, id: string) {
+    this.active.delete(this.directory(owner, id));
+  }
+  private abort(owner: string, couple: string, id: string) {
+    const entry = this.active.get(this.directory(owner, id));
+    if (entry && entry.couple !== couple) throw new HttpError(409, '配对关系已改变');
+    entry?.controller.abort(new HttpError(410, '上传已取消'));
+  }
+  async saveCleanup(owner: string, id: string, names: string[]) {
+    await this.durable(
+      join(this.directory(owner, id), 'cleanup.json'),
+      JSON.stringify(names.filter(Boolean)),
+    );
+  }
+  async cleanupNames(owner: string, id: string): Promise<string[]> {
+    try {
+      return z
+        .array(
+          z
+            .string()
+            .regex(
+              /^[a-f0-9-]+\.(source|preview\.webp|preview\.mp4|thumb\.webp|avatar\.webp|avatar-thumb\.webp)$/,
+            ),
+        )
+        .parse(JSON.parse(await readFile(join(this.directory(owner, id), 'cleanup.json'), 'utf8')));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
   constructor(private root: string) {}
   directory(owner: string, id: string) {
     z.string().uuid().parse(id);
@@ -223,7 +281,7 @@ export class UploadSessions {
       return { id, index, bytes: bytes.length };
     });
   }
-  async assemble(saved: Saved): Promise<string[]> {
+  async assemble(saved: Saved, signal?: AbortSignal): Promise<string[]> {
     const status = await this.status(saved);
     if (status.offsets.some((n, i) => n !== saved.files[i].size))
       throw new HttpError(409, '文件尚未上传完整');
@@ -238,10 +296,12 @@ export class UploadSessions {
             let offset = 0, index = 0;
             offset < saved.files[part].size;
             offset += UPLOAD_CHUNK_BYTES, index++
-          )
+          ) {
+            signal?.throwIfAborted();
             await output.writeFile(
               await readFile(join(this.directory(saved.owner, saved.id), `${part}-${index}`)),
             );
+          }
           await output.sync();
         } finally {
           await output.close();
@@ -281,7 +341,14 @@ export class UploadSessions {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
-  async cancel(owner: string, couple: string, id: string, committed: () => Promise<boolean>) {
+  async cancel(
+    owner: string,
+    couple: string,
+    id: string,
+    committed: () => Promise<boolean>,
+    clean: (names: string[]) => Promise<void> = async () => {},
+  ) {
+    this.abort(owner, couple, id);
     return this.locked(owner, id, async () => {
       if (await committed()) throw new HttpError(409, '上传已提交，不能取消；可在对应内容中操作');
       let saved: Saved;
@@ -293,6 +360,8 @@ export class UploadSessions {
         saved = { id, owner, couple, updated: Date.now(), files: [], target: 'draft', title: '' };
         await mkdir(this.directory(owner, id), { recursive: true });
       }
+      // Keep cleanup manifest and chunks until every deletion is acknowledged.
+      await clean(await this.cleanupNames(owner, id));
       saved.cancelled = true;
       saved.updated = Date.now();
       await this.durable(join(this.directory(owner, id), 'session.json'), JSON.stringify(saved));

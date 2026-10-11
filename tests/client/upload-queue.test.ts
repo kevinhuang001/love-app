@@ -51,6 +51,8 @@ test('abandoned startup cannot create a worker; a fresh queue transfers independ
           kind: 'image',
           previewUrl: '/p',
           thumbnailUrl: '/t',
+          capturedDate: null,
+          fallbackDate: '2026-10-11',
         });
       }
       throw new Error('unexpected request');
@@ -68,6 +70,14 @@ test('abandoned startup cannot create a worker; a fresh queue transfers independ
   await until(() => queue.getSnapshot()[0]?.status === 'done');
   expect(commits).toBe(1);
   expect(queue.getSnapshot()[0]).toMatchObject({ progress: 100, bytes: 13, status: 'done' });
+  queue.dispose();
+  const reopened = make();
+  await reopened.start();
+  expect(reopened.getSnapshot()[0].result).toMatchObject({
+    capturedDate: null,
+    fallbackDate: '2026-10-11',
+  });
+  expect(commits).toBe(1);
 });
 test('reopening a paused queue restores blobs and resumes after already accepted chunks', async () => {
   environment();

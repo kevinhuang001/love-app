@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { test, expect } from '@playwright/test';
 import sharp from 'sharp';
+import { today } from '@love/calendar';
 import { register, login as apiLogin, verifyEmail, solveCaptcha } from './auth-helper';
 test('mobile registration, pairing, realtime chat, media, anniversaries and settings', async ({
   page,
@@ -85,7 +86,6 @@ test('mobile registration, pairing, realtime chat, media, anniversaries and sett
   await page
     .locator('input[type=file]')
     .setInputFiles({ name: 'memory.png', mimeType: 'image/png', buffer: image });
-  await page.getByLabel('拍摄日期 · memory.png').fill('2026-06-15');
   await page.getByLabel('写下这一刻').fill('一起散步');
   await page.getByRole('button', { name: '上传', exact: true }).click();
   await expect(page.getByText('一起散步', { exact: true })).toBeVisible();
@@ -278,8 +278,6 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   ]);
   await expect(page.getByText('已选择 2 个文件 · 点击重选')).toBeVisible();
   await page.getByLabel('写下这一刻').fill('周末');
-  await page.getByLabel('拍摄日期 · walk1.png').fill('2026-06-15');
-  await page.getByLabel('拍摄日期 · walk2.png').fill('2026-06-16');
   await page.getByRole('button', { name: '上传', exact: true }).click();
   await expect(page.getByText('已加入上传队列，可以离开此页面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('album-item')).toHaveCount(2);
@@ -442,7 +440,7 @@ test('album batch upload, filters, layouts, fullscreen browsing and pagination',
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
 
-test('per-file capture dates, manual fallback and publication retry retain uploaded media', async ({
+test('automatic capture dates, fallback to today and durable upload notices survive navigation and retry', async ({
   page,
   request,
 }) => {
@@ -491,8 +489,14 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
     .toBuffer();
   const missing = await image().png().toBuffer();
   let uploads = 0;
+  const startedDate = today(),
+    uploadIds = new Map<string, string>();
   page.on('request', (req) => {
-    if (req.url().endsWith('/api/uploads') && req.method() === 'POST') uploads++;
+    if (req.url().endsWith('/api/uploads') && req.method() === 'POST') {
+      uploads++;
+      const spec = req.postDataJSON();
+      uploadIds.set(spec.files[0].name, spec.id);
+    }
   });
   await page.locator('input[type=file]').setInputFiles([
     { name: 'leap.jpg', mimeType: 'image/jpeg', buffer: first },
@@ -500,8 +504,7 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
     { name: 'no-date.png', mimeType: 'image/png', buffer: missing },
   ]);
   expect(uploads).toBe(0);
-  await page.getByLabel('拍摄日期 · no-date.png').fill('2026-06-01');
-  await page.getByLabel('拍摄日期 · winter.jpg').fill('2025-12-05');
+  await expect(page.getByRole('dialog').locator('input[type=date]')).toHaveCount(0);
   await page.getByLabel('写下这一刻').fill('逐张日期');
   let failed = false;
   await page.route('**/api/uploads/*/complete', async (route) => {
@@ -517,6 +520,8 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
   await page.getByRole('button', { name: '上传', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.getByRole('tab', { name: '纪念日', exact: true }).click();
+  await expect(page.getByRole('button', { name: '上传中心' })).toHaveCount(0);
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await page.getByRole('button', { name: '上传中心' }).click();
   await expect(page.getByRole('dialog')).toContainText('上传中心');
   await expect(page.getByRole('dialog').getByText('没有正在上传的任务')).toBeVisible({
@@ -524,6 +529,20 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
   });
   await page.getByRole('button', { name: '上传历史' }).click();
   await expect(page.getByRole('dialog').getByText('上传完成', { exact: false })).toHaveCount(3);
+  const outcome = (
+    await (
+      await request.get(`http://127.0.0.1:3000/api/uploads/${uploadIds.get('no-date.png')}`, {
+        headers,
+      })
+    ).json()
+  ).result;
+  const fallbackDate = outcome.fallbackDate;
+  expect(outcome.capturedDate).toBeNull();
+  expect([startedDate, today()]).toContain(fallbackDate);
+  await page.getByRole('button', { name: '通知 1', exact: true }).click();
+  await expect(page.getByTestId('upload-date-notice')).toHaveCount(1);
+  await expect(page.getByTestId('upload-date-notice')).toContainText('no-date.png');
+  await expect(page.getByTestId('upload-date-notice')).toContainText(fallbackDate);
   await page.getByRole('button', { name: '关闭', exact: true }).click();
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await expect(page.getByTestId('album-item')).toHaveCount(3);
@@ -533,14 +552,24 @@ test('per-file capture dates, manual fallback and publication retry retain uploa
   ).items;
   expect(moments.map((item: { date: string }) => item.date).sort()).toEqual([
     '2024-02-29',
-    '2025-12-05',
-    '2026-06-01',
+    '2025-12-01',
+    fallbackDate,
   ]);
   await page.reload();
   await page.getByRole('tab', { name: '回忆', exact: true }).click();
   await expect(page.getByTestId('album-item')).toHaveCount(3);
-  for (const date of ['2024-02-29', '2025-12-05', '2026-06-01'])
+  for (const date of ['2024-02-29', '2025-12-01', fallbackDate])
     await expect(page.locator(`[data-testid="album-item"][data-date="${date}"]`)).toHaveCount(1);
+  await page.getByRole('button', { name: '上传中心' }).click();
+  await page.getByRole('button', { name: '通知 1', exact: true }).click();
+  await expect(page.getByTestId('upload-date-notice')).toContainText('no-date.png');
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  for (const tab of ['聊天', '纪念日', 'To Do', '我们']) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    await expect(page.getByRole('button', { name: '上传中心' })).toHaveCount(0);
+  }
+  await page.getByRole('tab', { name: '回忆', exact: true }).click();
+  await expect(page.getByRole('button', { name: '上传中心' })).toHaveCount(1);
 });
 
 test('administrator dashboard configures email whitelist, SMTP, users, quotas and logs', async ({

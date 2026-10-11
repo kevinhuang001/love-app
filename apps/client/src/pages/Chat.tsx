@@ -1,4 +1,4 @@
-import { useUploads, UploadButton } from '@/components/UploadCenter';
+import { useUploads } from '@/components/UploadCenter';
 import { nativeUploads, pickNativeFiles, pendingTask, type PickedFile } from '@/lib/upload-queue';
 import { pairLivePhotos } from '@/lib/live-photos';
 import { PartnerAvatar } from '@/components/PartnerAvatar';
@@ -208,9 +208,6 @@ export function Chat() {
                   ? '在线'
                   : '离线'}
           </p>
-        </div>
-        <div className="ml-auto">
-          <UploadButton />
         </div>
       </div>
       {!connected && (

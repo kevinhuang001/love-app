@@ -869,6 +869,13 @@ export async function createApp(options: AppOptions = {}) {
             liveVideo?.path,
           );
           if (spec) media.id = spec.id;
+          const publicationDate = media.capturedDate || today();
+          const outcome = {
+            capturedDate: media.capturedDate,
+            ...(spec?.target === 'album' && !media.capturedDate
+              ? { fallbackDate: publicationDate }
+              : {}),
+          };
           generatedFiles = [media.original, media.preview, media.thumbnail]
             .filter(Boolean)
             .map((name) => join(uploads, name));
@@ -900,6 +907,7 @@ export async function createApp(options: AppOptions = {}) {
             signal,
           );
           signal.throwIfAborted();
+          if (spec) await uploadSessions.saveOutcome(user.id, spec.id, outcome);
           await commitMedia(
             db,
             async () =>
@@ -937,14 +945,7 @@ export async function createApp(options: AppOptions = {}) {
                     .prepare(
                       'INSERT INTO moments(id,coupleId,ownerId,title,mediaId,date) VALUES(?,?,?,?,?,?)',
                     )
-                    .run(
-                      spec.id,
-                      user.coupleId,
-                      user.id,
-                      spec.title,
-                      media.id,
-                      spec.date || media.capturedDate || today(),
-                    );
+                    .run(spec.id, user.coupleId, user.id, spec.title, media.id, publicationDate);
                 } else if (spec.target === 'avatar') {
                   await db
                     .prepare('UPDATE users SET avatarMediaId=? WHERE id=?')
@@ -965,9 +966,7 @@ export async function createApp(options: AppOptions = {}) {
           if (spec?.target === 'album') io.to(`couple:${user.coupleId}`).emit('moments:changed');
           if (spec && ['avatar', 'ai-avatar'].includes(spec.target))
             io.to(`couple:${user.coupleId}`).emit('profile:changed');
-          res
-            .status(201)
-            .json({ ...(await mediaView(media.id)), capturedDate: media.capturedDate });
+          res.status(201).json({ ...(await mediaView(media.id)), ...outcome });
         } catch (err) {
           if (db.provider === 'postgres' && !committed && !(err instanceof CommitUncertainError))
             await mediaRepository.discard(
@@ -1015,6 +1014,7 @@ export async function createApp(options: AppOptions = {}) {
     return {
       ...(await mediaView(id)),
       ...(row.metadata ? { capturedDate: JSON.parse(String(row.metadata)).capturedDate } : {}),
+      ...(await uploadSessions.outcome(req.user.id, id)),
     };
   };
   route('post', '/api/uploads', async (req, res) => {
@@ -1024,6 +1024,9 @@ export async function createApp(options: AppOptions = {}) {
       fail(413, '头像文件最大支持 64 MB');
     const result = await completedUpload(req, spec.id);
     if (result) {
+      await uploadSessions.locked(req.user.id, spec.id, () =>
+        uploadSessions.release(req.user.id, spec.id),
+      );
       res.json({
         id: spec.id,
         offsets: spec.files.map((f) => f.size),
@@ -1048,6 +1051,7 @@ export async function createApp(options: AppOptions = {}) {
       coupleId = req.user.coupleId || '',
       result = await completedUpload(req, id);
     if (result) {
+      await uploadSessions.locked(req.user.id, id, () => uploadSessions.release(req.user.id, id));
       res.json({ id, result });
       return;
     }

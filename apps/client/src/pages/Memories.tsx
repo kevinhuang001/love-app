@@ -32,7 +32,7 @@ import {
 import { Empty, Loading, MediaThumbnail, ErrorState } from '@/components/common';
 import { AlbumViewer } from '@/components/AlbumViewer';
 import { useApp } from '@/lib/context';
-import type { Moment, UploadedMedia } from '@/lib/types';
+import type { Moment } from '@/lib/types';
 import { today } from '@/lib/dates';
 import { exportAlbum } from '@/lib/album-transfer';
 import { albumDefaults, loadAlbumOptions, type AlbumOptions } from '@/lib/album';
@@ -41,21 +41,15 @@ type UploadFile = {
   id: string;
   file: PickedFile;
   liveVideo?: PickedFile;
-  media?: UploadedMedia;
-  date: string;
-  editDate: boolean;
-  error?: string;
 };
 function UploadSelection({
   files,
   busy,
   onRemove,
-  onChange,
 }: {
   files: UploadFile[];
   busy: boolean;
   onRemove: (index: number) => void;
-  onChange: (id: string, value: Partial<UploadFile>) => void;
 }) {
   const [urls, setUrls] = useState<string[]>([]);
   useEffect(() => {
@@ -100,23 +94,6 @@ function UploadSelection({
             >
               <X className="size-4" />
             </Button>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor={`capture-${item.id}`} className="text-xs">
-              拍摄日期 · {item.file.name}
-            </Label>
-            <p className="text-[11px] text-muted-foreground">
-              自动识别拍摄日期；无法识别时使用今天，也可提前指定。
-            </p>
-            <Input
-              id={`capture-${item.id}`}
-              type="date"
-              min="1900-01-01"
-              max="2100-12-31"
-              value={item.date}
-              disabled={busy}
-              onChange={(e) => onChange(item.id, { date: e.target.value })}
-            />
           </div>
         </li>
       ))}
@@ -188,8 +165,6 @@ export function Memories() {
         id: newId(),
         file,
         liveVideo,
-        date: '',
-        editDate: true,
       })),
     );
   }
@@ -229,7 +204,6 @@ export function Memories() {
             liveVideo: item.liveVideo,
             target: 'album',
             title,
-            ...(item.date ? { date: item.date } : {}),
           })),
         );
         setOpen(false);
@@ -710,9 +684,6 @@ export function Memories() {
                     onRemove={(index) => {
                       setFiles((items) => items.filter((_, i) => i !== index));
                     }}
-                    onChange={(id, value) =>
-                      setFiles((items) => items.map((v) => (v.id === id ? { ...v, ...value } : v)))
-                    }
                   />
                 )}
               </div>

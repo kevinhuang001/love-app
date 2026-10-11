@@ -9,6 +9,7 @@ export const AppContext = createContext<{
   connected: boolean;
   partnerOnline: boolean | null;
   openUs: () => void;
+  openMemories: () => void;
 } | null>(null);
 export function useApp() {
   const value = useContext(AppContext);

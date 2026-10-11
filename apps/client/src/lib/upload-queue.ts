@@ -131,6 +131,7 @@ export class UploadQueue {
   private listener?: PluginListenerHandle;
   private refreshed = new Map<string, number>();
   private signed = new Map<string, UploadedMedia>();
+  private cancelled = new Set<string>();
   constructor(
     public api: Api,
     profile: Profile,
@@ -277,6 +278,8 @@ export class UploadQueue {
     }
   }
   private async update(task: Stored, patch: Partial<Task>) {
+    if (this.cancelled.has(task.id) && patch.status !== 'cancelled' && patch.status !== 'done')
+      return;
     Object.assign(task, patch, { updated: Date.now() });
     await save([task]);
     this.emit();
@@ -284,7 +287,9 @@ export class UploadQueue {
   private async request<T>(task: Stored, path: string, init: RequestInit = {}): Promise<T> {
     for (let attempt = 0; attempt < 12; attempt++) {
       this.controller.signal.throwIfAborted();
+      if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
       while (!navigator.onLine) {
+        if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
         await this.update(task, { status: 'retrying', error: '等待网络连接' });
         await wait(2000, this.controller.signal);
       }
@@ -303,6 +308,7 @@ export class UploadQueue {
         return result as T;
       } catch (error) {
         this.controller.signal.throwIfAborted();
+        if (this.cancelled.has(task.id)) throw new DOMException('上传已取消', 'AbortError');
         const status = (error as TransferError).status || 0;
         if ((status && status !== 408 && status !== 429 && status < 500) || attempt === 11)
           throw error;
@@ -378,6 +384,7 @@ export class UploadQueue {
           try {
             await this.transfer(task);
           } catch (error) {
+            if (this.cancelled.has(task.id)) continue;
             if (this.disposed) {
               task.status = 'paused';
               await save([task]);
@@ -414,11 +421,12 @@ export class UploadQueue {
         if (state?.result) {
           task.files = undefined;
           await this.update(task, { status: 'done', result: state.result, error: undefined });
-          this.changed();
+          this.changed(task);
           return;
         }
         throw error;
       }
+      this.cancelled.add(id);
       task.files = undefined;
       await this.update(task, { status: 'cancelled', error: undefined });
     } else if (action === 'clear') {

@@ -141,3 +141,41 @@ test('a permanent capacity error preserves the file for manual retry and does no
   expect(calls).toHaveBeenCalledTimes(1);
   expect(q.getSnapshot()[0].error).toBe('空间容量不足');
 });
+test('a late transient chunk failure cannot restart a confirmed cancellation', async () => {
+  environment();
+  let release: (response: Response) => void = () => {},
+    chunks = 0,
+    commits = 0;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string, init: RequestInit) => {
+      if (init.method === 'DELETE') return new Response(null, { status: 204 });
+      if (url.endsWith('/api/uploads')) return Response.json({ offsets: [0] });
+      if (init.method === 'PUT') {
+        chunks++;
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      if (url.endsWith('/complete')) commits++;
+      throw new Error('unexpected request');
+    }),
+  );
+  const queue = make();
+  await queue.start();
+  await queue.enqueue([
+    { file: new File(['image'], 'cancel.jpg', { type: 'image/jpeg' }), target: 'album' },
+  ]);
+  await until(() => chunks === 1);
+  await queue.action(queue.getSnapshot()[0].id, 'cancel');
+  release(Response.json({ error: 'temporary outage' }, { status: 503 }));
+  queue.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  expect(queue.getSnapshot()[0].status).toBe('cancelled');
+  queue.dispose();
+  const reopened = make();
+  await reopened.start();
+  expect(reopened.getSnapshot()[0].status).toBe('cancelled');
+  expect(chunks).toBe(1);
+  expect(commits).toBe(0);
+});
